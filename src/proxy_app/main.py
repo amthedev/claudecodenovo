@@ -1289,6 +1289,18 @@ def _static_env_models() -> List[str]:
 
         for name in names:
             model_ids.append(name if "/" in name else f"{provider}/{name}")
+
+    for key, value in os.environ.items():
+        if not key.startswith("WHITELIST_MODELS_"):
+            continue
+        provider = key[len("WHITELIST_MODELS_") :].lower()
+        for raw_name in value.strip().strip("\"'").split(","):
+            name = raw_name.strip().strip("\"'")
+            if not name or "*" in name:
+                continue
+            model_ids.append(name if "/" in name else f"{provider}/{name}")
+
+    model_ids = list(dict.fromkeys(model_ids))
     return model_ids
 
 
