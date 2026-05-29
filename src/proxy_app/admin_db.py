@@ -93,7 +93,27 @@ def init_db() -> None:
                 created_at REAL NOT NULL,
                 expires_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS key_reveals (
+                token TEXT PRIMARY KEY,
+                key_value TEXT NOT NULL,
+                key_id TEXT NOT NULL,
+                key_name TEXT NOT NULL,
+                action TEXT NOT NULL DEFAULT 'create',
+                expires_at REAL NOT NULL
+            );
         """)
+        # Migracoes: adiciona colunas novas em tabelas existentes (seguro se ja existirem)
+        new_cols = [
+            ("api_keys", "price_per_1k",   "REAL NOT NULL DEFAULT 0.0"),
+            ("api_keys", "description",     "TEXT DEFAULT ''"),
+            ("api_keys", "monthly_limit",   "INTEGER NOT NULL DEFAULT 0"),
+            ("api_keys", "notes",           "TEXT DEFAULT ''"),
+        ]
+        for table, col, typedef in new_cols:
+            try:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+            except Exception:
+                pass  # coluna ja existe
 
 
 # ── Hashing ───────────────────────────────────────────────────────────────────
