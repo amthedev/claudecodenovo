@@ -1,0 +1,19 @@
+This project contains components with different licenses:
+
+## rotator_library (src/rotator_library/)
+
+SPDX-License-Identifier: LGPL-3.0-only
+
+Licensed under the GNU Lesser General Public License, Version 3.0.
+See: src/rotator_library/COPYING and src/rotator_library/COPYING.LESSER
+
+## proxy_app (src/proxy_app/)
+
+SPDX-License-Identifier: MIT
+
+Licensed under the MIT License.
+See: src/proxy_app/LICENSE
+
+---
+
+Please see the individual license files for the full terms.

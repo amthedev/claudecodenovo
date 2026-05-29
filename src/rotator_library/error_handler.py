@@ -1,0 +1,1166 @@
+# SPDX-License-Identifier: LGPL-3.0-only
+# Copyright (c) 2026 Mirrowel
+
+import re
+import json
+import os
+import logging
+from typing import Optional, Dict, Any, Tuple
+import httpx
+
+from litellm.exceptions import (
+    APIConnectionError,
+    RateLimitError,
+    ServiceUnavailableError,
+    AuthenticationError,
+    InvalidRequestError,
+    BadRequestError,
+    OpenAIError,
+    InternalServerError,
+    Timeout,
+    ContextWindowExceededError,
+)
+
+lib_logger = logging.getLogger("rotator_library")
+
+
+def _parse_duration_string(duration_str: str) -> Optional[int]:
+    """
+    Parse duration strings in various formats to total seconds.
+
+    Handles:
+    - Milliseconds: '290.979975ms' -> 1 second (rounds up for sub-second values)
+    - Compound durations: '156h14m36.752463453s', '2h30m', '45m30s'
+    - Simple durations: '562476.752463453s', '3600s', '60m', '2h'
+    - Plain seconds (no unit): '562476'
+
+    Args:
+        duration_str: Duration string to parse
+
+    Returns:
+        Total seconds as integer, or None if parsing fails.
+        For sub-second values, returns at least 1 to avoid retry floods.
+    """
+    if not duration_str:
+        return None
+
+    total_seconds = 0.0
+    remaining = duration_str.strip().lower()
+
+    # Try parsing as plain number first (no units)
+    try:
+        return int(float(remaining))
+    except ValueError:
+        pass
+
+    # Handle pure milliseconds format: "290.979975ms"
+    # MUST check this BEFORE checking 'm' for minutes to avoid misinterpreting 'ms'
+    ms_match = re.match(r"^([\d.]+)ms$", remaining)
+    if ms_match:
+        ms_value = float(ms_match.group(1))
+        seconds = ms_value / 1000.0
+        # Round up to at least 1 second to avoid immediate retry floods
+        return max(1, int(seconds)) if seconds > 0 else 0
+
+    # Parse hours component
+    hour_match = re.match(r"(\d+)h", remaining)
+    if hour_match:
+        total_seconds += int(hour_match.group(1)) * 3600
+        remaining = remaining[hour_match.end() :]
+
+    # Parse minutes component - use negative lookahead to avoid matching 'ms'
+    min_match = re.match(r"(\d+)m(?!s)", remaining)
+    if min_match:
+        total_seconds += int(min_match.group(1)) * 60
+        remaining = remaining[min_match.end() :]
+
+    # Parse seconds component (including decimals like 36.752463453s)
+    sec_match = re.match(r"([\d.]+)s", remaining)
+    if sec_match:
+        total_seconds += float(sec_match.group(1))
+
+    # For sub-second values, round up to at least 1
+    if total_seconds > 0:
+        return max(1, int(total_seconds))
+    return None
+
+
+def extract_retry_after_from_body(error_body: Optional[str]) -> Optional[int]:
+    """
+    Extract the retry-after time from an API error response body.
+
+    Handles various error formats including:
+    - Gemini CLI: "Your quota will reset after 39s."
+    - Google RPC: "quota will reset after 156h14m36s"
+    - Generic: "quota will reset after 120s", "retry after 60s"
+
+    Args:
+        error_body: The raw error response body
+
+    Returns:
+        The retry time in seconds, or None if not found
+    """
+    if not error_body:
+        return None
+
+    # Pattern to match various "reset after" formats - capture the full duration string
+    patterns = [
+        r"quota will reset after\s*([\dhmso.]+)",  # Matches compound: 156h14m36s or 120s
+        r"reset after\s*([\dhmso.]+)",
+        r"retry after\s*([\dhmso.]+)",
+        r"try again in\s*(\d+)\s*seconds?",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, error_body, re.IGNORECASE)
+        if match:
+            duration_str = match.group(1)
+            result = _parse_duration_string(duration_str)
+            if result is not None:
+                return result
+
+    return None
+
+
+class NoAvailableKeysError(Exception):
+    """Raised when no API keys are available for a request after waiting."""
+
+    pass
+
+
+class PreRequestCallbackError(Exception):
+    """Raised when a pre-request callback fails."""
+
+    pass
+
+
+class CredentialNeedsReauthError(Exception):
+    """
+    Raised when a credential's refresh token is invalid and re-authentication is required.
+
+    This is a rotatable error - the request should try the next credential while
+    the broken credential is queued for re-authentication in the background.
+
+    Unlike generic HTTPStatusError, this exception signals:
+    - The credential is temporarily unavailable (needs user action)
+    - Re-auth has already been queued
+    - The request should rotate to the next credential without logging scary tracebacks
+
+    Attributes:
+        credential_path: Path to the credential file that needs re-auth
+        message: Human-readable message about the error
+    """
+
+    def __init__(self, credential_path: str, message: str = ""):
+        self.credential_path = credential_path
+        self.message = (
+            message or f"Credential '{credential_path}' requires re-authentication"
+        )
+        super().__init__(self.message)
+
+
+class EmptyResponseError(Exception):
+    """
+    Raised when a provider returns an empty response after multiple retry attempts.
+
+    This is a rotatable error - the request should try the next credential.
+    Treated as a transient server-side issue (503 equivalent).
+
+    Attributes:
+        provider: The provider name (e.g., "gemini_cli")
+        model: The model that was requested
+        message: Human-readable message about the error
+    """
+
+    def __init__(self, provider: str, model: str, message: str = ""):
+        self.provider = provider
+        self.model = model
+        self.message = (
+            message
+            or f"Empty response from {provider}/{model} after multiple retry attempts"
+        )
+        super().__init__(self.message)
+
+
+class TransientQuotaError(Exception):
+    """
+    Raised when a provider returns a 429 without retry timing information.
+
+    This indicates a transient rate limit rather than true quota exhaustion.
+    The request has already been retried internally; this error signals
+    that the credential should be rotated to try the next one.
+
+    Treated as a transient server-side issue (503 equivalent), same as EmptyResponseError.
+
+    Attributes:
+        provider: The provider name (e.g., "gemini_cli")
+        model: The model that was requested
+        message: Human-readable message about the error
+    """
+
+    def __init__(self, provider: str, model: str, message: str = ""):
+        self.provider = provider
+        self.model = model
+        self.message = (
+            message
+            or f"Transient 429 from {provider}/{model} after multiple retry attempts"
+        )
+        super().__init__(self.message)
+
+
+# =============================================================================
+# ERROR TRACKING FOR CLIENT REPORTING
+# =============================================================================
+
+# Abnormal errors that require attention and should always be reported to client
+ABNORMAL_ERROR_TYPES = frozenset(
+    {
+        "forbidden",  # 403 - credential access issue
+        "authentication",  # 401 - credential invalid/revoked
+        "pre_request_callback_error",  # Internal proxy error
+    }
+)
+
+# Normal/expected errors during operation - only report if ALL credentials fail
+NORMAL_ERROR_TYPES = frozenset(
+    {
+        "rate_limit",  # 429 - expected during high load
+        "quota_exceeded",  # Expected when quota runs out
+        "server_error",  # 5xx - transient provider issues
+        "api_connection",  # Network issues - transient
+    }
+)
+
+
+def is_abnormal_error(classified_error: "ClassifiedError") -> bool:
+    """
+    Check if an error is abnormal and should be reported to the client.
+
+    Abnormal errors indicate credential issues that need attention:
+    - 403 Forbidden: Credential doesn't have access
+    - 401 Unauthorized: Credential is invalid/revoked
+
+    Normal errors are expected during operation:
+    - 429 Rate limit: Expected during high load
+    - 5xx Server errors: Transient provider issues
+    """
+    return classified_error.error_type in ABNORMAL_ERROR_TYPES
+
+
+def mask_credential(credential: str, style: str = "short") -> str:
+    """
+    Mask a credential for safe display in logs and error messages.
+
+    Args:
+        credential: The credential string to mask
+        style: Masking style - "short" (last 6 chars) or "full" (first 4 + last 4)
+
+    Returns:
+        Masked credential string:
+        - For OAuth file paths: shows just the filename (e.g., "oauth_1.json")
+        - For emails: preserves structure (e.g., "sco***05@***.com")
+        - For API keys with style="short": shows last 6 chars (e.g., "...xyz123")
+        - For API keys with style="full": shows first 4 + last 4 (e.g., "AIza...3456")
+    """
+    # File paths: show just filename
+    if os.path.isfile(credential) or credential.endswith(".json"):
+        return os.path.basename(credential)
+
+    # Email addresses: preserve structure with masking
+    if "@" in credential and "." in credential.split("@")[-1]:
+        local, domain = credential.rsplit("@", 1)
+
+        # Mask local part: first 3 + *** + last 2 (if long enough)
+        if len(local) > 5:
+            masked_local = f"{local[:3]}***{local[-2:]}"
+        elif len(local) > 2:
+            masked_local = f"{local[:2]}***"
+        else:
+            masked_local = "***"
+
+        # Mask domain: keep only TLD
+        if "." in domain:
+            tld = domain.rsplit(".", 1)[1]
+            masked_domain = f"***.{tld}"
+        else:
+            masked_domain = "***"
+
+        return f"{masked_local}@{masked_domain}"
+
+    # API keys: original masking logic
+    if style == "full" and len(credential) > 12:
+        return f"{credential[:4]}...{credential[-4:]}"
+    elif len(credential) > 6:
+        return f"...{credential[-6:]}"
+    else:
+        return "***"
+
+
+class RequestErrorAccumulator:
+    """
+    Tracks errors encountered during a request's credential rotation cycle.
+
+    Used to build informative error messages for clients when all credentials
+    are exhausted. Distinguishes between abnormal errors (that need attention)
+    and normal errors (expected during operation).
+    """
+
+    def __init__(self):
+        self.abnormal_errors: list = []  # 403, 401 - always report details
+        self.normal_errors: list = []  # 429, 5xx - summarize only
+        self._tried_credentials: set = set()  # Track unique credentials
+        self.timeout_occurred: bool = False
+        self.model: str = ""
+        self.provider: str = ""
+
+    def record_error(
+        self, credential: str, classified_error: "ClassifiedError", error_message: str
+    ):
+        """Record an error for a credential."""
+        self._tried_credentials.add(credential)
+        masked_cred = mask_credential(credential)
+
+        error_record = {
+            "credential": masked_cred,
+            "error_type": classified_error.error_type,
+            "status_code": classified_error.status_code,
+            "message": self._truncate_message(error_message, 150),
+        }
+
+        if is_abnormal_error(classified_error):
+            self.abnormal_errors.append(error_record)
+        else:
+            self.normal_errors.append(error_record)
+
+    @property
+    def total_credentials_tried(self) -> int:
+        """Return the number of unique credentials tried."""
+        return len(self._tried_credentials)
+
+    def _truncate_message(self, message: str, max_length: int = 150) -> str:
+        """Truncate error message for readability."""
+        # Take first line and truncate
+        first_line = message.split("\n")[0]
+        if len(first_line) > max_length:
+            return first_line[:max_length] + "..."
+        return first_line
+
+    def has_errors(self) -> bool:
+        """Check if any errors were recorded."""
+        return bool(self.abnormal_errors or self.normal_errors)
+
+    def has_abnormal_errors(self) -> bool:
+        """Check if any abnormal errors were recorded."""
+        return bool(self.abnormal_errors)
+
+    def get_normal_error_summary(self) -> str:
+        """Get a summary of normal errors (not individual details)."""
+        if not self.normal_errors:
+            return ""
+
+        # Count by type
+        counts = {}
+        for err in self.normal_errors:
+            err_type = err["error_type"]
+            counts[err_type] = counts.get(err_type, 0) + 1
+
+        # Build summary like "3 rate_limit, 1 server_error"
+        parts = [f"{count} {err_type}" for err_type, count in counts.items()]
+        return ", ".join(parts)
+
+    def build_client_error_response(self) -> dict:
+        """
+        Build a structured error response for the client.
+
+        Returns a dict suitable for JSON serialization in the error response.
+        """
+        # Determine the primary failure reason
+        if self.timeout_occurred:
+            error_type = "proxy_timeout"
+            base_message = f"Request timed out after trying {self.total_credentials_tried} credential(s)"
+        else:
+            error_type = "proxy_all_credentials_exhausted"
+            base_message = f"All {self.total_credentials_tried} credential(s) exhausted for {self.provider}"
+
+        # Build human-readable message
+        message_parts = [base_message]
+
+        if self.abnormal_errors:
+            message_parts.append("\n\nCredential issues (require attention):")
+            for err in self.abnormal_errors:
+                status = (
+                    f"HTTP {err['status_code']}"
+                    if err["status_code"] is not None
+                    else err["error_type"]
+                )
+                message_parts.append(
+                    f"\n  • {err['credential']}: {status} - {err['message']}"
+                )
+
+        normal_summary = self.get_normal_error_summary()
+        if normal_summary:
+            if self.abnormal_errors:
+                message_parts.append(
+                    f"\n\nAdditionally: {normal_summary} (expected during normal operation)"
+                )
+            else:
+                message_parts.append(f"\n\nAll failures were: {normal_summary}")
+                message_parts.append(
+                    "\nThis is normal during high load - retry later or add more credentials."
+                )
+
+        response = {
+            "error": {
+                "message": "".join(message_parts),
+                "type": error_type,
+                "details": {
+                    "model": self.model,
+                    "provider": self.provider,
+                    "credentials_tried": self.total_credentials_tried,
+                    "timeout": self.timeout_occurred,
+                },
+            }
+        }
+
+        # Only include abnormal errors in details (they need attention)
+        if self.abnormal_errors:
+            response["error"]["details"]["abnormal_errors"] = self.abnormal_errors
+
+        # Include summary of normal errors
+        if normal_summary:
+            response["error"]["details"]["normal_error_summary"] = normal_summary
+
+        return response
+
+    def build_log_message(self) -> str:
+        """
+        Build a concise log message for server-side logging.
+
+        Shorter than client message, suitable for terminal display.
+        """
+        parts = []
+
+        if self.timeout_occurred:
+            parts.append(
+                f"TIMEOUT: {self.total_credentials_tried} creds tried for {self.model}"
+            )
+        else:
+            parts.append(
+                f"ALL CREDS EXHAUSTED: {self.total_credentials_tried} tried for {self.model}"
+            )
+
+        if self.abnormal_errors:
+            abnormal_summary = ", ".join(
+                f"{e['credential']}={e['status_code'] or e['error_type']}"
+                for e in self.abnormal_errors
+            )
+            parts.append(f"ISSUES: {abnormal_summary}")
+
+        normal_summary = self.get_normal_error_summary()
+        if normal_summary:
+            parts.append(f"Normal: {normal_summary}")
+
+        return " | ".join(parts)
+
+
+class ClassifiedError:
+    """A structured representation of a classified error."""
+
+    def __init__(
+        self,
+        error_type: str,
+        original_exception: Exception,
+        status_code: Optional[int] = None,
+        retry_after: Optional[int] = None,
+        quota_reset_timestamp: Optional[float] = None,
+        quota_value: Optional[str] = None,
+        quota_id: Optional[str] = None,
+    ):
+        self.error_type = error_type
+        self.original_exception = original_exception
+        self.status_code = status_code
+        self.retry_after = retry_after
+        # Unix timestamp when quota resets (from quota_exhausted errors)
+        # This is the authoritative reset time parsed from provider's error response
+        self.quota_reset_timestamp = quota_reset_timestamp
+        # Quota details extracted from Google/Gemini API error responses
+        self.quota_value = quota_value  # e.g., "50" or "1000/minute"
+        self.quota_id = quota_id  # e.g., "GenerateContentPerMinutePerProject"
+
+    def __str__(self):
+        parts = [
+            f"type={self.error_type}",
+            f"status={self.status_code}",
+            f"retry_after={self.retry_after}",
+        ]
+        if self.quota_reset_timestamp:
+            parts.append(f"quota_reset_ts={self.quota_reset_timestamp}")
+        if self.quota_value:
+            parts.append(f"quota_value={self.quota_value}")
+        if self.quota_id:
+            parts.append(f"quota_id={self.quota_id}")
+        parts.append(f"original_exc={self.original_exception}")
+        return f"ClassifiedError({', '.join(parts)})"
+
+
+def _extract_retry_from_json_body(json_text: str) -> Optional[int]:
+    """
+    Extract retry delay from a JSON error response body.
+
+    Handles Google API error formats with details array containing:
+    - RetryInfo with retryDelay: "562476.752463453s"
+    - ErrorInfo metadata with quotaResetDelay: "156h14m36.752463453s"
+
+    Args:
+        json_text: JSON string (original case, not lowercased)
+
+    Returns:
+        Retry delay in seconds, or None if not found
+    """
+    try:
+        # Find JSON object in the text
+        json_match = re.search(r"(\{.*\})", json_text, re.DOTALL)
+        if not json_match:
+            return None
+
+        error_json = json.loads(json_match.group(1))
+        details = error_json.get("error", {}).get("details", [])
+
+        # Iterate through ALL details items (not just index 0)
+        for detail in details:
+            detail_type = detail.get("@type", "")
+
+            # Check RetryInfo for retryDelay (most authoritative)
+            # Note: Case-sensitive key names as returned by API
+            if "google.rpc.RetryInfo" in detail_type:
+                delay_str = detail.get("retryDelay")
+                if delay_str:
+                    # Handle both {"seconds": "123"} format and "123.456s" string format
+                    if isinstance(delay_str, dict):
+                        seconds = delay_str.get("seconds")
+                        if seconds:
+                            return int(float(seconds))
+                    elif isinstance(delay_str, str):
+                        result = _parse_duration_string(delay_str)
+                        if result is not None:
+                            return result
+
+            # Check ErrorInfo metadata for quotaResetDelay.
+            if "google.rpc.ErrorInfo" in detail_type:
+                metadata = detail.get("metadata", {})
+                # Try both camelCase and lowercase variants
+                quota_reset_delay = metadata.get("quotaResetDelay") or metadata.get(
+                    "quotaresetdelay"
+                )
+                if quota_reset_delay:
+                    result = _parse_duration_string(quota_reset_delay)
+                    if result is not None:
+                        return result
+
+    except (json.JSONDecodeError, IndexError, KeyError, TypeError):
+        pass
+
+    return None
+
+
+def _extract_quota_details(json_text: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extract quota details (quotaValue, quotaId) from a JSON error response.
+
+    Handles Google/Gemini API error formats with nested details array containing
+    QuotaFailure violations.
+
+    Example error structure:
+    {
+        "error": {
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                    "violations": [
+                        {
+                            "quotaValue": "50",
+                            "quotaId": "GenerateContentPerMinutePerProject"
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    Args:
+        json_text: JSON string containing error response
+
+    Returns:
+        Tuple of (quota_value, quota_id), both None if not found
+    """
+    try:
+        # Find JSON object in the text
+        json_match = re.search(r"(\{.*\})", json_text, re.DOTALL)
+        if not json_match:
+            return None, None
+
+        error_json = json.loads(json_match.group(1))
+        error_obj = error_json.get("error", {})
+        details = error_obj.get("details", [])
+
+        if not isinstance(details, list):
+            return None, None
+
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+
+            violations = detail.get("violations", [])
+            if not isinstance(violations, list):
+                continue
+
+            for violation in violations:
+                if not isinstance(violation, dict):
+                    continue
+
+                quota_value = violation.get("quotaValue")
+                quota_id = violation.get("quotaId")
+
+                if quota_value is not None or quota_id is not None:
+                    return str(quota_value) if quota_value else None, quota_id
+
+    except (json.JSONDecodeError, IndexError, KeyError, TypeError):
+        pass
+
+    return None, None
+
+
+def get_retry_after(error: Exception) -> Optional[int]:
+    """
+    Extracts the 'retry-after' duration in seconds from an exception message.
+    Handles both integer and string representations of the duration, as well as JSON bodies.
+    Also checks HTTP response headers for httpx.HTTPStatusError instances.
+
+    Supports Google API error formats:
+    - RetryInfo with retryDelay: "562476.752463453s"
+    - ErrorInfo metadata with quotaResetDelay: "156h14m36.752463453s"
+    - Human-readable message: "quota will reset after 156h14m36s"
+    """
+    # 0. For httpx errors, check response body and headers
+    if isinstance(error, httpx.HTTPStatusError):
+        # First, try to parse the response body JSON (contains retryDelay/quotaResetDelay)
+            # Some Google APIs put retry information in the response body.
+        try:
+            response_text = error.response.text
+            if response_text:
+                result = _extract_retry_from_json_body(response_text)
+                if result is not None:
+                    return result
+        except Exception:
+            pass  # Response body may not be available
+
+        # Fallback to HTTP headers
+        headers = error.response.headers
+        # Check standard Retry-After header (case-insensitive)
+        retry_header = headers.get("retry-after") or headers.get("Retry-After")
+        if retry_header:
+            try:
+                return int(retry_header)  # Assumes seconds format
+            except ValueError:
+                pass  # Might be HTTP date format, skip for now
+
+        # Check X-RateLimit-Reset header (Unix timestamp)
+        reset_header = headers.get("x-ratelimit-reset") or headers.get(
+            "X-RateLimit-Reset"
+        )
+        if reset_header:
+            try:
+                import time
+
+                reset_timestamp = int(reset_header)
+                current_time = int(time.time())
+                wait_seconds = reset_timestamp - current_time
+                if wait_seconds > 0:
+                    return wait_seconds
+            except (ValueError, TypeError):
+                pass
+
+    # 1. Try to parse JSON from the error string representation
+    # Some exceptions embed JSON in their string representation
+    error_str = str(error)
+    result = _extract_retry_from_json_body(error_str)
+    if result is not None:
+        return result
+
+    # 2. Common regex patterns for 'retry-after' (with compound duration support)
+    # Use lowercase for pattern matching
+    error_str_lower = error_str.lower()
+    patterns = [
+        r"retry[-_\s]after:?\s*(\d+)",  # Matches: retry-after, retry_after, retry after
+        r"retry in\s*(\d+)\s*seconds?",
+        r"wait for\s*(\d+)\s*seconds?",
+        r'"retrydelay":\s*"([\d.]+)s?"',  # retryDelay in JSON (lowercased)
+        r"x-ratelimit-reset:?\s*(\d+)",
+        # Compound duration patterns.
+        r"quota will reset after\s*([\dhms.]+)",  # e.g., "156h14m36s" or "120s"
+        r"reset after\s*([\dhms.]+)",
+        r'"quotaresetdelay":\s*"([\dhms.]+)"',  # quotaResetDelay in JSON (lowercased)
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, error_str_lower)
+        if match:
+            duration_str = match.group(1)
+            # Try parsing as compound duration first
+            result = _parse_duration_string(duration_str)
+            if result is not None:
+                return result
+            # Fallback to simple integer
+            try:
+                return int(duration_str)
+            except (ValueError, IndexError):
+                continue
+
+    # 3. Handle cases where the error object itself has the attribute
+    if hasattr(error, "retry_after"):
+        value = getattr(error, "retry_after")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            result = _parse_duration_string(value)
+            if result is not None:
+                return result
+
+    return None
+
+
+def classify_error(e: Exception, provider: Optional[str] = None) -> ClassifiedError:
+    """
+    Classifies an exception into a structured ClassifiedError object.
+    Now handles both litellm and httpx exceptions.
+
+    If provider is specified and has a parse_quota_error() method,
+    attempts provider-specific error parsing first before falling back
+    to generic classification.
+
+    Error types and their typical handling:
+    - rate_limit (429): Rotate key, may retry with backoff
+    - server_error (5xx): Retry with backoff, then rotate
+    - forbidden (403): Rotate key immediately (access denied for this credential)
+    - authentication (401): Rotate key, trigger re-auth if OAuth
+    - quota_exceeded: Rotate key (credential quota exhausted)
+    - invalid_request (400): Don't retry - client error in request
+    - context_window_exceeded: Don't retry - request too large
+    - api_connection: Retry with backoff, then rotate
+    - unknown: Rotate key (safer to try another)
+
+    Args:
+        e: The exception to classify
+        provider: Optional provider name for provider-specific error parsing
+
+    Returns:
+        ClassifiedError with error_type, status_code, retry_after, etc.
+    """
+    if isinstance(e, dict):
+        payload = e.get("error", e)
+        if isinstance(payload, dict):
+            code = payload.get("code")
+            status = str(payload.get("status", "")).upper()
+            try:
+                status_code = int(code) if code is not None else None
+            except (TypeError, ValueError):
+                status_code = None
+            if (status_code is not None and status_code >= 500) or status in {
+                "INTERNAL",
+                "UNAVAILABLE",
+            }:
+                return ClassifiedError(
+                    error_type="server_error",
+                    original_exception=e,
+                    status_code=status_code or 503,
+                )
+
+    error_text = str(e)
+    error_type_name = type(e).__name__
+    if (
+        "MidStreamFallbackError" in error_type_name
+        or "MidStreamFallbackError" in error_text
+    ) and (
+        "InternalServerError" in error_text
+        or "HTTPStatusError" in error_text
+        or '"code":500' in error_text.replace(" ", "")
+        or "status INTERNAL" in error_text
+    ):
+        return ClassifiedError(
+            error_type="server_error",
+            original_exception=e,
+            status_code=500,
+        )
+
+    # Try provider-specific parsing first for 429/rate limit errors
+    if provider:
+        try:
+            from .providers import PROVIDER_PLUGINS
+
+            provider_class = PROVIDER_PLUGINS.get(provider)
+
+            if provider_class and hasattr(provider_class, "parse_quota_error"):
+                # Get error body if available
+                error_body = None
+                if hasattr(e, "response") and hasattr(e.response, "text"):
+                    try:
+                        error_body = e.response.text
+                    except Exception:
+                        pass
+                elif hasattr(e, "body"):
+                    error_body = str(e.body)
+
+                quota_info = provider_class.parse_quota_error(e, error_body)
+
+                if quota_info and quota_info.get("retry_after"):
+                    retry_after = quota_info["retry_after"]
+                    reason = quota_info.get("reason", "QUOTA_EXHAUSTED")
+                    reset_ts = quota_info.get("reset_timestamp")
+                    quota_reset_timestamp = quota_info.get("quota_reset_timestamp")
+
+                    # Extract quota details from error body
+                    quota_value, quota_id = None, None
+                    if error_body:
+                        quota_value, quota_id = _extract_quota_details(error_body)
+
+                    # Log the parsed result with human-readable duration
+                    hours = retry_after / 3600
+                    lib_logger.info(
+                        f"Provider '{provider}' parsed quota error: "
+                        f"retry_after={retry_after}s ({hours:.1f}h), reason={reason}"
+                        + (f", resets at {reset_ts}" if reset_ts else "")
+                        + (f", quota={quota_value}" if quota_value else "")
+                        + (f", quotaId={quota_id}" if quota_id else "")
+                    )
+
+                    return ClassifiedError(
+                        error_type="quota_exceeded",
+                        original_exception=e,
+                        status_code=429,
+                        retry_after=retry_after,
+                        quota_reset_timestamp=quota_reset_timestamp,
+                        quota_value=quota_value,
+                        quota_id=quota_id,
+                    )
+        except Exception as parse_error:
+            lib_logger.debug(
+                f"Provider-specific error parsing failed for '{provider}': {parse_error}"
+            )
+            # Fall through to generic classification
+
+    # Generic classification logic
+    status_code = getattr(e, "status_code", None)
+
+    if isinstance(e, httpx.HTTPStatusError):  # [NEW] Handle httpx errors first
+        status_code = e.response.status_code
+
+        # Try to get error body for better classification
+        try:
+            error_body = e.response.text.lower() if hasattr(e.response, "text") else ""
+        except Exception:
+            error_body = ""
+
+        if status_code == 401:
+            return ClassifiedError(
+                error_type="authentication",
+                original_exception=e,
+                status_code=status_code,
+            )
+        if status_code == 403:
+            # 403 Forbidden - credential doesn't have access, should rotate
+            # Could be: IP restriction, account disabled, permission denied, etc.
+            return ClassifiedError(
+                error_type="forbidden",
+                original_exception=e,
+                status_code=status_code,
+            )
+        if status_code == 429:
+            retry_after = get_retry_after(e)
+            # Check if this is a quota error vs rate limit
+            if "quota" in error_body or "resource_exhausted" in error_body:
+                # Extract quota details from the original (non-lowercased) response
+                quota_value, quota_id = None, None
+                try:
+                    original_body = (
+                        e.response.text if hasattr(e.response, "text") else ""
+                    )
+                    quota_value, quota_id = _extract_quota_details(original_body)
+                except Exception:
+                    pass
+
+                return ClassifiedError(
+                    error_type="quota_exceeded",
+                    original_exception=e,
+                    status_code=status_code,
+                    retry_after=retry_after,
+                    quota_value=quota_value,
+                    quota_id=quota_id,
+                )
+            return ClassifiedError(
+                error_type="rate_limit",
+                original_exception=e,
+                status_code=status_code,
+                retry_after=retry_after,
+            )
+        if status_code == 400:
+            # Check for context window / token limit errors with more specific patterns
+            if any(
+                pattern in error_body
+                for pattern in [
+                    "context_length",
+                    "max_tokens",
+                    "token limit",
+                    "context window",
+                    "too many tokens",
+                    "too long",
+                ]
+            ):
+                return ClassifiedError(
+                    error_type="context_window_exceeded",
+                    original_exception=e,
+                    status_code=status_code,
+                )
+            return ClassifiedError(
+                error_type="invalid_request",
+                original_exception=e,
+                status_code=status_code,
+            )
+            return ClassifiedError(
+                error_type="invalid_request",
+                original_exception=e,
+                status_code=status_code,
+            )
+        if 400 <= status_code < 500:
+            # Other 4xx errors - generally client errors
+            return ClassifiedError(
+                error_type="invalid_request",
+                original_exception=e,
+                status_code=status_code,
+            )
+        if 500 <= status_code:
+            # Log 503 MODEL_CAPACITY_EXHAUSTED for visibility
+            # (Provider-level handling may intercept this before it reaches here)
+            if status_code == 503:
+                try:
+                    capacity_exhausted = False
+                    if error_body and "MODEL_CAPACITY_EXHAUSTED" in error_body:
+                        capacity_exhausted = True
+                    else:
+                        # Try to get from response if not in lowercased body
+                        original_body = (
+                            e.response.text if hasattr(e.response, "text") else ""
+                        )
+                        if "MODEL_CAPACITY_EXHAUSTED" in original_body:
+                            capacity_exhausted = True
+
+                    if capacity_exhausted:
+                        lib_logger.info(
+                            "503 MODEL_CAPACITY_EXHAUSTED detected - "
+                            "will be handled with provider/model cooldown"
+                        )
+                except Exception:
+                    pass
+
+            # Let the executor apply request-scoped retry pacing for transient 5xx.
+            return ClassifiedError(
+                error_type="server_error",
+                original_exception=e,
+                status_code=status_code,
+            )
+
+    if isinstance(
+        e, (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)
+    ):  # [NEW]
+        return ClassifiedError(
+            error_type="api_connection", original_exception=e, status_code=status_code
+        )
+
+    if isinstance(e, PreRequestCallbackError):
+        return ClassifiedError(
+            error_type="pre_request_callback_error",
+            original_exception=e,
+            status_code=400,  # Treat as a bad request
+        )
+
+    if isinstance(e, CredentialNeedsReauthError):
+        # This is a rotatable error - credential is broken but re-auth is queued
+        return ClassifiedError(
+            error_type="credential_reauth_needed",
+            original_exception=e,
+            status_code=401,  # Treat as auth error for reporting purposes
+        )
+
+    if isinstance(e, EmptyResponseError):
+        # Transient server-side issue - provider returned empty response
+        # This is rotatable - try next credential
+        return ClassifiedError(
+            error_type="server_error",
+            original_exception=e,
+            status_code=503,
+        )
+
+    if isinstance(e, TransientQuotaError):
+        # Transient 429 without retry info - provider returned bare rate limit
+        # This is rotatable - try next credential
+        return ClassifiedError(
+            error_type="server_error",
+            original_exception=e,
+            status_code=503,
+        )
+
+    if isinstance(e, RateLimitError):
+        retry_after = get_retry_after(e)
+        # Check if this is a quota error vs rate limit
+        error_msg = str(e).lower()
+        if "quota" in error_msg or "resource_exhausted" in error_msg:
+            # Try to extract quota details from exception body
+            quota_value, quota_id = None, None
+            try:
+                error_body = getattr(e, "body", None) or str(e)
+                quota_value, quota_id = _extract_quota_details(str(error_body))
+            except Exception:
+                pass
+
+            return ClassifiedError(
+                error_type="quota_exceeded",
+                original_exception=e,
+                status_code=status_code or 429,
+                retry_after=retry_after,
+                quota_value=quota_value,
+                quota_id=quota_id,
+            )
+        return ClassifiedError(
+            error_type="rate_limit",
+            original_exception=e,
+            status_code=status_code or 429,
+            retry_after=retry_after,
+        )
+
+    if isinstance(e, (AuthenticationError,)):
+        return ClassifiedError(
+            error_type="authentication",
+            original_exception=e,
+            status_code=status_code or 401,
+        )
+
+    if isinstance(e, (InvalidRequestError, BadRequestError)):
+        return ClassifiedError(
+            error_type="invalid_request",
+            original_exception=e,
+            status_code=status_code or 400,
+        )
+
+    if isinstance(e, ContextWindowExceededError):
+        return ClassifiedError(
+            error_type="context_window_exceeded",
+            original_exception=e,
+            status_code=status_code or 400,
+        )
+
+    if isinstance(e, (APIConnectionError, Timeout)):
+        return ClassifiedError(
+            error_type="api_connection",
+            original_exception=e,
+            status_code=status_code or 503,  # Treat like a server error
+        )
+
+    if isinstance(e, (ServiceUnavailableError, InternalServerError)):
+        # These are often temporary server-side issues
+        # Note: OpenAIError removed - it's too broad and can catch client errors
+        return ClassifiedError(
+            error_type="server_error",
+            original_exception=e,
+            status_code=status_code or 503,
+        )
+
+    # Fallback for any other unclassified errors
+    return ClassifiedError(
+        error_type="unknown", original_exception=e, status_code=status_code
+    )
+
+
+def is_rate_limit_error(e: Exception) -> bool:
+    """Checks if the exception is a rate limit error."""
+    return isinstance(e, RateLimitError)
+
+
+def is_server_error(e: Exception) -> bool:
+    """Checks if the exception is a temporary server-side error."""
+    return isinstance(
+        e,
+        (ServiceUnavailableError, APIConnectionError, InternalServerError, OpenAIError),
+    )
+
+
+def is_unrecoverable_error(e: Exception) -> bool:
+    """
+    Checks if the exception is a non-retriable client-side error.
+    These are errors that will not resolve on their own.
+    """
+    return isinstance(e, (InvalidRequestError, AuthenticationError, BadRequestError))
+
+
+def should_rotate_on_error(classified_error: ClassifiedError) -> bool:
+    """
+    Determines if an error should trigger key rotation.
+
+    Errors that SHOULD rotate (try another key):
+    - rate_limit: Current key is throttled
+    - quota_exceeded: Current key/account exhausted
+    - forbidden: Current credential denied access
+    - authentication: Current credential invalid
+    - credential_reauth_needed: Credential needs interactive re-auth (queued)
+    - server_error: Provider having issues (might work with different endpoint/key)
+    - api_connection: Network issues (might be transient)
+    - unknown: Safer to try another key
+
+    Errors that should NOT rotate (fail immediately):
+    - invalid_request: Client error in request payload (won't help to retry)
+    - context_window_exceeded: Request too large (won't help to retry)
+    - pre_request_callback_error: Internal proxy error
+
+    Returns:
+        True if should rotate to next key, False if should fail immediately
+    """
+    non_rotatable_errors = {
+        "invalid_request",
+        "context_window_exceeded",
+        "pre_request_callback_error",
+    }
+    return classified_error.error_type not in non_rotatable_errors
+
+
+def should_retry_same_key(
+    classified_error: ClassifiedError,
+    small_cooldown_threshold: int = 10,
+) -> bool:
+    """
+    Determines if an error should retry with the same key (with backoff).
+
+    Retry same key if:
+    1. Any error with a small retry_after (< threshold) - more efficient to wait
+       than rotate and disrupt cache locality
+    2. Server errors or connection issues (often transient)
+
+    Args:
+        classified_error: The classified error
+        small_cooldown_threshold: If retry_after < this, always retry same key.
+            Default is 10 seconds. Override via SMALL_COOLDOWN_RETRY_THRESHOLD env var.
+
+    Returns:
+        True if should retry same key, False if should rotate immediately
+    """
+    # Small retry_after = faster to just wait than rotate
+    # This preserves cache locality and avoids unnecessary rotation
+    if (
+        classified_error.retry_after is not None
+        and 0 < classified_error.retry_after < small_cooldown_threshold
+    ):
+        return True
+
+    # Standard transient errors that should retry same key
+    retryable_errors = {
+        "server_error",
+        "api_connection",
+    }
+    return classified_error.error_type in retryable_errors
