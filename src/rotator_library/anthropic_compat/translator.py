@@ -626,4 +626,12 @@ def translate_anthropic_request(request: AnthropicMessagesRequest) -> Dict[str, 
         elif request.thinking.type == "disabled":
             openai_request["reasoning_effort"] = "disable"
 
+    provider = request.model.split("/", 1)[0].lower() if "/" in request.model else ""
+    if provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}:
+        # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
+        # sampling/thinking fields. Keep the request strict for Claude Code.
+        openai_request.pop("top_k", None)
+        if openai_request.get("reasoning_effort") in {"disable", "disabled", "none"}:
+            openai_request.pop("reasoning_effort", None)
+
     return openai_request

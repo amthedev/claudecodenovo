@@ -197,6 +197,8 @@ Claude Code natively supports custom Anthropic API endpoints. The recommended se
 
 If Claude Code sends a providerless model such as `claude-code-pro`, the proxy maps it to `PROXY_DEFAULT_MODEL` when set, or to the first configured provider model such as `hosted_vllm/qwen25-coder-32b`.
 
+For hosted vLLM backends, the Anthropic compatibility layer strips Anthropic-only fields that vLLM rejects, such as `top_k` and disabled thinking flags.
+
 Now you can use Claude Code with Gemini, OpenAI, or any other configured provider.
 
 </details>

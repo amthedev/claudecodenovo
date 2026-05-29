@@ -1831,8 +1831,11 @@ def _static_env_models() -> List[str]:
             try:
                 parsed = json.loads(stripped)
             except (json.JSONDecodeError, TypeError):
-                logging.warning("Ignoring invalid JSON in %s", key)
-                continue
+                parsed = [
+                    name.strip().strip("\"'")
+                    for name in stripped.split(",")
+                    if name.strip().strip("\"'")
+                ]
 
         if isinstance(parsed, str):
             try:
