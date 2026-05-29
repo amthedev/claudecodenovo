@@ -628,10 +628,17 @@ async def lifespan(app: FastAPI):
     app.state.model_info_service = model_info_service
     logging.info("Model info service started (fetching pricing data in background).")
 
-    # Inicializa SQLite admin e registra rotas
-    _admin_init_db()
-    _register_admin(app, proxy_api_key=proxy_api_key)
-    logging.info("[admin_db] SQLite admin inicializado.")
+    # Inicializa SQLite admin e registra rotas (carregamento seguro)
+    try:
+        from proxy_app.admin_db import init_db as _adb_init
+        from proxy_app.admin_routes import register_admin_routes as _areg
+        _adb_init()
+        _areg(app, proxy_api_key=proxy_api_key)
+        logging.info("[admin_db] SQLite admin carregado com sucesso.")
+    except ImportError:
+        logging.warning("[admin_db] Modulos admin_db/admin_routes nao encontrados — usando admin legado.")
+    except Exception as _e:
+        logging.warning(f"[admin_db] Falha ao inicializar admin SQLite: {_e}")
 
     yield
 
