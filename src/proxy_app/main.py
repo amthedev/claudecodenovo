@@ -235,6 +235,7 @@ class EnrichedModelList(BaseModel):
 from rotator_library.anthropic_compat import (
     AnthropicMessagesRequest,
     AnthropicCountTokensRequest,
+    AnthropicThinkingConfig,
 )
 
 
@@ -823,6 +824,31 @@ def _resolve_model_alias(model: Optional[str]) -> Optional[str]:
     return model
 
 
+def _apply_thinking_mode_openai(request_data: dict, original_model: str) -> None:
+    """
+    Injeta modo thinking do Qwen3 baseado no nome original do modelo.
+    - opus  -> enable_thinking=True, budget=10000 tokens (mais inteligente, mais lento)
+    - outros -> enable_thinking=False (rapido, sem raciocinio extendido)
+    """
+    is_opus = "opus" in (original_model or "").lower()
+    extra = request_data.setdefault("extra_body", {})
+    extra.setdefault("chat_template_kwargs", {})["enable_thinking"] = is_opus
+    if is_opus:
+        extra["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+        logging.info("[thinking] opus -> enable_thinking=True (deep analysis)")
+    else:
+        logging.info("[thinking] sonnet -> enable_thinking=False (fast)")
+
+
+def _virtual_claude_models() -> list:
+    """
+    Retorna lista de nomes Claude-branded para exibir no /v1/models.
+    Configuravel via env var VIRTUAL_MODELS (separado por virgula).
+    """
+    raw = os.getenv("VIRTUAL_MODELS", "claude-sonnet-4-5,claude-opus-4-6,claude-opus-4-7")
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
 def _active_admin_session(request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get(ADMIN_SESSION_COOKIE)
     if not token:
@@ -1138,7 +1164,9 @@ async def chat_completions(
         if raw_logger:
             raw_logger.log_request(headers=request.headers, body=request_data)
 
-        request_data["model"] = _resolve_model_alias(request_data.get("model"))
+        _orig_model = request_data.get("model", "")
+        request_data["model"] = _resolve_model_alias(_orig_model)
+        _apply_thinking_mode_openai(request_data, _orig_model)
 
         # Extract and log specific reasoning parameters for monitoring.
         model = request_data.get("model")
@@ -1257,7 +1285,14 @@ async def anthropic_messages(
         )
 
     try:
-        body = body.model_copy(update={"model": _resolve_model_alias(body.model)})
+        _orig_model_anthr = body.model or ""
+        _resolved_anthr = _resolve_model_alias(_orig_model_anthr)
+        _anthr_update = {"model": _resolved_anthr}
+        if body.thinking is None and "opus" in _orig_model_anthr.lower():
+            _anthr_update["thinking"] = AnthropicThinkingConfig(
+                type="enabled", budget_tokens=10000
+            )
+        body = body.model_copy(update=_anthr_update)
 
         # Log the request to console
         log_request_to_console(
@@ -1884,6 +1919,10 @@ async def list_models(
     model_ids = await client.get_all_available_models(grouped=False)
     if not model_ids:
         model_ids = _static_env_models()
+
+    # Adiciona modelos Claude-branded virtuais ao inicio da lista
+    virtual = _virtual_claude_models()
+    model_ids = list(dict.fromkeys(virtual + model_ids))
 
     if enriched and hasattr(request.app.state, "model_info_service"):
         model_info_service = request.app.state.model_info_service
