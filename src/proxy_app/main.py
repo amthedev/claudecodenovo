@@ -737,6 +737,33 @@ def _parse_daily_limit(value: Any) -> int:
         return 0
 
 
+def _parse_validity_days(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _expiry_from_days(validity_days: int) -> Optional[float]:
+    if validity_days <= 0:
+        return None
+    return time.time() + (validity_days * 86400)
+
+
+def _timestamp_value(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_expired(value: Any) -> bool:
+    ts = _timestamp_value(value)
+    return bool(ts and ts <= time.time())
+
+
 async def _read_form_data(request: Request) -> Dict[str, str]:
     body = (await request.body()).decode("utf-8")
     parsed = parse_qs(body, keep_blank_values=True)
@@ -782,6 +809,9 @@ def _verify_managed_api_key(api_key: str) -> Optional[Dict[str, Any]]:
             continue
         if not app_entry.get("active", True):
             raise HTTPException(status_code=403, detail="API key disabled")
+        expires_at = app_entry.get("expires_at")
+        if _is_expired(expires_at):
+            raise HTTPException(status_code=403, detail="API key expired")
 
         usage = app_entry.setdefault("usage", {})
         day_usage = usage.setdefault(today, {"requests": 0})
@@ -1489,8 +1519,13 @@ def _admin_dashboard(generated_key: str = "") -> HTMLResponse:
         today_usage = app_entry.get("usage", {}).get(today, {})
         requests_today = int(today_usage.get("requests", 0))
         daily_limit = _parse_daily_limit(app_entry.get("daily_limit"))
+        validity_days = _parse_validity_days(app_entry.get("validity_days"))
+        expires_at = app_entry.get("expires_at")
         limit_display = "sem limite" if daily_limit <= 0 else str(daily_limit)
+        expires_display = _format_ts(_timestamp_value(expires_at)) if expires_at else "sem expiração"
         status = "<span class='ok'>ativa</span>" if app_entry.get("active", True) else "<span class='warn'>pausada</span>"
+        if _is_expired(expires_at):
+            status = "<span class='warn'>expirada</span>"
         rows.append(
             f"""
             <tr>
@@ -1498,11 +1533,13 @@ def _admin_dashboard(generated_key: str = "") -> HTMLResponse:
               <td><code>{escape(app_entry.get("key_preview", ""))}</code></td>
               <td>{status}</td>
               <td>{requests_today} / {escape(limit_display)}</td>
+              <td>{escape(expires_display)}</td>
               <td>{_format_ts(app_entry.get("last_used_at"))}</td>
               <td>
                 <form method="post" action="/admin/apps/{escape(app_entry.get("id", ""))}/update" class="row-actions">
                   <input name="name" value="{escape(app_entry.get("name", ""))}" style="max-width:170px">
                   <input name="daily_limit" type="number" min="0" value="{daily_limit}" style="max-width:120px">
+                  <input name="validity_days" type="number" min="0" value="{validity_days}" title="Validade em dias. Use 0 para nunca expirar." style="max-width:120px">
                   <select name="active" style="max-width:110px">
                     <option value="true" {"selected" if app_entry.get("active", True) else ""}>ativa</option>
                     <option value="false" {"" if app_entry.get("active", True) else "selected"}>pausada</option>
@@ -1520,7 +1557,7 @@ def _admin_dashboard(generated_key: str = "") -> HTMLResponse:
             """
         )
 
-    rows_html = "\n".join(rows) or "<tr><td colspan='6' class='muted'>Nenhum app criado ainda.</td></tr>"
+    rows_html = "\n".join(rows) or "<tr><td colspan='7' class='muted'>Nenhum app criado ainda.</td></tr>"
     secret_html = ""
     if generated_key:
         secret_html = f"""
@@ -1550,7 +1587,9 @@ def _admin_dashboard(generated_key: str = "") -> HTMLResponse:
               <input name="name" placeholder="Meu app" required>
               <label>Limite diário de requests</label>
               <input name="daily_limit" type="number" min="0" value="0">
-              <p class="muted">Use 0 para deixar sem limite diário.</p>
+              <label>Validade da chave em dias</label>
+              <input name="validity_days" type="number" min="0" value="30">
+              <p class="muted">Use 0 para deixar sem limite diário ou sem expiração.</p>
               <button>Criar app e sk</button>
             </form>
           </section>
@@ -1564,7 +1603,7 @@ def _admin_dashboard(generated_key: str = "") -> HTMLResponse:
         <section class="panel" style="margin-top:16px;">
           <h2>Apps e chaves</h2>
           <table>
-            <thead><tr><th>App</th><th>Chave</th><th>Status</th><th>Uso hoje</th><th>Último uso</th><th>Ações</th></tr></thead>
+            <thead><tr><th>App</th><th>Chave</th><th>Status</th><th>Uso hoje</th><th>Expira em</th><th>Último uso</th><th>Ações</th></tr></thead>
             <tbody>{rows_html}</tbody>
           </table>
         </section>
@@ -1643,6 +1682,7 @@ async def admin_create_app(request: Request):
     form = await _read_form_data(request)
     name = str(form.get("name", "")).strip()
     daily_limit = _parse_daily_limit(form.get("daily_limit"))
+    validity_days = _parse_validity_days(form.get("validity_days"))
     if not name:
         return _admin_dashboard()
     api_key = _generate_proxy_key()
@@ -1656,6 +1696,8 @@ async def admin_create_app(request: Request):
             "key_preview": f"{api_key[:10]}...{api_key[-4:]}",
             "active": True,
             "daily_limit": daily_limit,
+            "validity_days": validity_days,
+            "expires_at": _expiry_from_days(validity_days),
             "created_at": time.time(),
             "updated_at": time.time(),
             "usage": {},
@@ -1675,6 +1717,9 @@ async def admin_update_app(app_id: str, request: Request):
             continue
         app_entry["name"] = str(form.get("name", app_entry.get("name", ""))).strip()
         app_entry["daily_limit"] = _parse_daily_limit(form.get("daily_limit"))
+        validity_days = _parse_validity_days(form.get("validity_days"))
+        app_entry["validity_days"] = validity_days
+        app_entry["expires_at"] = _expiry_from_days(validity_days)
         app_entry["active"] = str(form.get("active", "true")).lower() == "true"
         app_entry["updated_at"] = time.time()
         break
@@ -1692,6 +1737,9 @@ async def admin_rotate_app(app_id: str, request: Request):
             continue
         app_entry["key_hash"] = _hash_api_key(api_key)
         app_entry["key_preview"] = f"{api_key[:10]}...{api_key[-4:]}"
+        app_entry["expires_at"] = _expiry_from_days(
+            _parse_validity_days(app_entry.get("validity_days"))
+        )
         app_entry["updated_at"] = time.time()
         break
     _save_admin_data(data)

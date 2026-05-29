@@ -289,8 +289,9 @@ Open `/admin` on your deployed proxy to manage app keys from the browser.
 - On the first visit, create the admin username and password.
 - The admin password is stored as a hash in `admin_data.json`; raw passwords and raw API keys are not saved.
 - New app keys are generated in `sk-...` format and are shown only once.
-- Each app can be renamed, paused, deleted, rotated, and given a daily request limit.
+- Each app can be renamed, paused, deleted, rotated, given a daily request limit, and given a validity period in days.
 - The dashboard shows request usage per app for the current UTC day and last-used time.
+- Use `0` days when you want a key that does not expire.
 
 `PROXY_API_KEY` is still supported as the root/master proxy key from environment variables. The project originally did not generate per-user proxy keys; it only checked this single `PROXY_API_KEY`. The `/admin` panel adds generated app keys on top of that.
 
