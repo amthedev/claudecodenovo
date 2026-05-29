@@ -751,7 +751,10 @@ This repository includes `squarecloud.config` for Square Cloud deploys.
 2. In Square Cloud, create/import the app as a Python web application
 3. Add environment variables in the Square Cloud dashboard:
    - `PROXY_API_KEY`
-   - provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
+   - `HOSTED_VLLM_API_BASE=https://unug0tbdzj0qx5-8001.proxy.runpod.net/v1`
+   - `HOSTED_VLLM_API_KEY`: your RunPod vLLM API key
+   - `WHITELIST_MODELS_HOSTED_VLLM=qwen25-coder-32b`
+   - any other provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
    - exported OAuth variables for Gemini CLI or other OAuth providers, if used
 4. To deploy with GitHub Actions, add `SQUARE_TOKEN` as a GitHub repository secret and push to `main`
 
