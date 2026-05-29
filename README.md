@@ -741,6 +741,29 @@ Export OAuth credentials to environment variables using the credential tool, the
 </details>
 
 <details>
+<summary><b>Square Cloud</b></summary>
+
+This repository includes `squarecloud.config` for Square Cloud deploys.
+
+**Quick Setup:**
+
+1. Push this repository to GitHub
+2. In Square Cloud, create/import the app as a Python web application
+3. Add environment variables in the Square Cloud dashboard:
+   - `PROXY_API_KEY`
+   - provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
+   - exported OAuth variables for Gemini CLI or other OAuth providers, if used
+4. Deploy via the Square Cloud dashboard/CLI, or add `SQUARE_TOKEN` as a GitHub repository secret to enable the included GitHub Action
+
+The Square Cloud start command is:
+
+```bash
+python src/proxy_app/main.py --host 0.0.0.0 --port $PORT
+```
+
+</details>
+
+<details>
 <summary><b>Docker</b></summary>
 
 The proxy is available as a multi-architecture Docker image (amd64/arm64) from GitHub Container Registry.
