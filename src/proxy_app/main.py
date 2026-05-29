@@ -117,6 +117,7 @@ print("  → Loading core dependencies...")
 with _console.status("[dim]Loading core dependencies...", spinner="dots"):
     from dotenv import load_dotenv
     import colorlog
+    import json
     from typing import AsyncGenerator, Any, List, Optional, Union
     from pydantic import BaseModel, ConfigDict, Field
 
@@ -1255,6 +1256,31 @@ def read_root():
     return {"Status": "API Key Proxy is running"}
 
 
+def _static_env_models() -> List[str]:
+    """Return provider-prefixed models declared via PROVIDER_MODELS env vars."""
+    model_ids: List[str] = []
+    for key, value in os.environ.items():
+        if not key.endswith("_MODELS"):
+            continue
+        provider = key[: -len("_MODELS")].lower()
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            logging.warning("Ignoring invalid JSON in %s", key)
+            continue
+
+        if isinstance(parsed, list):
+            names = [item for item in parsed if isinstance(item, str)]
+        elif isinstance(parsed, dict):
+            names = [name for name in parsed if isinstance(name, str)]
+        else:
+            continue
+
+        for name in names:
+            model_ids.append(name if "/" in name else f"{provider}/{name}")
+    return model_ids
+
+
 @app.get("/v1/models")
 async def list_models(
     request: Request,
@@ -1270,6 +1296,8 @@ async def list_models(
                   If False, returns minimal OpenAI-compatible response.
     """
     model_ids = await client.get_all_available_models(grouped=False)
+    if not model_ids:
+        model_ids = _static_env_models()
 
     if enriched and hasattr(request.app.state, "model_info_service"):
         model_info_service = request.app.state.model_info_service
