@@ -778,6 +778,51 @@ def _extract_bearer_token(auth: Optional[str]) -> Optional[str]:
     return auth.strip()
 
 
+def _default_proxy_model() -> Optional[str]:
+    for env_name in (
+        "PROXY_DEFAULT_MODEL",
+        "DEFAULT_PROXY_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    ):
+        value = os.getenv(env_name)
+        if value:
+            return value.strip()
+
+    static_models = _static_env_models()
+    if static_models:
+        return static_models[0]
+    return None
+
+
+def _resolve_model_alias(model: Optional[str]) -> Optional[str]:
+    if not model:
+        return model
+    model = model.strip()
+    if "/" in model:
+        return model
+
+    default_model = _default_proxy_model()
+    if not default_model:
+        return model
+
+    alias_env = os.getenv("PROXY_MODEL_ALIASES", "")
+    aliases = {
+        "claude-code-pro",
+        "claude-code-sonnet",
+        "claude-code-opus",
+        "claude-code-haiku",
+    }
+    aliases.update(alias.strip() for alias in alias_env.split(",") if alias.strip())
+
+    # Claude Code and some OpenAI-compatible clients send providerless model names.
+    if model in aliases or "/" not in model:
+        logging.info("Mapping client model '%s' to '%s'", model, default_model)
+        return default_model
+    return model
+
+
 def _active_admin_session(request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get(ADMIN_SESSION_COOKIE)
     if not token:
@@ -1093,6 +1138,8 @@ async def chat_completions(
         if raw_logger:
             raw_logger.log_request(headers=request.headers, body=request_data)
 
+        request_data["model"] = _resolve_model_alias(request_data.get("model"))
+
         # Extract and log specific reasoning parameters for monitoring.
         model = request_data.get("model")
         generation_cfg = (
@@ -1210,6 +1257,8 @@ async def anthropic_messages(
         )
 
     try:
+        body = body.model_copy(update={"model": _resolve_model_alias(body.model)})
+
         # Log the request to console
         log_request_to_console(
             url=str(request.url),

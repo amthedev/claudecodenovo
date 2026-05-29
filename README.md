@@ -188,12 +188,14 @@ Claude Code natively supports custom Anthropic API endpoints. The recommended se
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "your-proxy-api-key",
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8000",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gemini/gemini-3-pro",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gemini/gemini-3-flash",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openai/gpt-5-mini"
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "hosted_vllm/qwen25-coder-32b",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "hosted_vllm/qwen25-coder-32b",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "hosted_vllm/qwen25-coder-32b"
   }
 }
 ```
+
+If Claude Code sends a providerless model such as `claude-code-pro`, the proxy maps it to `PROXY_DEFAULT_MODEL` when set, or to the first configured provider model such as `hosted_vllm/qwen25-coder-32b`.
 
 Now you can use Claude Code with Gemini, OpenAI, or any other configured provider.
 
@@ -777,6 +779,7 @@ This repository includes `squarecloud.config` for Square Cloud deploys.
    - `HOSTED_VLLM_API_KEY`: your RunPod vLLM API key
    - `HOSTED_VLLM_MODELS=["qwen25-coder-32b"]`
    - `WHITELIST_MODELS_HOSTED_VLLM=hosted_vllm/qwen25-coder-32b`
+   - optional: `PROXY_DEFAULT_MODEL=hosted_vllm/qwen25-coder-32b`
    - optional: `ADMIN_DATA_FILE=admin_data.json`
    - any other provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
    - exported OAuth variables for Gemini CLI or other OAuth providers, if used
