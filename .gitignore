@@ -125,6 +125,7 @@ key_usage.json
 staged_changes.txt
 launcher_config.json
 quota_viewer_config.json
+proxy_config.json
 cache/antigravity/thought_signatures.json
 /logs/
 /cache/

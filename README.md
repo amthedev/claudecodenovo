@@ -761,6 +761,8 @@ The Square Cloud start command is:
 python src/proxy_app/main.py --host 0.0.0.0 --port $PORT
 ```
 
+If you prefer file-based configuration instead of dashboard environment variables, create `proxy_config.json` from `proxy_config.example.json` and upload it with the app files. The real `proxy_config.json` is intentionally ignored by Git.
+
 </details>
 
 <details>

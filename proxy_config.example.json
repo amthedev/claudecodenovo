@@ -1,0 +1,8 @@
+{
+  "env": {
+    "PROXY_API_KEY": "change-this-to-a-strong-secret",
+    "SKIP_OAUTH_INIT_CHECK": "true",
+    "OPENAI_API_KEY": "",
+    "GEMINI_API_KEY_1": ""
+  }
+}

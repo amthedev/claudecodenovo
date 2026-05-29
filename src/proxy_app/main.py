@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import argparse
 import logging
+import json
 
 # --- Argument Parsing (BEFORE heavy imports) ---
 parser = argparse.ArgumentParser(description="API Key Proxy Server")
@@ -84,6 +85,40 @@ if _env_files_found:
     _env_names = [_ef.name for _ef in _env_files_found]
     print(f"📁 Loaded {len(_env_files_found)} .env file(s): {', '.join(_env_names)}")
 
+
+def _load_json_config(config_path: Path) -> list[str]:
+    if not config_path.exists():
+        return []
+
+    with config_path.open("r", encoding="utf-8") as config_file:
+        config = json.load(config_file)
+
+    if not isinstance(config, dict):
+        raise ValueError("proxy_config.json must contain a JSON object")
+
+    values = config.get("env", config)
+    if not isinstance(values, dict):
+        raise ValueError("proxy_config.json 'env' must contain a JSON object")
+
+    loaded_keys: list[str] = []
+    for key, value in values.items():
+        if value is None:
+            continue
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value)
+        os.environ[str(key)] = str(value)
+        loaded_keys.append(str(key))
+
+    return loaded_keys
+
+
+try:
+    _json_config_keys = _load_json_config(_root_dir / "proxy_config.json")
+    if _json_config_keys:
+        print(f"📁 Loaded proxy_config.json ({len(_json_config_keys)} key(s))")
+except Exception as exc:
+    print(f"⚠️ Failed to load proxy_config.json: {exc}")
+
 # Get proxy API key for display
 proxy_api_key = os.getenv("PROXY_API_KEY")
 if proxy_api_key:
@@ -117,7 +152,6 @@ print("  → Loading core dependencies...")
 with _console.status("[dim]Loading core dependencies...", spinner="dots"):
     from dotenv import load_dotenv
     import colorlog
-    import json
     from typing import AsyncGenerator, Any, List, Optional, Union
     from pydantic import BaseModel, ConfigDict, Field
 
