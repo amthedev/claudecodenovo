@@ -185,7 +185,7 @@ document.querySelectorAll('[data-expires]').forEach(el=>{{
   function tick(){{
     const left=parseInt(el.dataset.expires)-Math.floor(Date.now()/1000);
     if(left<=0){{el.closest('.reveal-banner')?.remove();return;}}
-    el.textContent=`Disponivel por mais ${{Math.floor(left/60)}}m ${{left%60}}s`;
+    el.textContent=`Disponivel por mais ${{  Math.floor(left/60)  }}m ${{  left%60  }}s`;
     setTimeout(tick,1000);
   }}
   tick();
@@ -349,7 +349,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           </div>
           <div class="card stat">
             <div class="stat-icon" style="background:rgba(245,158,11,.12)">💰</div>
-            <div class="stat-num" style="color:var(--yellow)">${{stats['total_revenue']:.2f}}</div>
+            <div class="stat-num" style="color:var(--yellow)">${stats['total_revenue']:.2f}</div>
             <div class="stat-label">Receita total</div>
           </div>
         </div>"""
@@ -396,7 +396,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             tog = f'<button class="btn-red btn-sm" onclick="toggleKey(\'{kid}\',false)">Desativar</button>' if k["active"] else f'<button class="btn-green btn-sm" onclick="toggleKey(\'{kid}\',true)">Ativar</button>'
             del_btn = f'<button class="btn-ghost btn-sm" onclick="openModal(\'m-del-{kid}\')">Excluir</button>'
             info_btn = f'<button class="btn-ghost btn-sm" onclick="openModal(\'m-info-{kid}\')">Detalhes</button>'
-            rev_total = f'${{k["revenue_total"]:.2f}}' if k["price_per_1k"] > 0 else "—"
+            rev_total = f'${k["revenue_total"]:.2f}' if k["price_per_1k"] > 0 else "—"
             rows += f"""<tr class="key-row">
               <td><b>{k['name']}</b>{'<br><span style="color:var(--muted);font-size:11px">'+k['description']+'</span>' if k['description'] else ''}</td>
               <td class="mono" style="color:var(--muted)">{k['key_preview']}</td>
@@ -456,11 +456,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                   </div>
                   <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
                     <div style="font-size:11px;color:var(--muted);margin-bottom:4px">RECEITA</div>
-                    <b style="font-size:1.4rem;color:var(--yellow)">${{k['revenue_total']:.2f}}</b>
+                    <b style="font-size:1.4rem;color:var(--yellow)">${k['revenue_total']:.2f}</b>
                   </div>
                   <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
                     <div style="font-size:11px;color:var(--muted);margin-bottom:4px">PREÇO / 1K</div>
-                    <b style="font-size:1.4rem">${{k['price_per_1k']:.4f}}</b>
+                    <b style="font-size:1.4rem">${k['price_per_1k']:.4f}</b>
                   </div>
                 </div>
                 <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Últimos 7 dias</div>
