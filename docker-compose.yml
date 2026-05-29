@@ -11,10 +11,8 @@ services:
     ports:
       - "${PORT:-8000}:8000"
     volumes:
-      # Mount JSON configuration for keys and settings
-      - ./proxy_config.json:/app/proxy_config.json:ro
-      # Optional .env configuration alternative
-      # - ./.env:/app/.env:ro
+      # Mount .env files for configuration
+      - ./.env:/app/.env:ro
       # Mount oauth_creds directory for OAuth credentials persistence
       - ./oauth_creds:/app/oauth_creds
       # Mount logs directory for persistent logging

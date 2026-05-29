@@ -749,10 +749,11 @@ This repository includes `squarecloud.config` for Square Cloud deploys.
 
 1. Push this repository to GitHub
 2. In Square Cloud, create/import the app as a Python web application
-3. Add these GitHub repository secrets:
-   - `SQUARE_TOKEN`: your Square Cloud API token
-   - `PROXY_CONFIG_JSON`: the full contents of your private `proxy_config.json`
-4. Push to `main` or run the workflow manually from GitHub Actions
+3. Add environment variables in the Square Cloud dashboard:
+   - `PROXY_API_KEY`
+   - provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
+   - exported OAuth variables for Gemini CLI or other OAuth providers, if used
+4. To deploy with GitHub Actions, add `SQUARE_TOKEN` as a GitHub repository secret and push to `main`
 
 The Square Cloud start command is:
 
@@ -760,7 +761,7 @@ The Square Cloud start command is:
 python src/proxy_app/main.py --host 0.0.0.0 --port $PORT
 ```
 
-The deploy workflow writes `PROXY_CONFIG_JSON` into `proxy_config.json` immediately before uploading to Square Cloud. The real `proxy_config.json` is intentionally ignored by Git and should not be committed.
+The deploy workflow expects runtime secrets to be configured in Square Cloud, not committed to Git.
 
 </details>
 

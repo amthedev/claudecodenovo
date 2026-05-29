@@ -13,17 +13,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create runtime config
-        env:
-          PROXY_CONFIG_JSON: ${{ secrets.PROXY_CONFIG_JSON }}
-        run: |
-          if [ -z "$PROXY_CONFIG_JSON" ]; then
-            echo "Missing GitHub secret: PROXY_CONFIG_JSON"
-            exit 1
-          fi
-          printf '%s' "$PROXY_CONFIG_JSON" > proxy_config.json
-          python -m json.tool proxy_config.json >/dev/null
-
       - name: Deploy
         uses: squarecloudofc/github-action@v2
         with:
