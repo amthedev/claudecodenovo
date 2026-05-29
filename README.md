@@ -282,6 +282,25 @@ ANTHROPIC_API_KEY_1="your-anthropic-key"
 
 > Copy `.env.example` to `.env` as a starting point.
 
+### Admin Panel and Managed API Keys
+
+Open `/admin` on your deployed proxy to manage app keys from the browser.
+
+- On the first visit, create the admin username and password.
+- The admin password is stored as a hash in `admin_data.json`; raw passwords and raw API keys are not saved.
+- New app keys are generated in `sk-...` format and are shown only once.
+- Each app can be renamed, paused, deleted, rotated, and given a daily request limit.
+- The dashboard shows request usage per app for the current UTC day and last-used time.
+
+`PROXY_API_KEY` is still supported as the root/master proxy key from environment variables. The project originally did not generate per-user proxy keys; it only checked this single `PROXY_API_KEY`. The `/admin` panel adds generated app keys on top of that.
+
+For cloud deploys, keep `admin_data.json` persistent if your host supports volumes. You can override the file location with:
+
+```env
+ADMIN_DATA_FILE="admin_data.json"
+ADMIN_SESSION_SECONDS="43200"
+```
+
 ---
 
 ## The Resilience Library
@@ -440,6 +459,8 @@ The proxy includes a powerful text-based UI for configuration and management.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PROXY_API_KEY` | Authentication key for your proxy | Required |
+| `ADMIN_DATA_FILE` | JSON file used by `/admin` for admin login, app key hashes, limits, and usage | `admin_data.json` |
+| `ADMIN_SESSION_SECONDS` | Admin login cookie lifetime in seconds | `43200` |
 | `OAUTH_REFRESH_INTERVAL` | Token refresh check interval (seconds) | `600` |
 | `SKIP_OAUTH_INIT_CHECK` | Skip interactive OAuth setup on startup | `false` |
 
@@ -755,6 +776,7 @@ This repository includes `squarecloud.config` for Square Cloud deploys.
    - `HOSTED_VLLM_API_KEY`: your RunPod vLLM API key
    - `HOSTED_VLLM_MODELS=["qwen25-coder-32b"]`
    - `WHITELIST_MODELS_HOSTED_VLLM=hosted_vllm/qwen25-coder-32b`
+   - optional: `ADMIN_DATA_FILE=admin_data.json`
    - any other provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
    - exported OAuth variables for Gemini CLI or other OAuth providers, if used
 4. To deploy with GitHub Actions, add `SQUARE_TOKEN` as a GitHub repository secret and push to `main`
@@ -766,6 +788,8 @@ python src/proxy_app/main.py --host 0.0.0.0 --port $PORT
 ```
 
 The deploy workflow expects runtime secrets to be configured in Square Cloud, not committed to Git.
+
+After deploy, open `/admin` on the Square Cloud URL and create the first admin user. App keys created there use the `sk-...` format.
 
 </details>
 

@@ -28,6 +28,8 @@ build/
 
 # Logs (will be mounted as volume)
 logs/
+admin_data.json
+admin_data.tmp
 
 # OAuth credentials (will be mounted as volume)
 oauth_creds/
