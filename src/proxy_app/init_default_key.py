@@ -56,13 +56,39 @@ def _save_admin_data(data: dict) -> None:
     tmp_path.replace(ADMIN_DATA_FILE)
 
 
+def _ensure_active_in_sqlite(name: str) -> bool:
+    """Re-ativa a chave no SQLite se ela existir mas estiver desativada. Retorna True se encontrou."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from proxy_app import admin_db
+        admin_db.init_db()
+        with admin_db._db() as c:
+            r = c.execute("SELECT id, active FROM api_keys WHERE name=?", (name,)).fetchone()
+            if r:
+                if not r["active"]:
+                    c.execute("UPDATE api_keys SET active=1, updated_at=? WHERE id=?",
+                              (time.time(), r["id"]))
+                    print(f"[init_key] Chave '{name}' reativada no SQLite.")
+                else:
+                    print(f"[init_key] Chave '{name}' já ativa no SQLite.")
+                return True
+        return False
+    except Exception as e:
+        print(f"[init_key] Aviso: não foi possível verificar SQLite: {e}")
+        return False
+
+
 def ensure_universal_key() -> None:
+    # Primeiro tenta garantir que a chave existe e está ativa no SQLite
+    if _ensure_active_in_sqlite(UNIVERSAL_KEY_NAME):
+        return
+
     data = _load_admin_data()
 
-    # Verifica se já existe uma chave "universal"
+    # Verifica se já existe uma chave "universal" no JSON
     for app in data.get("apps", []):
         if app.get("name") == UNIVERSAL_KEY_NAME:
-            print(f"[init_key] Chave universal já existe: {app['key_preview']}")
+            print(f"[init_key] Chave universal já existe no JSON: {app['key_preview']}")
             return
 
     # Gera nova chave sk-xxxx
