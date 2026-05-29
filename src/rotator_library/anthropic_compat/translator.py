@@ -10,6 +10,7 @@ This enables any OpenAI-compatible provider to work with Anthropic clients.
 """
 
 import json
+import os
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
@@ -477,12 +478,32 @@ def _strip_vllm_rejected_fields(value: Any) -> Any:
     return value
 
 
+def _vllm_max_output_tokens() -> int:
+    for env_name in (
+        "HOSTED_VLLM_MAX_TOKENS",
+        "ANTHROPIC_VLLM_MAX_TOKENS",
+        "PROXY_MAX_OUTPUT_TOKENS",
+    ):
+        value = os.getenv(env_name)
+        if not value:
+            continue
+        try:
+            return max(1, int(value))
+        except ValueError:
+            continue
+    return 8192
+
+
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
     openai_request.pop("top_k", None)
     if openai_request.get("reasoning_effort") in {"disable", "disabled", "none"}:
         openai_request.pop("reasoning_effort", None)
+    max_output_tokens = _vllm_max_output_tokens()
+    requested_max_tokens = openai_request.get("max_tokens")
+    if requested_max_tokens and requested_max_tokens > max_output_tokens:
+        openai_request["max_tokens"] = max_output_tokens
 
     openai_request["messages"] = _strip_vllm_rejected_fields(
         openai_request.get("messages", [])
