@@ -1704,7 +1704,11 @@ async def list_models(
         enriched: If True (default), returns detailed model info with pricing and capabilities.
                   If False, returns minimal OpenAI-compatible response.
     """
-    model_ids = await client.get_all_available_models(grouped=False)
+    try:
+        model_ids = await client.get_all_available_models(grouped=False)
+    except Exception as e:
+        logging.error(f"list_models error: {e}")
+        model_ids = []
     if not model_ids:
         model_ids = _static_env_models()
 

@@ -196,7 +196,18 @@ function testConn(key,_url){{
   btn.textContent='Testando...';btn.disabled=true;
   fetch('/v1/models',{{
     headers:{{'Authorization':'Bearer '+key}}
-  }}).then(r=>r.json()).then(d=>{{
+  }}).then(async r=>{{
+    const text=await r.text();
+    let d;
+    try{{d=JSON.parse(text);}}catch(e){{
+      res.innerHTML='<span style="color:var(--red)">✗ HTTP '+r.status+': '+text.slice(0,80)+'</span>';
+      return;
+    }}
+    if(!r.ok){{
+      const msg=(d.detail||d.error||d.message||JSON.stringify(d)).toString().slice(0,120);
+      res.innerHTML='<span style="color:var(--red)">✗ HTTP '+r.status+': '+msg+'</span>';
+      return;
+    }}
     const ids=(d.data||[]).map(m=>m.id).slice(0,5).join(', ');
     res.innerHTML='<span style="color:var(--green)">✓ Conexão OK</span> — '+ids;
   }}).catch(e=>{{
