@@ -15,6 +15,7 @@ Usage:
         translate_anthropic_request,
         openai_to_anthropic_response,
         anthropic_streaming_wrapper,
+        anthropic_response_to_streaming_events,
     )
 """
 
@@ -42,7 +43,7 @@ from .translator import (
     translate_anthropic_request,
 )
 
-from .streaming import anthropic_streaming_wrapper
+from .streaming import anthropic_response_to_streaming_events, anthropic_streaming_wrapper
 
 __all__ = [
     # Models
@@ -67,4 +68,5 @@ __all__ = [
     "translate_anthropic_request",
     # Streaming
     "anthropic_streaming_wrapper",
+    "anthropic_response_to_streaming_events",
 ]
