@@ -884,7 +884,8 @@ def _require_admin_session(request: Request) -> Dict[str, Any]:
 
 def _verify_managed_api_key(api_key: str) -> Optional[Dict[str, Any]]:
     """Verifica chave gerenciada usando SQLite via admin_db."""
-    result = _verify_key_db(api_key)
+    from proxy_app import admin_db as _admin_db
+    result = _admin_db.verify_api_key_db(api_key)
     if result is None:
         return None
     error = result.get("error")
