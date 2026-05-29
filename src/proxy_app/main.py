@@ -1621,8 +1621,12 @@ if __name__ == "__main__":
         Check if the proxy needs onboarding (first-time setup).
         Returns True if onboarding is needed, False otherwise.
         """
-        # Only check if .env file exists
-        # PROXY_API_KEY is optional (will show warning if not set)
+        # Cloud platforms usually inject configuration as environment variables
+        # instead of mounting a physical .env file.
+        if os.getenv("PROXY_API_KEY"):
+            return False
+
+        # If no PROXY_API_KEY is present, fall back to local first-run setup.
         if not ENV_FILE.is_file():
             return True
 
