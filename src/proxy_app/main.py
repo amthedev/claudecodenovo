@@ -1263,11 +1263,22 @@ def _static_env_models() -> List[str]:
         if not key.endswith("_MODELS"):
             continue
         provider = key[: -len("_MODELS")].lower()
+        raw_value = value.strip()
         try:
-            parsed = json.loads(value)
+            parsed = json.loads(raw_value)
         except (json.JSONDecodeError, TypeError):
-            logging.warning("Ignoring invalid JSON in %s", key)
-            continue
+            stripped = raw_value.strip("\"'")
+            try:
+                parsed = json.loads(stripped)
+            except (json.JSONDecodeError, TypeError):
+                logging.warning("Ignoring invalid JSON in %s", key)
+                continue
+
+        if isinstance(parsed, str):
+            try:
+                parsed = json.loads(parsed)
+            except (json.JSONDecodeError, TypeError):
+                parsed = [parsed]
 
         if isinstance(parsed, list):
             names = [item for item in parsed if isinstance(item, str)]
