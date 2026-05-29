@@ -8,6 +8,13 @@ from . import admin_db
 
 COOKIE = "proxy_admin_v2"
 
+async def _form(req) -> dict:
+    """Parse URL-encoded form sem precisar de python-multipart."""
+    from urllib.parse import parse_qs
+    body = (await req.body()).decode("utf-8", errors="replace")
+    parsed = parse_qs(body, keep_blank_values=True)
+    return {k: v[0] if v else "" for k, v in parsed.items()}
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 def _sess(req: Request) -> Optional[str]:
     return admin_db.validate_session(req.cookies.get(COOKIE, ""))
@@ -245,7 +252,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
 
     @app.post("/admin/setup")
     async def setup_post(req: Request):
-        f = await req.form()
+        f = await _form(req)
         u,p,c = f.get("username","").strip(), f.get("password",""), f.get("confirm","")
         if not u or not p or p!=c:
             return RedirectResponse("/admin/setup?err=1", 302)
@@ -272,7 +279,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
 
     @app.post("/admin/login")
     async def login_post(req: Request):
-        f = await req.form()
+        f = await _form(req)
         u,p = f.get("username",""), f.get("password","")
         if not admin_db.verify_admin(u, p):
             return RedirectResponse("/admin/login?err=1", 302)
@@ -533,7 +540,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     @app.post("/admin/create-key")
     async def create_key(req: Request):
         _need(req)
-        f = await req.form()
+        f = await _form(req)
         name     = f.get("name","").strip() or "unnamed"
         desc     = f.get("description","").strip()
         dlim     = int(f.get("daily_limit",0) or 0)
@@ -584,7 +591,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     @app.post("/admin/apps")
     async def legacy_create(req: Request):
         _need(req)
-        f = await req.form()
+        f = await _form(req)
         name  = f.get("name","app").strip()
         dlim  = int(f.get("daily_limit",0) or 0)
         vdays = int(f.get("validity_days",0) or 0)
