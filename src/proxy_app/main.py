@@ -628,6 +628,11 @@ async def lifespan(app: FastAPI):
     app.state.model_info_service = model_info_service
     logging.info("Model info service started (fetching pricing data in background).")
 
+    # Inicializa SQLite admin e registra rotas
+    _admin_init_db()
+    _register_admin(app, proxy_api_key=proxy_api_key)
+    logging.info("[admin_db] SQLite admin inicializado.")
+
     yield
 
     await client.background_refresher.stop()  # Stop the background task on shutdown
@@ -871,35 +876,21 @@ def _require_admin_session(request: Request) -> Dict[str, Any]:
 
 
 def _verify_managed_api_key(api_key: str) -> Optional[Dict[str, Any]]:
-    data = _load_admin_data()
-    api_key_hash = _hash_api_key(api_key)
-    today = _utc_day()
+    """Verifica chave gerenciada usando SQLite via admin_db."""
+    result = _verify_key_db(api_key)
+    if result is None:
+        return None
+    error = result.get("error")
+    if error == "disabled":
+        raise HTTPException(status_code=403, detail="API key disabled")
+    if error == "expired":
+        raise HTTPException(status_code=403, detail="API key expired")
+    if error == "limit_exceeded":
+        raise HTTPException(status_code=429, detail="Daily API key limit exceeded")
+    if error:
+        return None
+    return result
 
-    for app_entry in data.get("apps", []):
-        if not hmac.compare_digest(app_entry.get("key_hash", ""), api_key_hash):
-            continue
-        if not app_entry.get("active", True):
-            raise HTTPException(status_code=403, detail="API key disabled")
-        expires_at = app_entry.get("expires_at")
-        if _is_expired(expires_at):
-            raise HTTPException(status_code=403, detail="API key expired")
-
-        usage = app_entry.setdefault("usage", {})
-        day_usage = usage.setdefault(today, {"requests": 0})
-        daily_limit = _parse_daily_limit(app_entry.get("daily_limit"))
-        if daily_limit > 0 and int(day_usage.get("requests", 0)) >= daily_limit:
-            raise HTTPException(status_code=429, detail="Daily API key limit exceeded")
-
-        day_usage["requests"] = int(day_usage.get("requests", 0)) + 1
-        app_entry["last_used_at"] = time.time()
-        _save_admin_data(data)
-        return {
-            "type": "managed",
-            "app_id": app_entry.get("id"),
-            "app_name": app_entry.get("name"),
-            "key_preview": app_entry.get("key_preview"),
-        }
-    return None
 
 
 def _verify_proxy_api_key_value(raw_key: Optional[str]) -> Optional[Dict[str, Any]]:
