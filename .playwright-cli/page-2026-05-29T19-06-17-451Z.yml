@@ -1,0 +1,625 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - generic [ref=e6]:
+            - link "Square Cloud Logo" [ref=e1055] [cursor=pointer]:
+              - /url: /pt-br/dashboard
+              - img "Square Cloud Logo" [ref=e1056]
+            - button "claudecodenovo FastAPI LLM API key proxy" [ref=e1057]:
+              - generic [ref=e13]:
+                - generic [ref=e14]: claudecodenovo
+                - generic [ref=e15]: FastAPI LLM API key proxy
+              - button [ref=e16]:
+                - img
+          - generic [ref=e17]:
+            - button "Notificações, 1 não lida" [ref=e1058] [cursor=pointer]:
+              - img [ref=e19]
+              - generic [ref=e21]: "1"
+            - button "Allan Matheus ••••••••••@gmail.com" [ref=e1059]:
+              - generic [ref=e23]:
+                - generic [ref=e24]: Allan Matheus
+                - generic [ref=e25]: ••••••••••@gmail.com
+              - img
+            - button "pt-br" [ref=e1060]:
+              - img "pt-br" [ref=e1061]
+        - generic [ref=e28]:
+          - navigation [ref=e29]:
+            - list [ref=e30]:
+              - link "Projeto" [ref=e1062] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff
+                - generic [ref=e32]:
+                  - img [ref=e33]
+                  - text: Projeto
+              - link "Arquivos" [ref=e1063] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/files
+                - generic [ref=e37]:
+                  - img [ref=e38]
+                  - text: Arquivos
+              - link "Snapshots" [ref=e1064] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/snapshots
+                - generic [ref=e41]:
+                  - img [ref=e42]
+                  - text: Snapshots
+              - link "Analytics" [ref=e1065] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/analytics
+                - generic [ref=e45]:
+                  - img [ref=e46]
+                  - text: Analytics
+              - link "Configurações" [ref=e1066] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/settings
+                - generic [ref=e49]:
+                  - img [ref=e50]
+                  - text: Configurações
+          - link "Voltar ao Painel de Controle" [ref=e1067] [cursor=pointer]:
+            - /url: /pt-br/dashboard
+            - img [ref=e53]
+            - text: Voltar ao Painel de Controle
+    - generic [ref=e55]:
+      - img
+      - generic [ref=e58]:
+        - generic [ref=e59]:
+          - img
+          - generic [ref=e60]:
+            - generic [ref=e61]:
+              - img "python" [ref=e62]
+              - generic [ref=e63]:
+                - generic [ref=e64]:
+                  - heading "claudecodenovo" [level=2] [ref=e65]
+                  - generic [ref=e69]: Online · há 2 minutos
+                - generic [ref=e70]:
+                  - generic [ref=e71]: 2e49d0c35bdc49ab827414a4fa3839ff
+                  - generic [ref=e72]: ·
+                  - generic [ref=e73]: nasa-cluster
+                - paragraph [ref=e74]: FastAPI LLM API key proxy
+            - generic [ref=e75]:
+              - generic [ref=e77]:
+                - generic [ref=e78]:
+                  - img [ref=e79]
+                  - text: CPU
+                - generic [ref=e1508]: 0.07%
+              - generic [ref=e85]:
+                - generic [ref=e86]:
+                  - img [ref=e87]
+                  - text: RAM
+                - generic [ref=e1511]:
+                  - generic [ref=e1512]: 195,09
+                  - generic [ref=e1513]: /1.024 MB
+              - generic [ref=e93]:
+                - generic [ref=e94]:
+                  - img [ref=e95]
+                  - text: Network
+                - img [ref=e1516]
+                - generic [ref=e1518]: 2.57MB
+                - img [ref=e1519]
+                - generic [ref=e1521]: 19.74KB
+                - generic [ref=e103]: Total
+                - img [ref=e1522]
+                - generic [ref=e1524]: 3.74MB
+                - img [ref=e1525]
+                - generic [ref=e1527]: 30.79KB
+        - generic [ref=e110]:
+          - generic [ref=e112]: Realtime Console
+          - generic [ref=e113]:
+            - generic [ref=e114]:
+              - generic [ref=e115]:
+                - button "Iniciar" [disabled]:
+                  - img
+                  - text: Iniciar
+                - button "Reiniciar" [ref=e1184]:
+                  - img
+                  - text: Reiniciar
+                - button "Parar" [ref=e1185]:
+                  - img
+                  - text: Parar
+              - generic [ref=e117]:
+                - button "Copiar" [ref=e118]:
+                  - img
+                  - text: Copiar
+                - button "Fechar registros" [ref=e1529] [cursor=pointer]:
+                  - img
+                  - text: Fechar registros
+            - generic [ref=e121]:
+              - generic [ref=e1532]:
+                - generic [ref=e1533]:
+                  - generic [ref=e1534]: 29/05/2026, 16:06:10
+                  - generic [ref=e1535]: "[Square Cloud Realtime] Connection established! 😉"
+                - generic [ref=e1536]:
+                  - generic [ref=e1537]: 29/05/2026, 16:04:42
+                  - generic [ref=e1538]: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                - generic [ref=e1539]:
+                  - generic [ref=e1540]: 29/05/2026, 16:04:42
+                  - generic [ref=e1541]: Starting proxy on 0.0.0.0:80
+                - generic [ref=e1542]:
+                  - generic [ref=e1543]: 29/05/2026, 16:04:42
+                  - generic [ref=e1544]: "Proxy API Key: ✓ proxy_gdZktsH9_07Tobshs7eQ0UcXUZNv48j9OxDpYaWrQsQ"
+                - generic [ref=e1545]:
+                  - generic [ref=e1546]: 29/05/2026, 16:04:42
+                  - generic [ref=e1547]: "GitHub: https://github.com/Mirrowel/LLM-API-Key-Proxy"
+                - generic [ref=e1548]:
+                  - generic [ref=e1549]: 29/05/2026, 16:04:42
+                  - generic [ref=e1550]: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                - generic [ref=e1551]:
+                  - generic [ref=e1552]: 29/05/2026, 16:04:42
+                  - generic [ref=e1553]: Loading server components...
+                - generic [ref=e1554]:
+                  - generic [ref=e1555]: 29/05/2026, 16:04:42
+                  - generic [ref=e1556]: → Loading FastAPI framework...
+                - generic [ref=e1557]:
+                  - generic [ref=e1558]: 29/05/2026, 16:04:42
+                  - generic [ref=e1559]: → Loading core dependencies...
+                - generic [ref=e1560]:
+                  - generic [ref=e1561]: 29/05/2026, 16:04:42
+                  - generic [ref=e1562]: → Loading LiteLLM library...
+                - generic [ref=e1563]:
+                  - generic [ref=e1564]: 29/05/2026, 16:04:44
+                  - generic [ref=e1565]: "19:04:44 - LiteLLM:WARNING: common_utils.py:979 - litellm: could not pre-load bedrock-runtime response stream shape — Bedrock event-stream decoding will be unavailable. Error: No module named 'botocore'"
+                - generic [ref=e1566]:
+                  - generic [ref=e1567]: 29/05/2026, 16:04:44
+                  - generic [ref=e1568]: "19:04:44 - LiteLLM:WARNING: common_utils.py:24 - litellm: could not pre-load sagemaker-runtime response stream shape — SageMaker event-stream decoding will be unavailable. Error: No module named 'botocore'"
+                - generic [ref=e1569]:
+                  - generic [ref=e1570]: 29/05/2026, 16:04:45
+                  - generic [ref=e1571]: → Initializing proxy core...
+                - generic [ref=e1572]:
+                  - generic [ref=e1573]: 29/05/2026, 16:04:45
+                  - generic [ref=e1574]: → Discovering provider plugins...
+                - generic [ref=e1575]:
+                  - generic [ref=e1576]: 29/05/2026, 16:04:45
+                  - generic [ref=e1577]: ✓ Server ready in 3.29s (14 providers discovered in 0.00s)
+                - generic [ref=e1578]:
+                  - generic [ref=e1579]: 29/05/2026, 16:04:45
+                  - generic [ref=e1580]: TERM environment variable not set.
+                - generic [ref=e1581]:
+                  - generic [ref=e1582]: 29/05/2026, 16:04:45
+                  - generic [ref=e1583]: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                - generic [ref=e1584]:
+                  - generic [ref=e1585]: 29/05/2026, 16:04:45
+                  - generic [ref=e1586]: Starting proxy on 0.0.0.0:80
+                - generic [ref=e1587]:
+                  - generic [ref=e1588]: 29/05/2026, 16:04:45
+                  - generic [ref=e1589]: "Proxy API Key: ✓ proxy_gdZktsH9_07Tobshs7eQ0UcXUZNv48j9OxDpYaWrQsQ"
+                - generic [ref=e1590]:
+                  - generic [ref=e1591]: 29/05/2026, 16:04:45
+                  - generic [ref=e1592]: "GitHub: https://github.com/Mirrowel/LLM-API-Key-Proxy"
+                - generic [ref=e1593]:
+                  - generic [ref=e1594]: 29/05/2026, 16:04:45
+                  - generic [ref=e1595]: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                - generic [ref=e1596]:
+                  - generic [ref=e1597]: 29/05/2026, 16:04:45
+                  - generic [ref=e1598]: ✓ Server ready in 3.29s (14 providers discovered in 0.00s)
+                - generic [ref=e1599]:
+                  - generic [ref=e1600]: 29/05/2026, 16:04:45
+                  - generic [ref=e1601]: "INFO: Started server process [22]"
+                - generic [ref=e1602]:
+                  - generic [ref=e1603]: 29/05/2026, 16:04:45
+                  - generic [ref=e1604]: "INFO: Waiting for application startup."
+                - generic [ref=e1605]:
+                  - generic [ref=e1606]: 29/05/2026, 16:04:45
+                  - generic [ref=e1607]: Starting automated OAuth credential discovery...
+                - generic [ref=e1608]:
+                  - generic [ref=e1609]: 29/05/2026, 16:04:45
+                  - generic [ref=e1610]: OAuth credential discovery complete.
+                - generic [ref=e1611]:
+                  - generic [ref=e1612]: 29/05/2026, 16:04:45
+                  - generic [ref=e1613]: "Detected API base override for hosted_vllm: https://unug0tbdzj0qx5-8001.proxy.runpod.net/v1"
+                - generic [ref=e1614]:
+                  - generic [ref=e1615]: 29/05/2026, 16:04:45
+                  - generic [ref=e1616]: "Usage managers initialized: hosted_vllm:1 (fresh)"
+                - generic [ref=e1617]:
+                  - generic [ref=e1618]: 29/05/2026, 16:04:45
+                  - generic [ref=e1619]: "Background token refresher started. Check interval: 600 seconds."
+                - generic [ref=e1620]:
+                  - generic [ref=e1621]: 29/05/2026, 16:04:45
+                  - generic [ref=e1622]: RotatingClient initialized (EmbeddingBatcher disabled).
+                - generic [ref=e1623]:
+                  - generic [ref=e1624]: 29/05/2026, 16:04:45
+                  - generic [ref=e1625]: ModelRegistry started (refresh every 21600s)
+                - generic [ref=e1626]:
+                  - generic [ref=e1627]: 29/05/2026, 16:04:45
+                  - generic [ref=e1628]: Model info service started (fetching pricing data in background).
+                - generic [ref=e1629]:
+                  - generic [ref=e1630]: 29/05/2026, 16:04:45
+                  - generic [ref=e1631]: "Providers initialized: 1 providers, 1 credentials"
+                - generic [ref=e1632]:
+                  - generic [ref=e1633]: 29/05/2026, 16:04:45
+                  - generic [ref=e1634]: "API: hosted_vllm:1"
+                - generic [ref=e1635]:
+                  - generic [ref=e1636]: 29/05/2026, 16:04:45
+                  - generic [ref=e1637]: "INFO: Application startup complete."
+                - generic [ref=e1638]:
+                  - generic [ref=e1639]: 29/05/2026, 16:04:45
+                  - generic [ref=e1640]: "INFO: Uvicorn running on http://0.0.0.0:80 (Press CTRL+C to quit)"
+                - generic [ref=e1641]:
+                  - generic [ref=e1642]: 29/05/2026, 16:04:45
+                  - generic [ref=e1643]: "OpenRouter: 357 models loaded"
+                - generic [ref=e1644]:
+                  - generic [ref=e1645]: 29/05/2026, 16:04:45
+                  - generic [ref=e1646]: "Models.dev: 4968 models loaded"
+                - generic [ref=e1647]:
+                  - generic [ref=e1648]: 29/05/2026, 16:04:45
+                  - generic [ref=e1649]: "INFO: 172.20.0.1:10936 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1650]:
+                  - generic [ref=e1651]: 29/05/2026, 16:04:49
+                  - generic [ref=e1652]: "INFO: 172.20.0.1:10936 - \"GET /frontier/app.html HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1653]:
+                  - generic [ref=e1654]: 29/05/2026, 16:04:50
+                  - generic [ref=e1655]: "INFO: 172.20.0.1:10936 - \"GET /favicon.ico HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1656]:
+                  - generic [ref=e1657]: 29/05/2026, 16:04:51
+                  - generic [ref=e1658]: "INFO: 172.20.0.1:10936 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1659]:
+                  - generic [ref=e1660]: 29/05/2026, 16:04:58
+                  - generic [ref=e1661]: "INFO: 172.20.0.1:60262 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1662]:
+                  - generic [ref=e1663]: 29/05/2026, 16:05:06
+                  - generic [ref=e1664]: "INFO: 172.20.0.1:60266 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1665]:
+                  - generic [ref=e1666]: 29/05/2026, 16:05:13
+                  - generic [ref=e1667]: "INFO: 172.20.0.1:32942 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1668]:
+                  - generic [ref=e1669]: 29/05/2026, 16:05:20
+                  - generic [ref=e1670]: "INFO: 172.20.0.1:29018 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1671]:
+                  - generic [ref=e1672]: 29/05/2026, 16:05:23
+                  - generic [ref=e1673]: "INFO: 172.20.0.1:29018 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1674]:
+                  - generic [ref=e1675]: 29/05/2026, 16:05:27
+                  - generic [ref=e1676]: "INFO: 172.20.0.1:29018 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1677]:
+                  - generic [ref=e1678]: 29/05/2026, 16:05:27
+                  - generic [ref=e1679]: "INFO: 172.20.0.1:29018 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1680]:
+                  - generic [ref=e1681]: 29/05/2026, 16:05:27
+                  - generic [ref=e1682]: "INFO: 172.20.0.1:29018 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1683]:
+                  - generic [ref=e1684]: 29/05/2026, 16:05:34
+                  - generic [ref=e1685]: "INFO: 172.20.0.1:11762 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1686]:
+                  - generic [ref=e1687]: 29/05/2026, 16:05:34
+                  - generic [ref=e1688]: "INFO: 172.20.0.1:11762 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1689]:
+                  - generic [ref=e1690]: 29/05/2026, 16:05:35
+                  - generic [ref=e1691]: "INFO: 172.20.0.1:11762 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1692]:
+                  - generic [ref=e1693]: 29/05/2026, 16:05:41
+                  - generic [ref=e1694]: "INFO: 172.20.0.1:59078 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1695]:
+                  - generic [ref=e1696]: 29/05/2026, 16:05:42
+                  - generic [ref=e1697]: "INFO: 172.20.0.1:59078 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1698]:
+                  - generic [ref=e1699]: 29/05/2026, 16:05:48
+                  - generic [ref=e1700]: "INFO: 172.20.0.1:63478 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1701]:
+                  - generic [ref=e1702]: 29/05/2026, 16:05:49
+                  - generic [ref=e1703]: "INFO: 172.20.0.1:63478 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1704]:
+                  - generic [ref=e1705]: 29/05/2026, 16:05:55
+                  - generic [ref=e1706]: "INFO: 172.20.0.1:63486 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1707]:
+                  - generic [ref=e1708]: 29/05/2026, 16:06:02
+                  - generic [ref=e1709]: "INFO: 172.20.0.1:59352 - \"GET /v1/models?limit=1000 HTTP/1.1\" 401 Unauthorized"
+                - generic [ref=e1710]:
+                  - generic [ref=e1711]: 29/05/2026, 16:06:02
+                  - generic [ref=e1712]: "INFO: 172.20.0.1:59352 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1713]:
+                  - generic [ref=e1714]: 29/05/2026, 16:06:04
+                  - generic [ref=e1715]: "INFO: 172.20.0.1:59352 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1716]:
+                  - generic [ref=e1717]: 29/05/2026, 16:06:09
+                  - generic [ref=e1718]: "INFO: 172.20.0.1:22322 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1719]:
+                  - generic [ref=e1720]: 29/05/2026, 16:06:15
+                  - generic [ref=e1721]: "INFO: 172.20.0.1:22334 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+                - generic [ref=e1722]:
+                  - generic [ref=e1723]: 29/05/2026, 16:06:16
+                  - generic [ref=e1724]: "INFO: 172.20.0.1:22334 - \"GET /v1/support/tickets/current HTTP/1.1\" 404 Not Found"
+              - generic [ref=e1725]:
+                - generic [ref=e1726]:
+                  - generic [ref=e1727]: "Último ping:"
+                  - generic [ref=e1728]: 29 de mai., 16:04:05
+                - generic [ref=e1729]: 64 registros recebidos
+        - generic [ref=e302]:
+          - generic [ref=e303]:
+            - generic [ref=e304]:
+              - generic [ref=e306]:
+                - heading "Métricas" [level=2] [ref=e307]
+                - generic [ref=e308]: BETA
+              - combobox [ref=e309]:
+                - generic: 24 horas
+                - img
+            - generic [ref=e310]: As métricas fornecem dados sobre memória, CPU e rede da sua aplicação, coletados a cada 5 minutos. Essas informações são armazenadas por 24 horas, permitindo um monitoramento contínuo e recente do desempenho.
+          - generic [ref=e312]:
+            - generic [ref=e313]:
+              - generic [ref=e314]: CPU
+              - application [ref=e318]:
+                - generic [ref=e326]:
+                  - generic [ref=e327]:
+                    - generic [ref=e329]: 15:58
+                    - generic [ref=e331]: 15:58
+                  - generic [ref=e332]:
+                    - generic [ref=e334]: 0%
+                    - generic [ref=e336]: 1%
+                    - generic [ref=e338]: 2%
+                    - generic [ref=e340]: 3%
+                    - generic [ref=e342]: 4%
+                  - generic [ref=e343]:
+                    - generic [ref=e345]: 0%
+                    - generic [ref=e347]: 1%
+                    - generic [ref=e349]: 2%
+                    - generic [ref=e351]: 3%
+                    - generic [ref=e353]: 4%
+            - generic [ref=e354]:
+              - generic [ref=e355]: RAM
+              - application [ref=e359]:
+                - generic [ref=e367]:
+                  - generic [ref=e368]:
+                    - generic [ref=e370]: 15:58
+                    - generic [ref=e372]: 15:58
+                  - generic [ref=e373]:
+                    - generic [ref=e375]: 0MB
+                    - generic [ref=e377]: 1MB
+                    - generic [ref=e379]: 2MB
+                    - generic [ref=e381]: 3MB
+                    - generic [ref=e383]: 4MB
+                  - generic [ref=e384]:
+                    - generic [ref=e386]: 0MB
+                    - generic [ref=e388]: 1MB
+                    - generic [ref=e390]: 2MB
+                    - generic [ref=e392]: 3MB
+                    - generic [ref=e394]: 4MB
+            - generic [ref=e395]:
+              - generic [ref=e396]: Rede Atual
+              - application [ref=e400]:
+                - generic [ref=e408]:
+                  - generic [ref=e409]:
+                    - generic [ref=e411]: 15:58
+                    - generic [ref=e413]: 15:58
+                  - generic [ref=e414]:
+                    - generic [ref=e416]: 0 Bytes
+                    - generic [ref=e418]: 1B
+                    - generic [ref=e420]: 2B
+                    - generic [ref=e422]: 3B
+                    - generic [ref=e424]: 4B
+                  - generic [ref=e425]:
+                    - generic [ref=e427]: 0 Bytes
+                    - generic [ref=e429]: 1B
+                    - generic [ref=e431]: 2B
+                    - generic [ref=e433]: 3B
+                    - generic [ref=e435]: 4B
+            - generic [ref=e436]:
+              - generic [ref=e437]: Rede Total
+              - application [ref=e441]:
+                - generic [ref=e449]:
+                  - generic [ref=e450]:
+                    - generic [ref=e452]: 15:58
+                    - generic [ref=e454]: 15:58
+                  - generic [ref=e455]:
+                    - generic [ref=e457]: 0 Bytes
+                    - generic [ref=e459]: 1B
+                    - generic [ref=e461]: 2B
+                    - generic [ref=e463]: 3B
+                    - generic [ref=e465]: 4B
+                  - generic [ref=e466]:
+                    - generic [ref=e468]: 0 Bytes
+                    - generic [ref=e470]: 1B
+                    - generic [ref=e472]: 2B
+                    - generic [ref=e474]: 3B
+                    - generic [ref=e476]: 4B
+    - contentinfo [ref=e477]:
+      - generic [ref=e478]:
+        - generic [ref=e479]:
+          - generic [ref=e480]:
+            - heading "DEMOCRATIZANDO SONHOS" [level=2] [ref=e1087]
+            - generic [ref=e482]:
+              - generic [ref=e483]: Feito com ❤️ no Brasil
+              - img "Brazil Country Image" [ref=e1088]
+          - generic [ref=e486]:
+            - link "Discord" [ref=e1089] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/discord
+              - img "Discord" [ref=e1090]
+            - link "Instagram" [ref=e1091] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/instagram
+              - img "Instagram" [ref=e1092]
+            - link "Threads" [ref=e1093] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/threads
+              - img "Threads" [ref=e1094]
+            - link "Youtube" [ref=e1095] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/youtube
+              - img "Youtube" [ref=e1096]
+            - link "Twitter" [ref=e1097] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/twitter
+              - img "Twitter" [ref=e1098]
+            - link "LinkedIn" [ref=e1099] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/linkedin
+              - img "LinkedIn" [ref=e1100]
+            - link "Github" [ref=e1101] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/github
+              - img "Github" [ref=e1102]
+          - link "Status do Sistema" [ref=e1103] [cursor=pointer]:
+            - /url: https://status.squarecloud.app/
+            - generic [ref=e504]: Status do Sistema
+        - generic [ref=e506]:
+          - generic [ref=e507]:
+            - heading "Minha Conta" [level=2] [ref=e1104]
+            - list [ref=e509]:
+              - listitem [ref=e510]:
+                - link "Informações da Conta" [ref=e1105] [cursor=pointer]:
+                  - /url: /pt-br/account
+              - listitem [ref=e512]:
+                - link "Segurança da Conta" [ref=e1106] [cursor=pointer]:
+                  - /url: /pt-br/account/security
+              - listitem [ref=e514]:
+                - link "Conexões da Conta" [ref=e1107] [cursor=pointer]:
+                  - /url: /pt-br/account/connections
+              - listitem [ref=e516]:
+                - link "Enviar uma Aplicação" [ref=e1108] [cursor=pointer]:
+                  - /url: /pt-br/upload
+              - listitem [ref=e518]:
+                - link "Resgatar Código" [ref=e1109] [cursor=pointer]:
+                  - /url: /pt-br/account/redeem
+          - generic [ref=e520]:
+            - heading "Documentação" [level=2] [ref=e1110]
+            - list [ref=e522]:
+              - listitem [ref=e523]:
+                - link "Começo Rápido" [ref=e1111] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/getting-started/quick-start
+                  - text: Começo Rápido
+                  - img [ref=e525]
+              - listitem [ref=e527]:
+                - link "Documentação da API" [ref=e1112] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/api-reference/authentication
+                  - text: Documentação da API
+                  - img [ref=e529]
+              - listitem [ref=e531]:
+                - link "Documentação do Blob" [ref=e1113] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/blob-reference/authentication
+                  - text: Documentação do Blob
+                  - img [ref=e533]
+              - listitem [ref=e535]:
+                - link "Plataforma" [ref=e1114] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/platform/overview
+                  - text: Plataforma
+                  - img [ref=e537]
+              - listitem [ref=e539]:
+                - link "Limites e Restrições" [ref=e1115] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/platform/limitations-and-restrictions
+                  - text: Limites e Restrições
+                  - img [ref=e541]
+          - generic [ref=e543]:
+            - heading "Empresa" [level=2] [ref=e1116]
+            - list [ref=e545]:
+              - listitem [ref=e546]:
+                - link "Sobre" [ref=e1117] [cursor=pointer]:
+                  - /url: /pt-br/about
+              - listitem [ref=e548]:
+                - link "Design" [ref=e1118] [cursor=pointer]:
+                  - /url: /pt-br/design
+              - listitem [ref=e550]:
+                - link "Suporte" [ref=e1119] [cursor=pointer]:
+                  - /url: /pt-br/support
+              - listitem [ref=e552]:
+                - link "Termos de Serviço" [ref=e1120] [cursor=pointer]:
+                  - /url: /pt-br/legal
+              - listitem [ref=e554]:
+                - link "Reportar Abuso" [ref=e1121] [cursor=pointer]:
+                  - /url: /pt-br/report-abuse
+          - generic [ref=e556]:
+            - heading "Produto" [level=2] [ref=e1122]
+            - list [ref=e558]:
+              - listitem [ref=e559]:
+                - link "Preços" [ref=e1123] [cursor=pointer]:
+                  - /url: /pt-br/pricing
+              - listitem [ref=e561]:
+                - link "Sites" [ref=e1124] [cursor=pointer]:
+                  - /url: /pt-br/sites
+              - listitem [ref=e563]:
+                - link "Bots" [ref=e1125] [cursor=pointer]:
+                  - /url: /pt-br/bots
+              - listitem [ref=e565]:
+                - link "Blob Storage" [ref=e1126] [cursor=pointer]:
+                  - /url: /pt-br/blob
+              - listitem [ref=e567]:
+                - link "Databases" [ref=e1127] [cursor=pointer]:
+                  - /url: /pt-br/databases
+          - generic [ref=e569]:
+            - heading "Bots" [level=2] [ref=e1128]
+            - list [ref=e571]:
+              - listitem [ref=e572]:
+                - link "Discord" [ref=e1129] [cursor=pointer]:
+                  - /url: /pt-br/bots/discord
+              - listitem [ref=e574]:
+                - link "Telegram" [ref=e1130] [cursor=pointer]:
+                  - /url: /pt-br/bots/telegram
+              - listitem [ref=e576]:
+                - link "WhatsApp" [ref=e1131] [cursor=pointer]:
+                  - /url: /pt-br/bots/whatsapp
+          - generic [ref=e578]:
+            - heading "Banco de dados" [level=2] [ref=e1132]
+            - list [ref=e580]:
+              - listitem [ref=e581]:
+                - link "MongoDB" [ref=e1133] [cursor=pointer]:
+                  - /url: /pt-br/databases/mongodb
+              - listitem [ref=e583]:
+                - link "PostgreSQL" [ref=e1134] [cursor=pointer]:
+                  - /url: /pt-br/databases/postgresql
+              - listitem [ref=e585]:
+                - link "MySQL" [ref=e1135] [cursor=pointer]:
+                  - /url: /pt-br/databases/mysql
+              - listitem [ref=e587]:
+                - link "Redis" [ref=e1136] [cursor=pointer]:
+                  - /url: /pt-br/databases/redis
+          - generic [ref=e589]:
+            - heading "Recursos" [level=2] [ref=e1137]
+            - generic [ref=e591]:
+              - generic [ref=e592]:
+                - heading "Ferramentas" [level=3] [ref=e1138]
+                - list [ref=e594]:
+                  - listitem [ref=e595]:
+                    - link "App mobile" [ref=e1139] [cursor=pointer]:
+                      - /url: /pt-br/resources/app
+                  - listitem [ref=e597]:
+                    - link "CLI" [ref=e1140] [cursor=pointer]:
+                      - /url: /pt-br/resources/cli
+                  - listitem [ref=e599]:
+                    - link "SDKs" [ref=e1141] [cursor=pointer]:
+                      - /url: /pt-br/resources/sdks
+                  - listitem [ref=e601]:
+                    - link "Extensão VSCode" [ref=e1142] [cursor=pointer]:
+                      - /url: /pt-br/resources/vscode-extension
+                  - listitem [ref=e603]:
+                    - link "Github Action" [ref=e1143] [cursor=pointer]:
+                      - /url: /pt-br/resources/github-action
+              - generic [ref=e605]:
+                - heading "Plataforma" [level=3] [ref=e1144]
+                - list [ref=e607]:
+                  - listitem [ref=e608]:
+                    - link "Variáveis de Ambiente" [ref=e1145] [cursor=pointer]:
+                      - /url: /pt-br/resources/envs
+                  - listitem [ref=e610]:
+                    - link "Snapshots" [ref=e1146] [cursor=pointer]:
+                      - /url: /pt-br/resources/snapshots
+                  - listitem [ref=e612]:
+                    - link "Gerenciador de Arquivos" [ref=e1147] [cursor=pointer]:
+                      - /url: /pt-br/resources/file-manager
+                  - listitem [ref=e614]:
+                    - link "Analytics" [ref=e1148] [cursor=pointer]:
+                      - /url: /pt-br/resources/analytics
+                  - listitem [ref=e616]:
+                    - link "Network" [ref=e1149] [cursor=pointer]:
+                      - /url: /pt-br/resources/network
+                  - listitem [ref=e618]:
+                    - link "Infraestrutura" [ref=e1150] [cursor=pointer]:
+                      - /url: /pt-br/resources/infrastructure
+      - generic [ref=e621]:
+        - generic [ref=e622]:
+          - generic [ref=e623]:
+            - generic [ref=e624]: Square Cloud LTDA
+            - generic [ref=e625]: 51.893.307/0001-08
+          - group "Tema" [ref=e1151]:
+            - button "Claro" [ref=e1152] [cursor=pointer]:
+              - img [ref=e628]
+            - button "Escuro" [ref=e1153] [cursor=pointer]:
+              - img [ref=e631]
+            - button "Sistema" [pressed] [ref=e1154] [cursor=pointer]:
+              - img [ref=e634]
+        - generic [ref=e636]:
+          - link "Termos de Serviço" [ref=e1155] [cursor=pointer]:
+            - /url: /pt-br/legal
+          - link "Política de Uso" [ref=e1156] [cursor=pointer]:
+            - /url: /pt-br/legal/policy
+          - link "Política de Privacidade" [ref=e1157] [cursor=pointer]:
+            - /url: /pt-br/legal/privacy
+  - alert [ref=e640]: claudecodenovo - Square Cloud
+  - button "Bate-papo aberto" [ref=e641] [cursor=pointer]:
+    - generic [ref=e643]:
+      - dialog [ref=e644]:
+        - generic [ref=e646]:
+          - generic [ref=e648]: Dúvidas? Fale conosco!
+          - generic [ref=e659]: Nossa equipe está online.
+      - generic [ref=e660]:
+        - button "Converse com a equipe de Square Cloud" [ref=e661]:
+          - generic [ref=e663]: Converse com a equipe de Square Cloud
+        - button "Pesquisa" [ref=e664]:
+          - generic [ref=e666]: Pesquisa
+  - generic [ref=e670]: 0 Bytes

@@ -133,3 +133,7 @@ cache/antigravity/thought_signatures.json
 /oauth_creds/
 
 /usage/
+
+# Proxy admin local state
+admin_data.json
+admin_data.tmp

@@ -10,6 +10,7 @@ Anthropic's Messages API format with the credential rotation system.
 
 import json
 import logging
+import os
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Optional
 
@@ -19,6 +20,7 @@ from ..anthropic_compat import (
     translate_anthropic_request,
     openai_to_anthropic_response,
     anthropic_streaming_wrapper,
+    anthropic_response_to_streaming_events,
     anthropic_to_openai_messages,
     anthropic_to_openai_tools,
 )
@@ -101,6 +103,39 @@ class AnthropicHandler:
         # Pass parent log directory to acompletion for nested logging
         if anthropic_logger and anthropic_logger.log_dir:
             openai_request["_parent_log_dir"] = anthropic_logger.log_dir
+
+        force_nonstream_for_stream = (
+            provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}
+            and os.getenv("ANTHROPIC_STREAM_FALLBACK_NONSTREAM", "true").lower()
+            not in {"false", "0", "no"}
+        )
+        if request.stream and force_nonstream_for_stream:
+            lib_logger.info(
+                "Using non-stream fallback for Anthropic stream request on %s",
+                provider,
+            )
+            fallback_request = dict(openai_request)
+            fallback_request["stream"] = False
+            response = await self._client.acompletion(
+                request=raw_request,
+                pre_request_callback=pre_request_callback,
+                **fallback_request,
+            )
+            openai_response = (
+                response.model_dump()
+                if hasattr(response, "model_dump")
+                else dict(response)
+            )
+            anthropic_response = openai_to_anthropic_response(
+                openai_response, original_model
+            )
+            anthropic_response["id"] = request_id
+            if anthropic_logger:
+                anthropic_logger.log_response(
+                    anthropic_response,
+                    filename="anthropic_response.json",
+                )
+            return anthropic_response_to_streaming_events(anthropic_response)
 
         if request.stream:
             # Streaming response

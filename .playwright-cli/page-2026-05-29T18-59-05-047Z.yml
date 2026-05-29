@@ -1,0 +1,9 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - main [ref=e5]:
+      - generic [ref=e7]:
+        - img [ref=e8]
+        - generic [ref=e11]: Spinning up your workspace...
+    - navigation
+    - complementary "Inspector root"
+  - alert [ref=e12]

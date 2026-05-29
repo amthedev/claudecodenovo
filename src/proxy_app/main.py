@@ -11,6 +11,10 @@ from pathlib import Path
 import sys
 import argparse
 import logging
+import hashlib
+import hmac
+import secrets
+from urllib.parse import parse_qs
 
 # --- Argument Parsing (BEFORE heavy imports) ---
 parser = argparse.ArgumentParser(description="API Key Proxy Server")
@@ -108,9 +112,10 @@ _console = Console()
 print("  → Loading FastAPI framework...")
 with _console.status("[dim]Loading FastAPI framework...", spinner="dots"):
     from contextlib import asynccontextmanager
+    from html import escape
     from fastapi import FastAPI, Request, HTTPException, Depends
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import StreamingResponse, JSONResponse
+    from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse, RedirectResponse
     from fastapi.security import APIKeyHeader
 
 print("  → Loading core dependencies...")
@@ -118,7 +123,7 @@ with _console.status("[dim]Loading core dependencies...", spinner="dots"):
     from dotenv import load_dotenv
     import colorlog
     import json
-    from typing import AsyncGenerator, Any, List, Optional, Union
+    from typing import AsyncGenerator, Any, Dict, List, Optional, Union
     from pydantic import BaseModel, ConfigDict, Field
 
     # --- Early Log Level Configuration ---
@@ -651,6 +656,10 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
+ADMIN_DATA_FILE = _root_dir / os.getenv("ADMIN_DATA_FILE", "admin_data.json")
+ADMIN_SESSION_COOKIE = "proxy_admin_session"
+ADMIN_SESSION_SECONDS = int(os.getenv("ADMIN_SESSION_SECONDS", "43200"))
+PASSWORD_ITERATIONS = 260_000
 
 
 def get_rotating_client(request: Request) -> RotatingClient:
@@ -663,14 +672,229 @@ def get_embedding_batcher(request: Request) -> EmbeddingBatcher:
     return request.app.state.embedding_batcher
 
 
+def _utc_day() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _default_admin_data() -> Dict[str, Any]:
+    return {"admin": None, "sessions": {}, "apps": []}
+
+
+def _load_admin_data() -> Dict[str, Any]:
+    if not ADMIN_DATA_FILE.exists():
+        return _default_admin_data()
+    try:
+        with ADMIN_DATA_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        logging.exception("Failed to load admin data; using empty admin store")
+        return _default_admin_data()
+
+    data.setdefault("admin", None)
+    data.setdefault("sessions", {})
+    data.setdefault("apps", [])
+    return data
+
+
+def _save_admin_data(data: Dict[str, Any]) -> None:
+    ADMIN_DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = ADMIN_DATA_FILE.with_suffix(".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    tmp_path.replace(ADMIN_DATA_FILE)
+
+
+def _hash_secret(secret_value: str, salt: Optional[str] = None) -> Dict[str, str]:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        secret_value.encode("utf-8"),
+        bytes.fromhex(salt),
+        PASSWORD_ITERATIONS,
+    ).hex()
+    return {"salt": salt, "hash": digest}
+
+
+def _verify_secret(secret_value: str, stored: Dict[str, str]) -> bool:
+    if not secret_value or not stored:
+        return False
+    candidate = _hash_secret(secret_value, stored.get("salt"))
+    return hmac.compare_digest(candidate["hash"], stored.get("hash", ""))
+
+
+def _hash_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def _generate_proxy_key() -> str:
+    return "sk-" + secrets.token_urlsafe(32).replace("_", "").replace("-", "")[:42]
+
+
+def _parse_daily_limit(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_validity_days(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _expiry_from_days(validity_days: int) -> Optional[float]:
+    if validity_days <= 0:
+        return None
+    return time.time() + (validity_days * 86400)
+
+
+def _timestamp_value(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_expired(value: Any) -> bool:
+    ts = _timestamp_value(value)
+    return bool(ts and ts <= time.time())
+
+
+async def _read_form_data(request: Request) -> Dict[str, str]:
+    body = (await request.body()).decode("utf-8")
+    parsed = parse_qs(body, keep_blank_values=True)
+    return {key: values[0] if values else "" for key, values in parsed.items()}
+
+
+def _extract_bearer_token(auth: Optional[str]) -> Optional[str]:
+    if not auth:
+        return None
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return auth.strip()
+
+
+def _default_proxy_model() -> Optional[str]:
+    for env_name in (
+        "PROXY_DEFAULT_MODEL",
+        "DEFAULT_PROXY_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    ):
+        value = os.getenv(env_name)
+        if value:
+            return value.strip()
+
+    static_models = _static_env_models()
+    if static_models:
+        return static_models[0]
+    return None
+
+
+def _resolve_model_alias(model: Optional[str]) -> Optional[str]:
+    if not model:
+        return model
+    model = model.strip()
+    if "/" in model:
+        return model
+
+    default_model = _default_proxy_model()
+    if not default_model:
+        return model
+
+    alias_env = os.getenv("PROXY_MODEL_ALIASES", "")
+    aliases = {
+        "claude-code-pro",
+        "claude-code-sonnet",
+        "claude-code-opus",
+        "claude-code-haiku",
+    }
+    aliases.update(alias.strip() for alias in alias_env.split(",") if alias.strip())
+
+    # Claude Code and some OpenAI-compatible clients send providerless model names.
+    if model in aliases or "/" not in model:
+        logging.info("Mapping client model '%s' to '%s'", model, default_model)
+        return default_model
+    return model
+
+
+def _active_admin_session(request: Request) -> Optional[Dict[str, Any]]:
+    token = request.cookies.get(ADMIN_SESSION_COOKIE)
+    if not token:
+        return None
+    data = _load_admin_data()
+    session = data.get("sessions", {}).get(token)
+    if not session or session.get("expires_at", 0) < time.time():
+        if token in data.get("sessions", {}):
+            del data["sessions"][token]
+            _save_admin_data(data)
+        return None
+    return session
+
+
+def _require_admin_session(request: Request) -> Dict[str, Any]:
+    session = _active_admin_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Admin login required")
+    return session
+
+
+def _verify_managed_api_key(api_key: str) -> Optional[Dict[str, Any]]:
+    data = _load_admin_data()
+    api_key_hash = _hash_api_key(api_key)
+    today = _utc_day()
+
+    for app_entry in data.get("apps", []):
+        if not hmac.compare_digest(app_entry.get("key_hash", ""), api_key_hash):
+            continue
+        if not app_entry.get("active", True):
+            raise HTTPException(status_code=403, detail="API key disabled")
+        expires_at = app_entry.get("expires_at")
+        if _is_expired(expires_at):
+            raise HTTPException(status_code=403, detail="API key expired")
+
+        usage = app_entry.setdefault("usage", {})
+        day_usage = usage.setdefault(today, {"requests": 0})
+        daily_limit = _parse_daily_limit(app_entry.get("daily_limit"))
+        if daily_limit > 0 and int(day_usage.get("requests", 0)) >= daily_limit:
+            raise HTTPException(status_code=429, detail="Daily API key limit exceeded")
+
+        day_usage["requests"] = int(day_usage.get("requests", 0)) + 1
+        app_entry["last_used_at"] = time.time()
+        _save_admin_data(data)
+        return {
+            "type": "managed",
+            "app_id": app_entry.get("id"),
+            "app_name": app_entry.get("name"),
+            "key_preview": app_entry.get("key_preview"),
+        }
+    return None
+
+
+def _verify_proxy_api_key_value(raw_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not raw_key:
+        return None
+    if PROXY_API_KEY and hmac.compare_digest(raw_key, PROXY_API_KEY):
+        return {"type": "root", "app_name": "root"}
+    return _verify_managed_api_key(raw_key)
+
+
 async def verify_api_key(auth: str = Depends(api_key_header)):
     """Dependency to verify the proxy API key."""
-    # If PROXY_API_KEY is not set or empty, skip verification (open access)
-    if not PROXY_API_KEY:
+    raw_key = _extract_bearer_token(auth)
+    verified = _verify_proxy_api_key_value(raw_key)
+    if verified:
+        return verified
+
+    # If no root key and no managed apps exist, keep the original open-access behavior.
+    if not PROXY_API_KEY and not _load_admin_data().get("apps"):
         return auth
-    if not auth or auth != f"Bearer {PROXY_API_KEY}":
-        raise HTTPException(status_code=401, detail="Invalid or missing API Key")
-    return auth
+    raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
 # --- Anthropic API Key Header ---
@@ -685,12 +909,13 @@ async def verify_anthropic_api_key(
     Dependency to verify API key for Anthropic endpoints.
     Accepts either x-api-key header (Anthropic style) or Authorization Bearer (OpenAI style).
     """
-    # Check x-api-key first (Anthropic style)
-    if x_api_key and x_api_key == PROXY_API_KEY:
-        return x_api_key
-    # Fall back to Bearer token (OpenAI style)
-    if auth and auth == f"Bearer {PROXY_API_KEY}":
-        return auth
+    raw_key = x_api_key or _extract_bearer_token(auth)
+    verified = _verify_proxy_api_key_value(raw_key)
+    if verified:
+        return verified
+
+    if not PROXY_API_KEY and not _load_admin_data().get("apps"):
+        return raw_key
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
@@ -913,6 +1138,8 @@ async def chat_completions(
         if raw_logger:
             raw_logger.log_request(headers=request.headers, body=request_data)
 
+        request_data["model"] = _resolve_model_alias(request_data.get("model"))
+
         # Extract and log specific reasoning parameters for monitoring.
         model = request_data.get("model")
         generation_cfg = (
@@ -1030,6 +1257,8 @@ async def anthropic_messages(
         )
 
     try:
+        body = body.model_copy(update={"model": _resolve_model_alias(body.model)})
+
         # Log the request to console
         log_request_to_console(
             url=str(request.url),
@@ -1256,6 +1485,388 @@ def read_root():
     return {"Status": "API Key Proxy is running"}
 
 
+def _admin_layout(title: str, body: str) -> HTMLResponse:
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)} - Proxy Admin</title>
+  <style>
+    :root {{ color-scheme: dark; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: #101214; color: #f5f7fa; }}
+    main {{ width: min(1120px, calc(100vw - 32px)); margin: 32px auto; }}
+    h1 {{ font-size: 28px; margin: 0 0 6px; }}
+    h2 {{ font-size: 18px; margin: 0 0 14px; }}
+    p {{ color: #aeb7c2; margin: 0 0 18px; }}
+    a {{ color: #7cc4ff; }}
+    .topbar {{ display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 24px; }}
+    .grid {{ display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }}
+    .panel {{ background: #171a1f; border: 1px solid #2b3138; border-radius: 8px; padding: 18px; }}
+    label {{ display: block; font-size: 13px; color: #c8d0d9; margin: 12px 0 6px; }}
+    input, select {{ width: 100%; min-height: 40px; border: 1px solid #37414c; border-radius: 6px; background: #0f1216; color: #f5f7fa; padding: 8px 10px; }}
+    button {{ min-height: 40px; border: 0; border-radius: 6px; padding: 8px 12px; background: #2f81f7; color: white; font-weight: 650; cursor: pointer; }}
+    button.secondary {{ background: #30363d; }}
+    button.danger {{ background: #da3633; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+    th, td {{ border-bottom: 1px solid #2b3138; padding: 10px 8px; text-align: left; vertical-align: top; }}
+    th {{ color: #aeb7c2; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }}
+    code {{ background: #0f1216; border: 1px solid #2b3138; border-radius: 5px; padding: 2px 5px; }}
+    .muted {{ color: #aeb7c2; font-size: 13px; }}
+    .ok {{ color: #8ddb8c; }}
+    .warn {{ color: #ffcf70; }}
+    .row-actions {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .inline {{ display: inline; }}
+    .secret {{ border-color: #3f5f2d; background: #14210f; margin-bottom: 16px; }}
+  </style>
+</head>
+<body><main>{body}</main></body>
+</html>"""
+    )
+
+
+def _admin_login_page(message: str = "") -> HTMLResponse:
+    data = _load_admin_data()
+    is_setup = bool(data.get("admin"))
+    action = "/admin/login" if is_setup else "/admin/setup"
+    heading = "Entrar no Admin" if is_setup else "Criar Admin"
+    button = "Entrar" if is_setup else "Criar admin"
+    helper = "Use o usuário e senha criados no primeiro acesso." if is_setup else "Primeiro acesso: defina o usuário e a senha do painel."
+    message_html = f"<p class='warn'>{escape(message)}</p>" if message else ""
+    return _admin_layout(
+        heading,
+        f"""
+        <section class="panel" style="max-width: 440px; margin: 8vh auto;">
+          <h1>{heading}</h1>
+          <p>{helper}</p>
+          {message_html}
+          <form method="post" action="{action}">
+            <label>Usuário</label>
+            <input name="username" autocomplete="username" required>
+            <label>Senha</label>
+            <input name="password" type="password" autocomplete="current-password" required>
+            <button style="margin-top:16px;width:100%">{button}</button>
+          </form>
+        </section>
+        """,
+    )
+
+
+def _format_ts(ts: Optional[float]) -> str:
+    if not ts:
+        return "nunca"
+    return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ts))
+
+
+def _admin_dashboard(generated_key: str = "") -> HTMLResponse:
+    data = _load_admin_data()
+    today = _utc_day()
+    rows = []
+    for app_entry in data.get("apps", []):
+        today_usage = app_entry.get("usage", {}).get(today, {})
+        requests_today = int(today_usage.get("requests", 0))
+        daily_limit = _parse_daily_limit(app_entry.get("daily_limit"))
+        validity_days = _parse_validity_days(app_entry.get("validity_days"))
+        expires_at = app_entry.get("expires_at")
+        limit_display = "sem limite" if daily_limit <= 0 else str(daily_limit)
+        expires_display = _format_ts(_timestamp_value(expires_at)) if expires_at else "sem expiração"
+        status = "<span class='ok'>ativa</span>" if app_entry.get("active", True) else "<span class='warn'>pausada</span>"
+        if _is_expired(expires_at):
+            status = "<span class='warn'>expirada</span>"
+        rows.append(
+            f"""
+            <tr>
+              <td><strong>{escape(app_entry.get("name", ""))}</strong><br><span class="muted">{escape(app_entry.get("id", ""))}</span></td>
+              <td><code>{escape(app_entry.get("key_preview", ""))}</code></td>
+              <td>{status}</td>
+              <td>{requests_today} / {escape(limit_display)}</td>
+              <td>{escape(expires_display)}</td>
+              <td>{_format_ts(app_entry.get("last_used_at"))}</td>
+              <td>
+                <form method="post" action="/admin/apps/{escape(app_entry.get("id", ""))}/update" class="row-actions">
+                  <input name="name" value="{escape(app_entry.get("name", ""))}" style="max-width:170px">
+                  <input name="daily_limit" type="number" min="0" value="{daily_limit}" style="max-width:120px">
+                  <input name="validity_days" type="number" min="0" value="{validity_days}" title="Validade em dias. Use 0 para nunca expirar." style="max-width:120px">
+                  <select name="active" style="max-width:110px">
+                    <option value="true" {"selected" if app_entry.get("active", True) else ""}>ativa</option>
+                    <option value="false" {"" if app_entry.get("active", True) else "selected"}>pausada</option>
+                  </select>
+                  <button>Salvar</button>
+                </form>
+                <form method="post" action="/admin/apps/{escape(app_entry.get("id", ""))}/rotate" class="inline">
+                  <button class="secondary" style="margin-top:8px">Gerar nova sk</button>
+                </form>
+                <form method="post" action="/admin/apps/{escape(app_entry.get("id", ""))}/delete" class="inline">
+                  <button class="danger" style="margin-top:8px">Excluir</button>
+                </form>
+              </td>
+            </tr>
+            """
+        )
+
+    rows_html = "\n".join(rows) or "<tr><td colspan='7' class='muted'>Nenhum app criado ainda.</td></tr>"
+    secret_html = ""
+    if generated_key:
+        secret_html = f"""
+        <section class="panel secret">
+          <h2>Chave criada</h2>
+          <p>Copie agora. Por segurança, depois ela fica salva apenas como hash.</p>
+          <code>{escape(generated_key)}</code>
+        </section>
+        """
+
+    return _admin_layout(
+        "Admin",
+        f"""
+        <div class="topbar">
+          <div>
+            <h1>Proxy Admin</h1>
+            <p>Gerencie apps, chaves <code>sk-...</code>, limite diário e uso.</p>
+          </div>
+          <form method="post" action="/admin/logout"><button class="secondary">Sair</button></form>
+        </div>
+        {secret_html}
+        <div class="grid">
+          <section class="panel">
+            <h2>Novo app/API key</h2>
+            <form method="post" action="/admin/apps">
+              <label>Nome do app</label>
+              <input name="name" placeholder="Meu app" required>
+              <label>Limite diário de requests</label>
+              <input name="daily_limit" type="number" min="0" value="0">
+              <label>Validade da chave em dias</label>
+              <input name="validity_days" type="number" min="0" value="30">
+              <p class="muted">Use 0 para deixar sem limite diário ou sem expiração.</p>
+              <button>Criar app e sk</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Resumo</h2>
+            <p>Apps: <strong>{len(data.get("apps", []))}</strong></p>
+            <p>Hoje: <strong>{sum(int(a.get("usage", {}).get(today, {}).get("requests", 0)) for a in data.get("apps", []))}</strong> requests</p>
+            <p>Stats do provedor: <a href="/v1/quota-stats">/v1/quota-stats</a></p>
+          </section>
+        </div>
+        <section class="panel" style="margin-top:16px;">
+          <h2>Apps e chaves</h2>
+          <table>
+            <thead><tr><th>App</th><th>Chave</th><th>Status</th><th>Uso hoje</th><th>Expira em</th><th>Último uso</th><th>Ações</th></tr></thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+        </section>
+        """,
+    )
+
+
+@app.get("/admin")
+async def admin_home(request: Request):
+    if not _load_admin_data().get("admin") or not _active_admin_session(request):
+        return _admin_login_page()
+    return _admin_dashboard()
+
+
+@app.post("/admin/setup")
+async def admin_setup(request: Request):
+    data = _load_admin_data()
+    if data.get("admin"):
+        return _admin_login_page("Admin já configurado.")
+    form = await _read_form_data(request)
+    username = str(form.get("username", "")).strip()
+    password = str(form.get("password", ""))
+    if not username or len(password) < 8:
+        return _admin_login_page("Use usuário e senha com pelo menos 8 caracteres.")
+    data["admin"] = {
+        "username": username,
+        "password": _hash_secret(password),
+        "created_at": time.time(),
+    }
+    _save_admin_data(data)
+    return await admin_login(request)
+
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    data = _load_admin_data()
+    form = await _read_form_data(request)
+    username = str(form.get("username", "")).strip()
+    password = str(form.get("password", ""))
+    admin = data.get("admin") or {}
+    if username != admin.get("username") or not _verify_secret(password, admin.get("password", {})):
+        return _admin_login_page("Usuário ou senha inválidos.")
+    token = secrets.token_urlsafe(32)
+    data.setdefault("sessions", {})[token] = {
+        "username": username,
+        "created_at": time.time(),
+        "expires_at": time.time() + ADMIN_SESSION_SECONDS,
+    }
+    _save_admin_data(data)
+    response = RedirectResponse("/admin", status_code=303)
+    response.set_cookie(
+        ADMIN_SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=ADMIN_SESSION_SECONDS,
+    )
+    return response
+
+
+@app.post("/admin/logout")
+async def admin_logout(request: Request):
+    data = _load_admin_data()
+    token = request.cookies.get(ADMIN_SESSION_COOKIE)
+    if token:
+        data.get("sessions", {}).pop(token, None)
+        _save_admin_data(data)
+    response = RedirectResponse("/admin", status_code=303)
+    response.delete_cookie(ADMIN_SESSION_COOKIE)
+    return response
+
+
+@app.post("/admin/apps")
+async def admin_create_app(request: Request):
+    _require_admin_session(request)
+    form = await _read_form_data(request)
+    name = str(form.get("name", "")).strip()
+    daily_limit = _parse_daily_limit(form.get("daily_limit"))
+    validity_days = _parse_validity_days(form.get("validity_days"))
+    if not name:
+        return _admin_dashboard()
+    api_key = _generate_proxy_key()
+    app_id = uuid.uuid4().hex
+    data = _load_admin_data()
+    data.setdefault("apps", []).append(
+        {
+            "id": app_id,
+            "name": name,
+            "key_hash": _hash_api_key(api_key),
+            "key_preview": f"{api_key[:10]}...{api_key[-4:]}",
+            "active": True,
+            "daily_limit": daily_limit,
+            "validity_days": validity_days,
+            "expires_at": _expiry_from_days(validity_days),
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "usage": {},
+        }
+    )
+    _save_admin_data(data)
+    return _admin_dashboard(api_key)
+
+
+@app.post("/admin/apps/{app_id}/update")
+async def admin_update_app(app_id: str, request: Request):
+    _require_admin_session(request)
+    form = await _read_form_data(request)
+    data = _load_admin_data()
+    for app_entry in data.get("apps", []):
+        if app_entry.get("id") != app_id:
+            continue
+        app_entry["name"] = str(form.get("name", app_entry.get("name", ""))).strip()
+        app_entry["daily_limit"] = _parse_daily_limit(form.get("daily_limit"))
+        validity_days = _parse_validity_days(form.get("validity_days"))
+        app_entry["validity_days"] = validity_days
+        app_entry["expires_at"] = _expiry_from_days(validity_days)
+        app_entry["active"] = str(form.get("active", "true")).lower() == "true"
+        app_entry["updated_at"] = time.time()
+        break
+    _save_admin_data(data)
+    return RedirectResponse("/admin", status_code=303)
+
+
+@app.post("/admin/apps/{app_id}/rotate")
+async def admin_rotate_app(app_id: str, request: Request):
+    _require_admin_session(request)
+    api_key = _generate_proxy_key()
+    data = _load_admin_data()
+    for app_entry in data.get("apps", []):
+        if app_entry.get("id") != app_id:
+            continue
+        app_entry["key_hash"] = _hash_api_key(api_key)
+        app_entry["key_preview"] = f"{api_key[:10]}...{api_key[-4:]}"
+        app_entry["expires_at"] = _expiry_from_days(
+            _parse_validity_days(app_entry.get("validity_days"))
+        )
+        app_entry["updated_at"] = time.time()
+        break
+    _save_admin_data(data)
+    return _admin_dashboard(api_key)
+
+
+@app.post("/admin/apps/{app_id}/delete")
+async def admin_delete_app(app_id: str, request: Request):
+    _require_admin_session(request)
+    data = _load_admin_data()
+    data["apps"] = [app_entry for app_entry in data.get("apps", []) if app_entry.get("id") != app_id]
+    _save_admin_data(data)
+    return RedirectResponse("/admin", status_code=303)
+
+
+@app.get("/admin/api/apps")
+async def admin_api_apps(request: Request):
+    _require_admin_session(request)
+    data = _load_admin_data()
+    public_apps = []
+    for app_entry in data.get("apps", []):
+        item = dict(app_entry)
+        item.pop("key_hash", None)
+        public_apps.append(item)
+    return {"apps": public_apps, "day": _utc_day()}
+
+
+def _static_env_models() -> List[str]:
+    """Return provider-prefixed models declared via PROVIDER_MODELS env vars."""
+    model_ids: List[str] = []
+    for key, value in os.environ.items():
+        if not key.endswith("_MODELS"):
+            continue
+        provider = key[: -len("_MODELS")].lower()
+        raw_value = value.strip()
+        try:
+            parsed = json.loads(raw_value)
+        except (json.JSONDecodeError, TypeError):
+            stripped = raw_value.strip("\"'")
+            try:
+                parsed = json.loads(stripped)
+            except (json.JSONDecodeError, TypeError):
+                parsed = [
+                    name.strip().strip("\"'")
+                    for name in stripped.split(",")
+                    if name.strip().strip("\"'")
+                ]
+
+        if isinstance(parsed, str):
+            try:
+                parsed = json.loads(parsed)
+            except (json.JSONDecodeError, TypeError):
+                parsed = [parsed]
+
+        if isinstance(parsed, list):
+            names = [item for item in parsed if isinstance(item, str)]
+        elif isinstance(parsed, dict):
+            names = [name for name in parsed if isinstance(name, str)]
+        else:
+            continue
+
+        for name in names:
+            model_ids.append(name if "/" in name else f"{provider}/{name}")
+
+    for key, value in os.environ.items():
+        if not key.startswith("WHITELIST_MODELS_"):
+            continue
+        provider = key[len("WHITELIST_MODELS_") :].lower()
+        for raw_name in value.strip().strip("\"'").split(","):
+            name = raw_name.strip().strip("\"'")
+            if not name or "*" in name:
+                continue
+            model_ids.append(name if "/" in name else f"{provider}/{name}")
+
+    model_ids = list(dict.fromkeys(model_ids))
+    return model_ids
+
+
 @app.get("/v1/models")
 async def list_models(
     request: Request,
@@ -1271,6 +1882,8 @@ async def list_models(
                   If False, returns minimal OpenAI-compatible response.
     """
     model_ids = await client.get_all_available_models(grouped=False)
+    if not model_ids:
+        model_ids = _static_env_models()
 
     if enriched and hasattr(request.app.state, "model_info_service"):
         model_info_service = request.app.state.model_info_service
@@ -1622,8 +2235,12 @@ if __name__ == "__main__":
         Check if the proxy needs onboarding (first-time setup).
         Returns True if onboarding is needed, False otherwise.
         """
-        # Only check if .env file exists
-        # PROXY_API_KEY is optional (will show warning if not set)
+        # Cloud platforms usually inject configuration as environment variables
+        # instead of mounting a physical .env file.
+        if os.getenv("PROXY_API_KEY"):
+            return False
+
+        # If no PROXY_API_KEY is present, fall back to local first-run setup.
         if not ENV_FILE.is_file():
             return True
 

@@ -10,6 +10,7 @@ This enables any OpenAI-compatible provider to work with Anthropic clients.
 """
 
 import json
+import os
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
@@ -458,6 +459,63 @@ def anthropic_to_openai_tool_choice(
     return "auto"
 
 
+def _strip_vllm_rejected_fields(value: Any) -> Any:
+    """Remove Anthropic/OpenAI extras that strict vLLM schemas reject."""
+    rejected_keys = {
+        "cache_control",
+        "thinking_signature",
+        "reasoning_content",
+        "citations",
+    }
+    if isinstance(value, list):
+        return [_strip_vllm_rejected_fields(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _strip_vllm_rejected_fields(child)
+            for key, child in value.items()
+            if key not in rejected_keys
+        }
+    return value
+
+
+def _vllm_max_output_tokens() -> int:
+    for env_name in (
+        "HOSTED_VLLM_MAX_TOKENS",
+        "ANTHROPIC_VLLM_MAX_TOKENS",
+        "PROXY_MAX_OUTPUT_TOKENS",
+    ):
+        value = os.getenv(env_name)
+        if not value:
+            continue
+        try:
+            return max(1, int(value))
+        except ValueError:
+            continue
+    return 512
+
+
+def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
+    # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
+    # sampling/thinking fields. Keep the request strict for Claude Code.
+    openai_request.pop("top_k", None)
+    if openai_request.get("reasoning_effort") in {"disable", "disabled", "none"}:
+        openai_request.pop("reasoning_effort", None)
+    max_output_tokens = _vllm_max_output_tokens()
+    requested_max_tokens = openai_request.get("max_tokens")
+    if requested_max_tokens and requested_max_tokens > max_output_tokens:
+        openai_request["max_tokens"] = max_output_tokens
+
+    openai_request["messages"] = _strip_vllm_rejected_fields(
+        openai_request.get("messages", [])
+    )
+    if openai_request.get("tools"):
+        openai_request["tools"] = _strip_vllm_rejected_fields(openai_request["tools"])
+        if openai_request.get("tool_choice") not in (None, "auto"):
+            # vLLM's OpenAI server is picky about forced/required tool choice,
+            # while Claude Code still works with auto tool selection.
+            openai_request["tool_choice"] = "auto"
+
+
 def openai_to_anthropic_response(openai_response: dict, original_model: str) -> dict:
     """
     Convert OpenAI chat completion response to Anthropic Messages format.
@@ -625,5 +683,9 @@ def translate_anthropic_request(request: AnthropicMessagesRequest) -> Dict[str, 
             # Let the provider decide the default
         elif request.thinking.type == "disabled":
             openai_request["reasoning_effort"] = "disable"
+
+    provider = request.model.split("/", 1)[0].lower() if "/" in request.model else ""
+    if provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}:
+        _sanitize_openai_request_for_vllm(openai_request)
 
     return openai_request

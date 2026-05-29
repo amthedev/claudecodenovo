@@ -1,0 +1,460 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - generic [ref=e6]:
+            - link [ref=e943] [cursor=pointer]:
+              - /url: /pt-br/dashboard
+              - img [ref=e944]
+            - button [ref=e945]:
+              - generic [ref=e13]:
+                - generic [ref=e14]: claudecodenovo
+                - generic [ref=e15]: FastAPI LLM API key proxy
+              - button [ref=e16]:
+                - img
+          - generic [ref=e17]:
+            - button [ref=e946] [cursor=pointer]:
+              - img [ref=e19]
+              - generic [ref=e21]: "1"
+            - button [ref=e947]:
+              - generic [ref=e23]:
+                - generic [ref=e24]: Allan Matheus
+                - generic [ref=e25]: ••••••••••@gmail.com
+              - img
+            - button [ref=e948]:
+              - img [ref=e949]
+        - generic [ref=e28]:
+          - navigation [ref=e29]:
+            - list [ref=e30]:
+              - link [ref=e950] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff
+                - generic [ref=e32]:
+                  - img [ref=e33]
+                  - text: Projeto
+              - link [ref=e951] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/files
+                - generic [ref=e37]:
+                  - img [ref=e38]
+                  - text: Arquivos
+              - link [ref=e952] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/snapshots
+                - generic [ref=e41]:
+                  - img [ref=e42]
+                  - text: Snapshots
+              - link [ref=e953] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/analytics
+                - generic [ref=e45]:
+                  - img [ref=e46]
+                  - text: Analytics
+              - link [ref=e954] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/settings
+                - generic [ref=e49]:
+                  - img [ref=e50]
+                  - text: Configurações
+          - link [ref=e955] [cursor=pointer]:
+            - /url: /pt-br/dashboard
+            - img [ref=e53]
+            - text: Voltar ao Painel de Controle
+    - generic [ref=e55]:
+      - img
+      - generic [ref=e733]:
+        - complementary [ref=e734]:
+          - list [ref=e735]:
+            - listitem [ref=e736]:
+              - button [ref=e956] [cursor=pointer]:
+                - img
+                - text: Geral
+            - listitem [ref=e738]:
+              - button [ref=e957] [cursor=pointer]:
+                - img
+                - text: Deploys
+            - listitem [ref=e740]:
+              - button [ref=e958] [cursor=pointer]:
+                - img
+                - text: Variáveis de Ambiente
+            - listitem [ref=e743]:
+              - button [ref=e959] [cursor=pointer]:
+                - img
+                - text: Network
+            - listitem [ref=e745]:
+              - button [ref=e960] [cursor=pointer]:
+                - img
+                - text: Área de risco
+        - generic [ref=e748]:
+          - heading [level=1] [ref=e961]: Variáveis de Ambiente
+          - generic [ref=e753]:
+            - generic [ref=e754]:
+              - generic [ref=e755]:
+                - group [ref=e756]:
+                  - generic [ref=e757]: Chave
+                  - textbox [disabled] [ref=e962]:
+                    - /placeholder: Chave
+                    - text: HOST
+                - group [ref=e760]:
+                  - generic [ref=e761]: Valor
+                  - generic [ref=e762]:
+                    - textbox [disabled] [ref=e963]:
+                      - /placeholder: Valor
+                      - text: 0.0.0.0
+                    - button [ref=e765]:
+                      - img
+              - generic [ref=e766]:
+                - group [ref=e767]:
+                  - textbox [disabled] [ref=e964]:
+                    - /placeholder: Chave
+                    - text: PORT
+                - group [ref=e770]:
+                  - generic [ref=e771]:
+                    - textbox [disabled] [ref=e965]:
+                      - /placeholder: Valor
+                      - text: "80"
+                    - button [ref=e774]:
+                      - img
+              - generic [ref=e775]:
+                - group [ref=e776]:
+                  - textbox [disabled] [ref=e966]:
+                    - /placeholder: Chave
+                    - text: SQUARECLOUD_APP_ID
+                - group [ref=e779]:
+                  - generic [ref=e780]:
+                    - textbox [disabled] [ref=e967]:
+                      - /placeholder: Valor
+                      - text: 2e49d0c35bdc49ab827414a4fa3839ff
+                    - button [ref=e783]:
+                      - img
+              - generic [ref=e879]:
+                - textbox [ref=e968]:
+                  - /placeholder: Chave
+                  - text: PROXY_API_KEY
+                - generic [ref=e883]:
+                  - group [ref=e884]:
+                    - textbox [ref=e885]: xxxxxxxxxxxxxxx
+                    - group [ref=e886]:
+                      - button [ref=e887] [cursor=pointer]:
+                        - img [ref=e888]
+                    - group [ref=e890]:
+                      - button [ref=e891] [cursor=pointer]:
+                        - img [ref=e892]
+                  - button [ref=e894]:
+                    - img
+              - generic [ref=e895]:
+                - textbox [ref=e969]:
+                  - /placeholder: Chave
+                  - text: HOSTED_VLLM_API_BASE
+                - generic [ref=e899]:
+                  - group [ref=e900]:
+                    - textbox [ref=e901]: xxxxxxxxxxxxxxx
+                    - group [ref=e902]:
+                      - button [ref=e903] [cursor=pointer]:
+                        - img [ref=e904]
+                    - group [ref=e906]:
+                      - button [ref=e907] [cursor=pointer]:
+                        - img [ref=e908]
+                  - button [ref=e910]:
+                    - img
+              - generic [ref=e911]:
+                - textbox [ref=e970]:
+                  - /placeholder: Chave
+                  - text: HOSTED_VLLM_API_KEY
+                - generic [ref=e915]:
+                  - group [ref=e916]:
+                    - textbox [ref=e917]: xxxxxxxxxxxxxxx
+                    - group [ref=e918]:
+                      - button [ref=e919] [cursor=pointer]:
+                        - img [ref=e920]
+                    - group [ref=e922]:
+                      - button [ref=e923] [cursor=pointer]:
+                        - img [ref=e924]
+                  - button [ref=e926]:
+                    - img
+              - generic [ref=e927]:
+                - textbox [ref=e971]:
+                  - /placeholder: Chave
+                  - text: WHITELIST_MODELS_HOSTED_VLLM
+                - generic [ref=e931]:
+                  - group [ref=e932]:
+                    - textbox [ref=e933]: xxxxxxxxxxxxxxx
+                    - group [ref=e934]:
+                      - button [ref=e935] [cursor=pointer]:
+                        - img [ref=e936]
+                    - group [ref=e938]:
+                      - button [ref=e939] [cursor=pointer]:
+                        - img [ref=e940]
+                  - button [ref=e942]:
+                    - img
+              - generic [ref=e784]:
+                - button [ref=e972]:
+                  - img
+                  - text: Adicionar nova variável
+                - paragraph [ref=e786]: "Dica: Cole a variável completa no campo chave para preencher chave e valor automaticamente."
+            - generic [ref=e787]:
+              - generic [ref=e788]:
+                - button [ref=e973]:
+                  - img
+                  - text: Importar de um arquivo
+                - button [disabled]:
+                  - img
+                  - text: Exportar
+              - button [ref=e974]: Salvar
+    - contentinfo [ref=e477]:
+      - generic [ref=e478]:
+        - generic [ref=e479]:
+          - generic [ref=e480]:
+            - heading [level=2] [ref=e975]: DEMOCRATIZANDO SONHOS
+            - generic [ref=e482]:
+              - generic [ref=e483]: Feito com ❤️ no Brasil
+              - img [ref=e976]
+          - generic [ref=e486]:
+            - link [ref=e977] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/discord
+              - img [ref=e978]
+            - link [ref=e979] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/instagram
+              - img [ref=e980]
+            - link [ref=e981] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/threads
+              - img [ref=e982]
+            - link [ref=e983] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/youtube
+              - img [ref=e984]
+            - link [ref=e985] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/twitter
+              - img [ref=e986]
+            - link [ref=e987] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/linkedin
+              - img [ref=e988]
+            - link [ref=e989] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/github
+              - img [ref=e990]
+          - link [ref=e991] [cursor=pointer]:
+            - /url: https://status.squarecloud.app/
+            - generic [ref=e504]: Status do Sistema
+        - generic [ref=e506]:
+          - generic [ref=e507]:
+            - heading [level=2] [ref=e992]: Minha Conta
+            - list [ref=e509]:
+              - listitem [ref=e510]:
+                - link [ref=e993] [cursor=pointer]:
+                  - /url: /pt-br/account
+                  - text: Informações da Conta
+              - listitem [ref=e512]:
+                - link [ref=e994] [cursor=pointer]:
+                  - /url: /pt-br/account/security
+                  - text: Segurança da Conta
+              - listitem [ref=e514]:
+                - link [ref=e995] [cursor=pointer]:
+                  - /url: /pt-br/account/connections
+                  - text: Conexões da Conta
+              - listitem [ref=e516]:
+                - link [ref=e996] [cursor=pointer]:
+                  - /url: /pt-br/upload
+                  - text: Enviar uma Aplicação
+              - listitem [ref=e518]:
+                - link [ref=e997] [cursor=pointer]:
+                  - /url: /pt-br/account/redeem
+                  - text: Resgatar Código
+          - generic [ref=e520]:
+            - heading [level=2] [ref=e998]: Documentação
+            - list [ref=e522]:
+              - listitem [ref=e523]:
+                - link [ref=e999] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/getting-started/quick-start
+                  - text: Começo Rápido
+                  - img [ref=e525]
+              - listitem [ref=e527]:
+                - link [ref=e1000] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/api-reference/authentication
+                  - text: Documentação da API
+                  - img [ref=e529]
+              - listitem [ref=e531]:
+                - link [ref=e1001] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/blob-reference/authentication
+                  - text: Documentação do Blob
+                  - img [ref=e533]
+              - listitem [ref=e535]:
+                - link [ref=e1002] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/platform/overview
+                  - text: Plataforma
+                  - img [ref=e537]
+              - listitem [ref=e539]:
+                - link [ref=e1003] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/platform/limitations-and-restrictions
+                  - text: Limites e Restrições
+                  - img [ref=e541]
+          - generic [ref=e543]:
+            - heading [level=2] [ref=e1004]: Empresa
+            - list [ref=e545]:
+              - listitem [ref=e546]:
+                - link [ref=e1005] [cursor=pointer]:
+                  - /url: /pt-br/about
+                  - text: Sobre
+              - listitem [ref=e548]:
+                - link [ref=e1006] [cursor=pointer]:
+                  - /url: /pt-br/design
+                  - text: Design
+              - listitem [ref=e550]:
+                - link [ref=e1007] [cursor=pointer]:
+                  - /url: /pt-br/support
+                  - text: Suporte
+              - listitem [ref=e552]:
+                - link [ref=e1008] [cursor=pointer]:
+                  - /url: /pt-br/legal
+                  - text: Termos de Serviço
+              - listitem [ref=e554]:
+                - link [ref=e1009] [cursor=pointer]:
+                  - /url: /pt-br/report-abuse
+                  - text: Reportar Abuso
+          - generic [ref=e556]:
+            - heading [level=2] [ref=e1010]: Produto
+            - list [ref=e558]:
+              - listitem [ref=e559]:
+                - link [ref=e1011] [cursor=pointer]:
+                  - /url: /pt-br/pricing
+                  - text: Preços
+              - listitem [ref=e561]:
+                - link [ref=e1012] [cursor=pointer]:
+                  - /url: /pt-br/sites
+                  - text: Sites
+              - listitem [ref=e563]:
+                - link [ref=e1013] [cursor=pointer]:
+                  - /url: /pt-br/bots
+                  - text: Bots
+              - listitem [ref=e565]:
+                - link [ref=e1014] [cursor=pointer]:
+                  - /url: /pt-br/blob
+                  - text: Blob Storage
+              - listitem [ref=e567]:
+                - link [ref=e1015] [cursor=pointer]:
+                  - /url: /pt-br/databases
+                  - text: Databases
+          - generic [ref=e569]:
+            - heading [level=2] [ref=e1016]: Bots
+            - list [ref=e571]:
+              - listitem [ref=e572]:
+                - link [ref=e1017] [cursor=pointer]:
+                  - /url: /pt-br/bots/discord
+                  - text: Discord
+              - listitem [ref=e574]:
+                - link [ref=e1018] [cursor=pointer]:
+                  - /url: /pt-br/bots/telegram
+                  - text: Telegram
+              - listitem [ref=e576]:
+                - link [ref=e1019] [cursor=pointer]:
+                  - /url: /pt-br/bots/whatsapp
+                  - text: WhatsApp
+          - generic [ref=e578]:
+            - heading [level=2] [ref=e1020]: Banco de dados
+            - list [ref=e580]:
+              - listitem [ref=e581]:
+                - link [ref=e1021] [cursor=pointer]:
+                  - /url: /pt-br/databases/mongodb
+                  - text: MongoDB
+              - listitem [ref=e583]:
+                - link [ref=e1022] [cursor=pointer]:
+                  - /url: /pt-br/databases/postgresql
+                  - text: PostgreSQL
+              - listitem [ref=e585]:
+                - link [ref=e1023] [cursor=pointer]:
+                  - /url: /pt-br/databases/mysql
+                  - text: MySQL
+              - listitem [ref=e587]:
+                - link [ref=e1024] [cursor=pointer]:
+                  - /url: /pt-br/databases/redis
+                  - text: Redis
+          - generic [ref=e589]:
+            - heading [level=2] [ref=e1025]: Recursos
+            - generic [ref=e591]:
+              - generic [ref=e592]:
+                - heading [level=3] [ref=e1026]: Ferramentas
+                - list [ref=e594]:
+                  - listitem [ref=e595]:
+                    - link [ref=e1027] [cursor=pointer]:
+                      - /url: /pt-br/resources/app
+                      - text: App mobile
+                  - listitem [ref=e597]:
+                    - link [ref=e1028] [cursor=pointer]:
+                      - /url: /pt-br/resources/cli
+                      - text: CLI
+                  - listitem [ref=e599]:
+                    - link [ref=e1029] [cursor=pointer]:
+                      - /url: /pt-br/resources/sdks
+                      - text: SDKs
+                  - listitem [ref=e601]:
+                    - link [ref=e1030] [cursor=pointer]:
+                      - /url: /pt-br/resources/vscode-extension
+                      - text: Extensão VSCode
+                  - listitem [ref=e603]:
+                    - link [ref=e1031] [cursor=pointer]:
+                      - /url: /pt-br/resources/github-action
+                      - text: Github Action
+              - generic [ref=e605]:
+                - heading [level=3] [ref=e1032]: Plataforma
+                - list [ref=e607]:
+                  - listitem [ref=e608]:
+                    - link [ref=e1033] [cursor=pointer]:
+                      - /url: /pt-br/resources/envs
+                      - text: Variáveis de Ambiente
+                  - listitem [ref=e610]:
+                    - link [ref=e1034] [cursor=pointer]:
+                      - /url: /pt-br/resources/snapshots
+                      - text: Snapshots
+                  - listitem [ref=e612]:
+                    - link [ref=e1035] [cursor=pointer]:
+                      - /url: /pt-br/resources/file-manager
+                      - text: Gerenciador de Arquivos
+                  - listitem [ref=e614]:
+                    - link [ref=e1036] [cursor=pointer]:
+                      - /url: /pt-br/resources/analytics
+                      - text: Analytics
+                  - listitem [ref=e616]:
+                    - link [ref=e1037] [cursor=pointer]:
+                      - /url: /pt-br/resources/network
+                      - text: Network
+                  - listitem [ref=e618]:
+                    - link [ref=e1038] [cursor=pointer]:
+                      - /url: /pt-br/resources/infrastructure
+                      - text: Infraestrutura
+      - generic [ref=e621]:
+        - generic [ref=e622]:
+          - generic [ref=e623]:
+            - generic [ref=e624]: Square Cloud LTDA
+            - generic [ref=e625]: 51.893.307/0001-08
+          - group [ref=e1039]:
+            - button [ref=e1040] [cursor=pointer]:
+              - img [ref=e628]
+            - button [ref=e1041] [cursor=pointer]:
+              - img [ref=e631]
+            - button [pressed] [ref=e1042] [cursor=pointer]:
+              - img [ref=e634]
+        - generic [ref=e636]:
+          - link [ref=e1043] [cursor=pointer]:
+            - /url: /pt-br/legal
+            - text: Termos de Serviço
+          - link [ref=e1044] [cursor=pointer]:
+            - /url: /pt-br/legal/policy
+            - text: Política de Uso
+          - link [ref=e1045] [cursor=pointer]:
+            - /url: /pt-br/legal/privacy
+            - text: Política de Privacidade
+  - alert [ref=e640]: claudecodenovo - Square Cloud
+  - button "Bate-papo aberto" [ref=e641] [cursor=pointer]:
+    - generic [ref=e643]:
+      - dialog [ref=e644]:
+        - generic [ref=e646]:
+          - generic [ref=e648]: Dúvidas? Fale conosco!
+          - generic [ref=e659]: Nossa equipe está online.
+      - generic [ref=e660]:
+        - button "Converse com a equipe de Square Cloud" [ref=e661]:
+          - generic [ref=e663]: Converse com a equipe de Square Cloud
+        - button "Pesquisa" [ref=e664]:
+          - generic [ref=e666]: Pesquisa
+  - generic [ref=e670]: 0 Bytes
+  - dialog "Variáveis de ambiente salvas" [ref=e1047]:
+    - generic [ref=e1048]:
+      - heading "Variáveis de ambiente salvas" [level=2] [ref=e1049]
+      - paragraph [ref=e1050]: A sua aplicação carrega as variáveis de ambiente apenas durante a inicialização. Portanto, para aplicar as novas configurações, é essencial reiniciá-la. Isso forçará a recarga do processo, garantindo que os novos valores sejam utilizados.
+    - button "Entendi!" [active] [ref=e1052]
+    - button "Close" [ref=e1053]:
+      - img
+      - generic [ref=e1054]: Close

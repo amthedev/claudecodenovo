@@ -188,12 +188,20 @@ Claude Code natively supports custom Anthropic API endpoints. The recommended se
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "your-proxy-api-key",
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8000",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gemini/gemini-3-pro",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gemini/gemini-3-flash",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openai/gpt-5-mini"
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "hosted_vllm/qwen25-coder-32b",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "hosted_vllm/qwen25-coder-32b",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "hosted_vllm/qwen25-coder-32b"
   }
 }
 ```
+
+If Claude Code sends a providerless model such as `claude-code-pro`, the proxy maps it to `PROXY_DEFAULT_MODEL` when set, or to the first configured provider model such as `hosted_vllm/qwen25-coder-32b`.
+
+For hosted vLLM backends, the Anthropic compatibility layer strips Anthropic-only fields that vLLM rejects, such as `top_k` and disabled thinking flags.
+
+By default, hosted vLLM also uses a non-stream fallback for Anthropic streaming requests because some vLLM deployments reject streaming tool-call payloads while accepting the same request without streaming. Set `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=false` to disable that behavior.
+
+Claude Code may request very large outputs, such as `max_tokens=32000`. For hosted vLLM, the proxy caps output tokens to `HOSTED_VLLM_MAX_TOKENS` or `512` by default so requests fit deployments with smaller `max_model_len` values.
 
 Now you can use Claude Code with Gemini, OpenAI, or any other configured provider.
 
@@ -281,6 +289,26 @@ ANTHROPIC_API_KEY_1="your-anthropic-key"
 ```
 
 > Copy `.env.example` to `.env` as a starting point.
+
+### Admin Panel and Managed API Keys
+
+Open `/admin` on your deployed proxy to manage app keys from the browser.
+
+- On the first visit, create the admin username and password.
+- The admin password is stored as a hash in `admin_data.json`; raw passwords and raw API keys are not saved.
+- New app keys are generated in `sk-...` format and are shown only once.
+- Each app can be renamed, paused, deleted, rotated, given a daily request limit, and given a validity period in days.
+- The dashboard shows request usage per app for the current UTC day and last-used time.
+- Use `0` days when you want a key that does not expire.
+
+`PROXY_API_KEY` is still supported as the root/master proxy key from environment variables. The project originally did not generate per-user proxy keys; it only checked this single `PROXY_API_KEY`. The `/admin` panel adds generated app keys on top of that.
+
+For cloud deploys, keep `admin_data.json` persistent if your host supports volumes. You can override the file location with:
+
+```env
+ADMIN_DATA_FILE="admin_data.json"
+ADMIN_SESSION_SECONDS="43200"
+```
 
 ---
 
@@ -440,6 +468,8 @@ The proxy includes a powerful text-based UI for configuration and management.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PROXY_API_KEY` | Authentication key for your proxy | Required |
+| `ADMIN_DATA_FILE` | JSON file used by `/admin` for admin login, app key hashes, limits, and usage | `admin_data.json` |
+| `ADMIN_SESSION_SECONDS` | Admin login cookie lifetime in seconds | `43200` |
 | `OAUTH_REFRESH_INTERVAL` | Token refresh check interval (seconds) | `600` |
 | `SKIP_OAUTH_INIT_CHECK` | Skip interactive OAuth setup on startup | `false` |
 
@@ -737,6 +767,41 @@ See the [Deployment Guide](Deployment%20guide.md) for complete instructions.
 
 **OAuth Credentials:**
 Export OAuth credentials to environment variables using the credential tool, then add them to your platform's environment settings.
+
+</details>
+
+<details>
+<summary><b>Square Cloud</b></summary>
+
+This repository includes `squarecloud.config` for Square Cloud deploys.
+
+**Quick Setup:**
+
+1. Push this repository to GitHub
+2. In Square Cloud, create/import the app as a Python web application
+3. Add environment variables in the Square Cloud dashboard:
+   - `PROXY_API_KEY`
+   - `HOSTED_VLLM_API_BASE=https://unug0tbdzj0qx5-8001.proxy.runpod.net/v1`
+   - `HOSTED_VLLM_API_KEY`: your RunPod vLLM API key
+   - `HOSTED_VLLM_MODELS=["qwen25-coder-32b"]`
+   - `WHITELIST_MODELS_HOSTED_VLLM=hosted_vllm/qwen25-coder-32b`
+   - optional: `PROXY_DEFAULT_MODEL=hosted_vllm/qwen25-coder-32b`
+   - optional: `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=true`
+   - optional: `HOSTED_VLLM_MAX_TOKENS=512`
+   - optional: `ADMIN_DATA_FILE=admin_data.json`
+   - any other provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
+   - exported OAuth variables for Gemini CLI or other OAuth providers, if used
+4. To deploy with GitHub Actions, add `SQUARE_TOKEN` as a GitHub repository secret and push to `main`
+
+The Square Cloud start command is:
+
+```bash
+python src/proxy_app/main.py --host 0.0.0.0 --port $PORT
+```
+
+The deploy workflow expects runtime secrets to be configured in Square Cloud, not committed to Git.
+
+After deploy, open `/admin` on the Square Cloud URL and create the first admin user. App keys created there use the `sk-...` format.
 
 </details>
 

@@ -1,0 +1,339 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - generic [ref=e6]:
+            - link "Square Cloud Logo" [ref=e1055] [cursor=pointer]:
+              - /url: /pt-br/dashboard
+              - img "Square Cloud Logo" [ref=e1056]
+            - button "claudecodenovo FastAPI LLM API key proxy" [ref=e1057]:
+              - generic [ref=e13]:
+                - generic [ref=e14]: claudecodenovo
+                - generic [ref=e15]: FastAPI LLM API key proxy
+              - button [ref=e16]:
+                - img
+          - generic [ref=e17]:
+            - button "Notificações, 1 não lida" [ref=e1058] [cursor=pointer]:
+              - img [ref=e19]
+              - generic [ref=e21]: "1"
+            - button "Allan Matheus ••••••••••@gmail.com" [ref=e1059]:
+              - generic [ref=e23]:
+                - generic [ref=e24]: Allan Matheus
+                - generic [ref=e25]: ••••••••••@gmail.com
+              - img
+            - button "pt-br" [ref=e1060]:
+              - img "pt-br" [ref=e1061]
+        - generic [ref=e28]:
+          - navigation [ref=e29]:
+            - list [ref=e30]:
+              - link "Projeto" [ref=e1062] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff
+                - generic [ref=e32]:
+                  - img [ref=e33]
+                  - text: Projeto
+              - link "Arquivos" [ref=e1063] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/files
+                - generic [ref=e37]:
+                  - img [ref=e38]
+                  - text: Arquivos
+              - link "Snapshots" [ref=e1064] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/snapshots
+                - generic [ref=e41]:
+                  - img [ref=e42]
+                  - text: Snapshots
+              - link "Analytics" [ref=e1065] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/analytics
+                - generic [ref=e45]:
+                  - img [ref=e46]
+                  - text: Analytics
+              - link "Configurações" [active] [ref=e1066] [cursor=pointer]:
+                - /url: /pt-br/dashboard/applications/2e49d0c35bdc49ab827414a4fa3839ff/settings
+                - generic [ref=e49]:
+                  - img [ref=e50]
+                  - text: Configurações
+          - link "Voltar ao Painel de Controle" [ref=e1067] [cursor=pointer]:
+            - /url: /pt-br/dashboard
+            - img [ref=e53]
+            - text: Voltar ao Painel de Controle
+    - generic [ref=e55]:
+      - img
+      - generic [ref=e673]:
+        - complementary [ref=e674]:
+          - list [ref=e675]:
+            - listitem [ref=e676]:
+              - button "Geral" [ref=e678] [cursor=pointer]:
+                - img
+                - text: Geral
+            - listitem [ref=e679]:
+              - button "Deploys" [ref=e680] [cursor=pointer]:
+                - img
+                - text: Deploys
+            - listitem [ref=e681]:
+              - button "Variáveis de Ambiente" [ref=e682] [cursor=pointer]:
+                - img
+                - text: Variáveis de Ambiente
+            - listitem [ref=e683]:
+              - button "Network" [ref=e684] [cursor=pointer]:
+                - img
+                - text: Network
+            - listitem [ref=e685]:
+              - button "Área de risco" [ref=e686] [cursor=pointer]:
+                - img
+                - text: Área de risco
+        - generic [ref=e688]:
+          - heading "Configurações Gerais" [level=1] [ref=e691]
+          - generic [ref=e692]:
+            - generic [ref=e693]:
+              - generic [ref=e694]:
+                - generic [ref=e695]:
+                  - generic [ref=e696]: Nome de aplicação
+                  - generic [ref=e697]: Esse campo define a identidade da aplicação na lista, facilitando seu reconhecimento e gerenciamento no painel de controle.
+                - textbox "Insira o nome da aplicação" [ref=e700]: claudecodenovo
+              - generic [ref=e701]:
+                - generic [ref=e702]:
+                  - generic [ref=e703]: Descrição
+                  - generic [ref=e704]: Esse campo pode ser usado para detalhar informações relevantes, como funcionalidades, objetivos ou outras características da aplicação.
+                - textbox "Insira a descrição da aplicação" [ref=e707]: FastAPI LLM API key proxy
+              - generic [ref=e708]:
+                - generic [ref=e709]:
+                  - generic [ref=e710]: Inicialização da aplicação
+                  - generic [ref=e711]: Defina um comando de inicialização customizado se não quiser usar o arquivo principal padrão da Square Cloud ou quando sua aplicação exigir parâmetros especiais de inicialização.
+                - textbox "npm run start" [ref=e714]: python src/proxy_app/main.py --host 0.0.0.0 --port $PORT
+              - generic [ref=e715]:
+                - generic [ref=e716]:
+                  - generic [ref=e717]: Memória
+                  - generic [ref=e718]: Quantidade de memória RAM em megabytes alocada para sua aplicação, usada para armazenar e processar dados durante sua execução.
+                - generic [ref=e719]:
+                  - group [ref=e720]:
+                    - textbox [ref=e721]: "1024"
+                    - group [ref=e722]: MB
+                  - generic [ref=e723]: 3.584 MB disponível
+              - generic [ref=e725]:
+                - generic [ref=e726]:
+                  - generic [ref=e727]:
+                    - text: Auto Restart
+                    - generic [ref=e728]: Tecnologia Exclusiva
+                  - generic [ref=e729]: Se sua aplicação for interrompida inesperadamente, a Square Cloud a reiniciará automaticamente para garantir sua continuidade.
+                - generic [ref=e730]:
+                  - switch [checked] [ref=e731]
+                  - checkbox [checked]
+            - generic [ref=e732]:
+              - button "Salvar alterações" [disabled]
+    - contentinfo [ref=e477]:
+      - generic [ref=e478]:
+        - generic [ref=e479]:
+          - generic [ref=e480]:
+            - heading "DEMOCRATIZANDO SONHOS" [level=2] [ref=e1087]
+            - generic [ref=e482]:
+              - generic [ref=e483]: Feito com ❤️ no Brasil
+              - img "Brazil Country Image" [ref=e1088]
+          - generic [ref=e486]:
+            - link "Discord" [ref=e1089] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/discord
+              - img "Discord" [ref=e1090]
+            - link "Instagram" [ref=e1091] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/instagram
+              - img "Instagram" [ref=e1092]
+            - link "Threads" [ref=e1093] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/threads
+              - img "Threads" [ref=e1094]
+            - link "Youtube" [ref=e1095] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/youtube
+              - img "Youtube" [ref=e1096]
+            - link "Twitter" [ref=e1097] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/twitter
+              - img "Twitter" [ref=e1098]
+            - link "LinkedIn" [ref=e1099] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/linkedin
+              - img "LinkedIn" [ref=e1100]
+            - link "Github" [ref=e1101] [cursor=pointer]:
+              - /url: https://go.squarecloud.app/github
+              - img "Github" [ref=e1102]
+          - link "Status do Sistema" [ref=e1103] [cursor=pointer]:
+            - /url: https://status.squarecloud.app/
+            - generic [ref=e504]: Status do Sistema
+        - generic [ref=e506]:
+          - generic [ref=e507]:
+            - heading "Minha Conta" [level=2] [ref=e1104]
+            - list [ref=e509]:
+              - listitem [ref=e510]:
+                - link "Informações da Conta" [ref=e1105] [cursor=pointer]:
+                  - /url: /pt-br/account
+              - listitem [ref=e512]:
+                - link "Segurança da Conta" [ref=e1106] [cursor=pointer]:
+                  - /url: /pt-br/account/security
+              - listitem [ref=e514]:
+                - link "Conexões da Conta" [ref=e1107] [cursor=pointer]:
+                  - /url: /pt-br/account/connections
+              - listitem [ref=e516]:
+                - link "Enviar uma Aplicação" [ref=e1108] [cursor=pointer]:
+                  - /url: /pt-br/upload
+              - listitem [ref=e518]:
+                - link "Resgatar Código" [ref=e1109] [cursor=pointer]:
+                  - /url: /pt-br/account/redeem
+          - generic [ref=e520]:
+            - heading "Documentação" [level=2] [ref=e1110]
+            - list [ref=e522]:
+              - listitem [ref=e523]:
+                - link "Começo Rápido" [ref=e1111] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/getting-started/quick-start
+                  - text: Começo Rápido
+                  - img [ref=e525]
+              - listitem [ref=e527]:
+                - link "Documentação da API" [ref=e1112] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/api-reference/authentication
+                  - text: Documentação da API
+                  - img [ref=e529]
+              - listitem [ref=e531]:
+                - link "Documentação do Blob" [ref=e1113] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/blob-reference/authentication
+                  - text: Documentação do Blob
+                  - img [ref=e533]
+              - listitem [ref=e535]:
+                - link "Plataforma" [ref=e1114] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/platform/overview
+                  - text: Plataforma
+                  - img [ref=e537]
+              - listitem [ref=e539]:
+                - link "Limites e Restrições" [ref=e1115] [cursor=pointer]:
+                  - /url: https://docs.squarecloud.app/pt-br/platform/limitations-and-restrictions
+                  - text: Limites e Restrições
+                  - img [ref=e541]
+          - generic [ref=e543]:
+            - heading "Empresa" [level=2] [ref=e1116]
+            - list [ref=e545]:
+              - listitem [ref=e546]:
+                - link "Sobre" [ref=e1117] [cursor=pointer]:
+                  - /url: /pt-br/about
+              - listitem [ref=e548]:
+                - link "Design" [ref=e1118] [cursor=pointer]:
+                  - /url: /pt-br/design
+              - listitem [ref=e550]:
+                - link "Suporte" [ref=e1119] [cursor=pointer]:
+                  - /url: /pt-br/support
+              - listitem [ref=e552]:
+                - link "Termos de Serviço" [ref=e1120] [cursor=pointer]:
+                  - /url: /pt-br/legal
+              - listitem [ref=e554]:
+                - link "Reportar Abuso" [ref=e1121] [cursor=pointer]:
+                  - /url: /pt-br/report-abuse
+          - generic [ref=e556]:
+            - heading "Produto" [level=2] [ref=e1122]
+            - list [ref=e558]:
+              - listitem [ref=e559]:
+                - link "Preços" [ref=e1123] [cursor=pointer]:
+                  - /url: /pt-br/pricing
+              - listitem [ref=e561]:
+                - link "Sites" [ref=e1124] [cursor=pointer]:
+                  - /url: /pt-br/sites
+              - listitem [ref=e563]:
+                - link "Bots" [ref=e1125] [cursor=pointer]:
+                  - /url: /pt-br/bots
+              - listitem [ref=e565]:
+                - link "Blob Storage" [ref=e1126] [cursor=pointer]:
+                  - /url: /pt-br/blob
+              - listitem [ref=e567]:
+                - link "Databases" [ref=e1127] [cursor=pointer]:
+                  - /url: /pt-br/databases
+          - generic [ref=e569]:
+            - heading "Bots" [level=2] [ref=e1128]
+            - list [ref=e571]:
+              - listitem [ref=e572]:
+                - link "Discord" [ref=e1129] [cursor=pointer]:
+                  - /url: /pt-br/bots/discord
+              - listitem [ref=e574]:
+                - link "Telegram" [ref=e1130] [cursor=pointer]:
+                  - /url: /pt-br/bots/telegram
+              - listitem [ref=e576]:
+                - link "WhatsApp" [ref=e1131] [cursor=pointer]:
+                  - /url: /pt-br/bots/whatsapp
+          - generic [ref=e578]:
+            - heading "Banco de dados" [level=2] [ref=e1132]
+            - list [ref=e580]:
+              - listitem [ref=e581]:
+                - link "MongoDB" [ref=e1133] [cursor=pointer]:
+                  - /url: /pt-br/databases/mongodb
+              - listitem [ref=e583]:
+                - link "PostgreSQL" [ref=e1134] [cursor=pointer]:
+                  - /url: /pt-br/databases/postgresql
+              - listitem [ref=e585]:
+                - link "MySQL" [ref=e1135] [cursor=pointer]:
+                  - /url: /pt-br/databases/mysql
+              - listitem [ref=e587]:
+                - link "Redis" [ref=e1136] [cursor=pointer]:
+                  - /url: /pt-br/databases/redis
+          - generic [ref=e589]:
+            - heading "Recursos" [level=2] [ref=e1137]
+            - generic [ref=e591]:
+              - generic [ref=e592]:
+                - heading "Ferramentas" [level=3] [ref=e1138]
+                - list [ref=e594]:
+                  - listitem [ref=e595]:
+                    - link "App mobile" [ref=e1139] [cursor=pointer]:
+                      - /url: /pt-br/resources/app
+                  - listitem [ref=e597]:
+                    - link "CLI" [ref=e1140] [cursor=pointer]:
+                      - /url: /pt-br/resources/cli
+                  - listitem [ref=e599]:
+                    - link "SDKs" [ref=e1141] [cursor=pointer]:
+                      - /url: /pt-br/resources/sdks
+                  - listitem [ref=e601]:
+                    - link "Extensão VSCode" [ref=e1142] [cursor=pointer]:
+                      - /url: /pt-br/resources/vscode-extension
+                  - listitem [ref=e603]:
+                    - link "Github Action" [ref=e1143] [cursor=pointer]:
+                      - /url: /pt-br/resources/github-action
+              - generic [ref=e605]:
+                - heading "Plataforma" [level=3] [ref=e1144]
+                - list [ref=e607]:
+                  - listitem [ref=e608]:
+                    - link "Variáveis de Ambiente" [ref=e1145] [cursor=pointer]:
+                      - /url: /pt-br/resources/envs
+                  - listitem [ref=e610]:
+                    - link "Snapshots" [ref=e1146] [cursor=pointer]:
+                      - /url: /pt-br/resources/snapshots
+                  - listitem [ref=e612]:
+                    - link "Gerenciador de Arquivos" [ref=e1147] [cursor=pointer]:
+                      - /url: /pt-br/resources/file-manager
+                  - listitem [ref=e614]:
+                    - link "Analytics" [ref=e1148] [cursor=pointer]:
+                      - /url: /pt-br/resources/analytics
+                  - listitem [ref=e616]:
+                    - link "Network" [ref=e1149] [cursor=pointer]:
+                      - /url: /pt-br/resources/network
+                  - listitem [ref=e618]:
+                    - link "Infraestrutura" [ref=e1150] [cursor=pointer]:
+                      - /url: /pt-br/resources/infrastructure
+      - generic [ref=e621]:
+        - generic [ref=e622]:
+          - generic [ref=e623]:
+            - generic [ref=e624]: Square Cloud LTDA
+            - generic [ref=e625]: 51.893.307/0001-08
+          - group "Tema" [ref=e1151]:
+            - button "Claro" [ref=e1152] [cursor=pointer]:
+              - img [ref=e628]
+            - button "Escuro" [ref=e1153] [cursor=pointer]:
+              - img [ref=e631]
+            - button "Sistema" [pressed] [ref=e1154] [cursor=pointer]:
+              - img [ref=e634]
+        - generic [ref=e636]:
+          - link "Termos de Serviço" [ref=e1155] [cursor=pointer]:
+            - /url: /pt-br/legal
+          - link "Política de Uso" [ref=e1156] [cursor=pointer]:
+            - /url: /pt-br/legal/policy
+          - link "Política de Privacidade" [ref=e1157] [cursor=pointer]:
+            - /url: /pt-br/legal/privacy
+  - alert [ref=e640]: claudecodenovo - Square Cloud
+  - button "Bate-papo aberto" [ref=e641] [cursor=pointer]:
+    - generic [ref=e643]:
+      - dialog [ref=e644]:
+        - generic [ref=e646]:
+          - generic [ref=e648]: Dúvidas? Fale conosco!
+          - generic [ref=e659]: Nossa equipe está online.
+      - generic [ref=e660]:
+        - button "Converse com a equipe de Square Cloud" [ref=e661]:
+          - generic [ref=e663]: Converse com a equipe de Square Cloud
+        - button "Pesquisa" [ref=e664]:
+          - generic [ref=e666]: Pesquisa
+  - generic [ref=e670]: 0 Bytes
