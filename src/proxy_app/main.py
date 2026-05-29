@@ -1286,10 +1286,7 @@ async def anthropic_messages(
         _orig_model_anthr = body.model or ""
         _resolved_anthr = _resolve_model_alias(_orig_model_anthr)
         _anthr_update = {"model": _resolved_anthr}
-        if body.thinking is None and "opus" in _orig_model_anthr.lower():
-            _anthr_update["thinking"] = AnthropicThinkingConfig(
-                type="enabled", budget_tokens=10000
-            )
+        # Thinking mode desativado: vLLM local nao suporta reasoning_effort via /v1/messages
         body = body.model_copy(update=_anthr_update)
 
         # Log the request to console
