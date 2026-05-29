@@ -240,6 +240,12 @@ def log_failure(
         f"API call failed for model {model} with key {mask_credential(api_key)}. "
         f"Error: {type(error).__name__}. See failures.log for details."
     )
+    if raw_response:
+        response_preview = " ".join(raw_response.split())[:600]
+        summary_message = f"{summary_message} Upstream response: {response_preview}"
+    elif full_error_message:
+        error_preview = " ".join(full_error_message.split())[:600]
+        summary_message = f"{summary_message} Message: {error_preview}"
 
     # Log to failure logger with resilience - if it fails, just continue
     try:
