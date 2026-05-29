@@ -491,7 +491,7 @@ def _vllm_max_output_tokens() -> int:
             return max(1, int(value))
         except ValueError:
             continue
-    return 1024
+    return 512
 
 
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:

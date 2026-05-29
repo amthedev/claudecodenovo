@@ -201,7 +201,7 @@ For hosted vLLM backends, the Anthropic compatibility layer strips Anthropic-onl
 
 By default, hosted vLLM also uses a non-stream fallback for Anthropic streaming requests because some vLLM deployments reject streaming tool-call payloads while accepting the same request without streaming. Set `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=false` to disable that behavior.
 
-Claude Code may request very large outputs, such as `max_tokens=32000`. For hosted vLLM, the proxy caps output tokens to `HOSTED_VLLM_MAX_TOKENS` or `1024` by default so requests fit deployments with smaller `max_model_len` values.
+Claude Code may request very large outputs, such as `max_tokens=32000`. For hosted vLLM, the proxy caps output tokens to `HOSTED_VLLM_MAX_TOKENS` or `512` by default so requests fit deployments with smaller `max_model_len` values.
 
 Now you can use Claude Code with Gemini, OpenAI, or any other configured provider.
 
@@ -787,7 +787,7 @@ This repository includes `squarecloud.config` for Square Cloud deploys.
    - `WHITELIST_MODELS_HOSTED_VLLM=hosted_vllm/qwen25-coder-32b`
    - optional: `PROXY_DEFAULT_MODEL=hosted_vllm/qwen25-coder-32b`
    - optional: `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=true`
-   - optional: `HOSTED_VLLM_MAX_TOKENS=1024`
+   - optional: `HOSTED_VLLM_MAX_TOKENS=512`
    - optional: `ADMIN_DATA_FILE=admin_data.json`
    - any other provider keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY_1`, etc.
    - exported OAuth variables for Gemini CLI or other OAuth providers, if used
