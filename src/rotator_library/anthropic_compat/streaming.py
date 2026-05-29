@@ -19,6 +19,99 @@ if TYPE_CHECKING:
 logger = logging.getLogger("rotator_library.anthropic_compat")
 
 
+async def anthropic_response_to_streaming_events(
+    anthropic_response: dict,
+) -> AsyncGenerator[str, None]:
+    """
+    Emit Anthropic SSE events from an already-complete Anthropic response.
+
+    This is useful for OpenAI-compatible backends that reject streaming requests
+    but work normally with non-streaming chat completions.
+    """
+    message = dict(anthropic_response)
+    content_blocks = message.get("content") or []
+    usage = message.get("usage") or {"input_tokens": 0, "output_tokens": 0}
+
+    start_message = dict(message)
+    start_message["content"] = []
+    start_message["stop_reason"] = None
+    start_message["stop_sequence"] = None
+    start_message["usage"] = {
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": 0,
+    }
+    if usage.get("cache_read_input_tokens"):
+        start_message["usage"]["cache_read_input_tokens"] = usage.get(
+            "cache_read_input_tokens", 0
+        )
+        start_message["usage"]["cache_creation_input_tokens"] = usage.get(
+            "cache_creation_input_tokens", 0
+        )
+
+    yield (
+        "event: message_start\n"
+        f"data: {json.dumps({'type': 'message_start', 'message': start_message})}\n\n"
+    )
+
+    for index, block in enumerate(content_blocks):
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "text":
+            yield (
+                "event: content_block_start\n"
+                f"data: {json.dumps({'type': 'content_block_start', 'index': index, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+            )
+            text = block.get("text", "")
+            if text:
+                yield (
+                    "event: content_block_delta\n"
+                    f"data: {json.dumps({'type': 'content_block_delta', 'index': index, 'delta': {'type': 'text_delta', 'text': text}})}\n\n"
+                )
+            yield (
+                "event: content_block_stop\n"
+                f"data: {json.dumps({'type': 'content_block_stop', 'index': index})}\n\n"
+            )
+        elif block_type == "tool_use":
+            tool_block = {
+                "type": "tool_use",
+                "id": block.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
+                "name": block.get("name", ""),
+                "input": {},
+            }
+            yield (
+                "event: content_block_start\n"
+                f"data: {json.dumps({'type': 'content_block_start', 'index': index, 'content_block': tool_block})}\n\n"
+            )
+            tool_input = block.get("input") or {}
+            if tool_input:
+                yield (
+                    "event: content_block_delta\n"
+                    f"data: {json.dumps({'type': 'content_block_delta', 'index': index, 'delta': {'type': 'input_json_delta', 'partial_json': json.dumps(tool_input)}})}\n\n"
+                )
+            yield (
+                "event: content_block_stop\n"
+                f"data: {json.dumps({'type': 'content_block_stop', 'index': index})}\n\n"
+            )
+
+    final_usage = {"output_tokens": usage.get("output_tokens", 0)}
+    if usage.get("cache_read_input_tokens"):
+        final_usage["cache_read_input_tokens"] = usage.get("cache_read_input_tokens", 0)
+        final_usage["cache_creation_input_tokens"] = usage.get(
+            "cache_creation_input_tokens", 0
+        )
+    message_delta = {
+        "type": "message_delta",
+        "delta": {
+            "stop_reason": message.get("stop_reason") or "end_turn",
+            "stop_sequence": message.get("stop_sequence"),
+        },
+        "usage": final_usage,
+    }
+    yield f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
+    yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+
+
 async def anthropic_streaming_wrapper(
     openai_stream: AsyncGenerator[str, None],
     original_model: str,
