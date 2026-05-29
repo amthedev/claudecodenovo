@@ -190,11 +190,11 @@ document.querySelectorAll('[data-expires]').forEach(el=>{{
   }}
   tick();
 }});
-function testConn(key,url){{
+function testConn(key,_url){{
   const btn=document.getElementById('test-btn');
   const res=document.getElementById('test-res');
   btn.textContent='Testando...';btn.disabled=true;
-  fetch((url||'')+'/v1/models',{{
+  fetch('/v1/models',{{
     headers:{{'Authorization':'Bearer '+key}}
   }}).then(r=>r.json()).then(d=>{{
     const ids=(d.data||[]).map(m=>m.id).slice(0,5).join(', ');
@@ -303,7 +303,10 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         stats = admin_db.get_stats()
         keys  = admin_db.list_api_keys()
         chart = admin_db.get_usage_chart(14)
-        url   = str(req.base_url).rstrip("/")
+        # Detecta https via header do reverse proxy (Square Cloud)
+        proto = req.headers.get("x-forwarded-proto", "https")
+        host  = req.headers.get("host", str(req.base_url.hostname))
+        url   = f"{proto}://{host}"
         pk    = proxy_api_key or ""
 
         # Banner de reveal (chave recém criada/rotacionada)
