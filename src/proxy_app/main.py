@@ -662,6 +662,10 @@ async def lifespan(app: FastAPI):
         logging.info("RotatingClient closed.")
 
 
+# --- Thinking mode global state ---
+# "off" = desabilitado | "on" = habilitado | "auto" = só opus
+_thinking_mode: str = "off"
+
 # --- FastAPI App Setup ---
 app = FastAPI(lifespan=lifespan)
 
@@ -1573,6 +1577,39 @@ async def anthropic_messages(
 
     This endpoint is compatible with Claude Code and other Anthropic API clients.
     """
+    # --- Interceptar slash commands de thinking mode ---
+    global _thinking_mode
+    _last_user_text = ""
+    if body.messages:
+        for _msg in reversed(body.messages):
+            if getattr(_msg, "role", "") == "user":
+                _c = getattr(_msg, "content", "")
+                if isinstance(_c, str):
+                    _last_user_text = _c.strip()
+                elif isinstance(_c, list):
+                    for _blk in _c:
+                        if isinstance(_blk, dict) and _blk.get("type") == "text":
+                            _last_user_text = _blk.get("text", "").strip()
+                            break
+                break
+
+    _think_cmd = _last_user_text.lower()
+    if _think_cmd in ("/think", "/think on"):
+        _thinking_mode = "on"
+        return JSONResponse(content={"id": "msg_think", "type": "message", "role": "assistant",
+            "model": body.model or "assistant", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 10},
+            "content": [{"type": "text", "text": "💭 **Thinking mode ATIVADO** — vou pensar profundamente nas próximas respostas."}]})
+    elif _think_cmd in ("/think off", "/think off"):
+        _thinking_mode = "off"
+        return JSONResponse(content={"id": "msg_think", "type": "message", "role": "assistant",
+            "model": body.model or "assistant", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 10},
+            "content": [{"type": "text", "text": "⚡ **Thinking mode DESATIVADO** — respostas rápidas sem raciocínio estendido."}]})
+    elif _think_cmd == "/auto":
+        _thinking_mode = "auto"
+        return JSONResponse(content={"id": "msg_think", "type": "message", "role": "assistant",
+            "model": body.model or "assistant", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 10},
+            "content": [{"type": "text", "text": "🔄 **Thinking mode AUTO** — pensa profundamente só para tarefas complexas (opus)."}]})
+
     # Initialize raw I/O logger if enabled (for debugging proxy boundary)
     logger = RawIOLogger() if ENABLE_RAW_LOGGING else None
 

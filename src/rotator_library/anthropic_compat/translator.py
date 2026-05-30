@@ -48,25 +48,17 @@ VLLM_MAX_TOOL_RESULT_CHARS = 6000
 VLLM_MAX_RESPONSE_TEXT_CHARS = 5000
 VLLM_MAX_TOOLS = 16
 VLLM_TOOL_USE_SYSTEM_PROMPT = (
-    "You are running inside Claude Code. When the user asks to create, edit, "
-    "inspect, or run project files or commands, call the available tools "
-    "instead of only explaining or pasting code. If the request is in Portuguese, "
-    "such as 'faca uma calculadora em python', create or edit the file directly. "
-    "For file creation or edits, "
-    "prefer Create, Update, Write, Edit, or MultiEdit over shell heredocs like "
-    "`cat > file` or `touch file`. If Create/Update requires reading the file "
-    "first, read it and then retry the file edit tool. Do not abandon the edit "
-    "and do not run an older existing file instead. Use Bash for running "
-    "commands only after files are written. Never run programs that wait for "
-    "interactive input unless you pipe input, pass arguments, or use a short "
-    "timeout; avoid commands that can print endlessly. For Python scripts with "
-    "input(), test with piped input such as `printf '1\\n2\\n3\\n' | python3 "
-    "file.py`, not plain `python3 file.py`. Do not tell the user to copy code "
-    "when a file operation is needed. Answer concisely. Do not repeat the same "
-    "question, instruction, status, or conclusion in different words. Never "
-    "reveal hidden reasoning, chain-of-thought, policy checks, or planning "
-    "notes. Return only the final answer or tool call. Once the answer is "
-    "complete, stop generating."
+    "You are running inside Claude Code. STRICT RULES - follow exactly:\n"
+    "1. ALWAYS use tools to act. NEVER paste code or describe what you will do "
+    "instead of doing it. If the user says 'create X', call Write/Create immediately.\n"
+    "2. NEVER say 'Vou salvar', 'I will save', 'Vou criar', 'I will create' without "
+    "immediately calling the corresponding tool in the SAME response.\n"
+    "3. To EDIT an existing file: ALWAYS call Read first to get the current content, "
+    "then call Edit/Update with the exact changes. NEVER edit blindly without reading.\n"
+    "4. For NEW files: call Write directly with the complete content.\n"
+    "5. Respond in the same language the user used (Portuguese if they wrote in Portuguese).\n"
+    "6. Be concise. Do not repeat conclusions. Stop after the task is done.\n"
+    "7. Never reveal <think> blocks, chain-of-thought, or planning notes."
 )
 VLLM_TEXTUAL_TOOL_PROMPT = (
     "The upstream vLLM server may not support native OpenAI tool calling. "
@@ -1414,9 +1406,17 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     openai_request.pop("top_k", None)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
-    # Desabilitar thinking mode Qwen3 para evitar <think> visível e melhorar tool use
+    # Controla thinking mode via estado global do proxy (off/on/auto)
+    try:
+        import sys as _sys
+        _pm = _sys.modules.get("proxy_app.main") or _sys.modules.get("main")
+        _mode = getattr(_pm, "_thinking_mode", "off") if _pm else "off"
+    except Exception:
+        _mode = "off"
+    _is_opus = "opus" in openai_request.get("model", "").lower()
+    _enable_think = (_mode == "on") or (_mode == "auto" and _is_opus)
     extra_body = openai_request.setdefault("extra_body", {})
-    extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+    extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = _enable_think
     openai_request.setdefault("frequency_penalty", 0.2)
     max_output_tokens = _vllm_max_output_tokens()
     requested_max_tokens = openai_request.get("max_tokens")
