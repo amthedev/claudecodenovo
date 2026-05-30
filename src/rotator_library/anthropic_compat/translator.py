@@ -61,9 +61,16 @@ VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "4. To EDIT an existing file: ALWAYS call Read first to get the current content, "
     "then call Edit/Update with the exact changes. NEVER edit blindly without reading.\n"
     "5. For NEW files: call Write directly with the complete content.\n"
-    "6. Respond in the same language the user used (Portuguese if they wrote in Portuguese).\n"
-    "7. Be concise. Do not repeat conclusions. Stop after the task is done.\n"
-    "8. Never reveal <think> blocks, chain-of-thought, or planning notes."
+    "6. USE THE RIGHT TOOL for each job: Read/Glob/Grep to find and inspect code; "
+    "Write/Edit/MultiEdit to change files; Bash for git, tests, builds, installs, "
+    "and running commands; WebFetch/WebSearch for online info; TodoWrite to track "
+    "multi-step work; and any connected MCP/external tools when the task matches "
+    "them. Prefer a real tool call over explaining how the user could do it.\n"
+    "7. For searching: use Grep/Glob (or rg) to locate code instead of guessing. "
+    "For git: use Bash (git status/diff/log/add/commit) — never fabricate output.\n"
+    "8. Respond in the same language the user used (Portuguese if they wrote in Portuguese).\n"
+    "9. Be concise. Do not repeat conclusions. Stop after the task is done.\n"
+    "10. Never reveal <think> blocks, chain-of-thought, or planning notes."
 )
 VLLM_TEXTUAL_TOOL_PROMPT = (
     "The upstream vLLM server may not support native OpenAI tool calling. "
@@ -177,42 +184,141 @@ _CREATE_OR_EDIT_MARKERS = (
     "faz",
     "implemente",
     "implementa",
+    "implementar",
+    "adicione",
+    "adiciona",
+    "adicionar",
     "edite",
     "editar",
+    "edita",
     "altere",
+    "altera",
+    "alterar",
     "modifique",
+    "modifica",
+    "atualize",
+    "atualiza",
+    "atualizar",
     "corrija",
+    "corrige",
     "conserte",
+    "conserta",
+    "consertar",
+    "arrume",
+    "arruma",
+    "refatore",
+    "refatora",
+    "refatorar",
+    "renomeie",
+    "renomeia",
+    "remova",
+    "remove",
+    "remover",
+    "delete",
+    "apague",
     "salve",
+    "salvar",
+    "escreva",
+    "gere",
+    "gera",
+    "gerar",
     "write ",
     "create ",
     "edit ",
     "modify ",
     "fix ",
+    "add ",
+    "update ",
+    "refactor",
+    "rename ",
+    "remove ",
+    "delete ",
+    "generate ",
 )
 _PROJECT_INSPECTION_MARKERS = (
     "analise",
     "analisa",
     "analisar",
+    "leia",
+    "ler ",
+    "leio",
     "veja oq",
     "veja o que",
+    "veja como",
+    "mostre",
+    "mostra",
+    "explique",
+    "explica",
+    "explicar",
+    "entenda",
+    "entender",
+    "revise",
+    "revisa",
+    "revisar",
+    "procure",
+    "procura",
+    "procurar",
+    "busque",
+    "busca",
+    "buscar",
+    "encontre",
+    "encontra",
+    "encontrar",
+    "ache",
+    "acha",
+    "onde esta",
+    "onde fica",
     "o que e",
     "oq e",
+    "o que faz",
+    "como funciona",
     "projeto",
     "repo",
     "repositorio",
     "repository",
     "estrutura",
     "codebase",
+    "search ",
+    "find ",
+    "grep",
+    "look ",
+    "read ",
+    "explain",
+    "review",
+    "understand",
+    "where is",
+    "show me",
 )
 _RUN_COMMAND_MARKERS = (
     "rode",
     "rodar",
+    "roda ",
     "execute",
     "executar",
+    "executa",
     "testa",
     "teste",
+    "testar",
+    "compile",
+    "compilar",
+    "instale",
+    "instala",
+    "instalar",
+    "build",
+    "deploy",
+    "commit",
+    "comite",
+    "comita",
+    "push",
+    "pull",
+    "git ",
+    "npm ",
+    "pip ",
+    "yarn ",
     "run ",
+    "install ",
+    "lint",
+    "format",
 )
 _PYTHON_REQUEST_MARKERS = (
     "python",
@@ -1098,6 +1204,18 @@ def _contains_any_marker(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _is_whole_project_scope(user_text: str) -> bool:
+    """True quando o pedido é sobre o projeto/codebase inteiro (não conceito geral)."""
+    lowered = user_text.lower()
+    scope_markers = (
+        "projeto", "repo", "repositorio", "repository", "codebase",
+        "estrutura", "todo o", "toda a", "todos os", "todas as",
+        "tudo", "all files", "whole project", "entire", "arquivos",
+        "files", "meu codigo", "meu código", "o codigo", "o código",
+    )
+    return any(m in lowered for m in scope_markers)
+
+
 def _classify_tool_intent(user_text: str) -> Optional[str]:
     if not user_text.strip():
         return None
@@ -1317,10 +1435,11 @@ def _build_vllm_forced_tool_call(
             return _tool_call(ls_tool, {"path": "."})
 
     if intent == "inspect":
-        # Lê TODO o projeto em UM comando: árvore + conteúdo de todos os
-        # arquivos de código. Assim o modelo recebe tudo de uma vez e só
-        # precisa escrever a análise — sem stall multi-turno.
-        if previous_count == 0 and bash:
+        # Só lê o projeto INTEIRO quando o pedido tem escopo de projeto
+        # (ex: "analise o projeto", "leia todos os arquivos"). Para pedidos
+        # direcionados (ex: "procure X", "explique o login"), deixa o modelo
+        # escolher Grep/Read direcionado via prompt — não força read-all.
+        if previous_count == 0 and bash and _is_whole_project_scope(user_text):
             return _tool_call(
                 bash,
                 {
@@ -1345,7 +1464,7 @@ def _build_vllm_forced_tool_call(
                     "description": "Read entire project for analysis",
                 },
             )
-        # Fallback se não houver Bash: lista o diretório
+        # Pedido de inspeção direcionado: lista o diretório como ponto de partida
         if previous_count == 0 and ls_tool:
             return _tool_call(ls_tool, {"path": "."})
 
