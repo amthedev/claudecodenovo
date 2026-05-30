@@ -67,6 +67,13 @@ def _with_error(path: str, message: str) -> RedirectResponse:
 def _j(value: str) -> str:
     return _e(json.dumps(str(value)), quote=True)
 
+def _root_test_key(proxy_api_key: str, root_is_rotated: bool, reveal_data: Optional[dict]) -> str:
+    if not root_is_rotated:
+        return proxy_api_key
+    if reveal_data and reveal_data.get("key_id") == "root":
+        return str(reveal_data.get("key_value") or "")
+    return ""
+
 def _svg_bars(data, color="#6366f1", height=60):
     if not data: return ""
     mx = max(d["count"] for d in data) or 1
@@ -430,6 +437,14 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         root_override_preview = admin_db.get_root_key_preview()
         root_is_rotated = bool(root_override_preview)
         root_preview = root_override_preview if root_is_rotated else (pk[:18] + "..." if pk else "")
+        root_test_key = _root_test_key(pk, root_is_rotated, rev_data)
+        if root_test_key:
+            test_button = f"""<button id="test-btn" class="btn btn-sm"
+                onclick='testConn({_j(root_test_key)},{_j(url)})'>Testar</button>"""
+            test_result = ""
+        else:
+            test_button = '<button id="test-btn" class="btn btn-sm" disabled>Testar</button>'
+            test_result = "Rotacione novamente para copiar e testar a chave root atual."
         if pk or root_is_rotated:
             rotated_badge = '<span class="badge badge-blue" style="margin-left:6px">rotacionada</span>' if root_is_rotated else ''
             copy_btn = '' if root_is_rotated else f'<button class="btn-ghost btn-sm" onclick=\'cp({_j(pk)},this)\'>Copiar</button>'
@@ -448,8 +463,8 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             </div>
             {root_html}
             <div>
-              <button id="test-btn" class="btn btn-sm" onclick='testConn({_j(pk)},{_j(url)})'>Testar</button>
-              <div id="test-res" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>
+              {test_button}
+              <div id="test-res" style="font-size:12px;margin-top:6px;color:var(--muted)">{test_result}</div>
             </div>
           </div>
         </div>"""
