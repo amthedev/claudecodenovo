@@ -25,6 +25,7 @@ from ..anthropic_compat import (
     anthropic_to_openai_tools,
 )
 from ..anthropic_compat.streaming import _model_text_to_write_tool_call
+from ..anthropic_compat.image_captioning import caption_images_in_request
 from ..transaction_logger import TransactionLogger
 
 if TYPE_CHECKING:
@@ -145,6 +146,14 @@ class AnthropicHandler:
             anthropic_logger.log_request(
                 request.model_dump(exclude_none=True),
                 filename="anthropic_request.json",
+            )
+
+        # Text-only backends (vLLM/Qwen, etc.) can't see images. Replace image
+        # blocks with contextual text descriptions from an external vision model
+        # before translating, so the request reaches the backend as plain text.
+        if provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}:
+            request = await caption_images_in_request(
+                request, self._client, log=lib_logger
             )
 
         # Translate Anthropic request to OpenAI format
