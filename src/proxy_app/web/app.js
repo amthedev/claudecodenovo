@@ -49,6 +49,48 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function streamMessage(body, onText) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch("/v1/messages", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ detail: "Resposta inválida do servidor." }));
+    throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+  }
+  if (!response.body) throw new Error("O navegador não conseguiu abrir a resposta em tempo real.");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  const processEvent = (event) => {
+    const dataLine = event.split(/\r?\n/).find((line) => line.startsWith("data:"));
+    if (!dataLine) return;
+    const raw = dataLine.slice(5).trim();
+    if (!raw || raw === "[DONE]") return;
+    const data = JSON.parse(raw);
+    if (data.type === "error") throw new Error(data.error?.message || "Falha ao gerar resposta.");
+    if (data.type !== "content_block_delta" || data.delta?.type !== "text_delta") return;
+    text += data.delta.text || "";
+    onText(text);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() || "";
+    events.forEach(processEvent);
+    if (done) break;
+  }
+  if (buffer.trim()) processEvent(buffer);
+  return text;
+}
+
 function setHidden(selector, hidden) {
   const element = $(selector);
   if (element) element.classList.toggle("hidden", hidden);
@@ -310,20 +352,24 @@ async function sendPrompt(text) {
     const sources = await onlineSources(clean);
     const sourceText = sources.map((source, index) => `[${index + 1}] ${source.title}\n${source.url}\n${source.snippet}`).join("\n\n");
     const prompt = [modePrompts[workMode], reasoningPrompts[reasoningMode], clean, attachmentText(), sourceText && `FONTES ONLINE:\n${sourceText}`].filter(Boolean).join("\n\n");
-    const content = [{ type: "text", text: prompt }, ...attachments.filter((file) => file.image && !file.sent).map((file) => file.image)];
-    attachments.forEach((file) => { file.sent = true; });
+    const pendingAttachments = attachments.filter((file) => !file.sent);
+    const content = [{ type: "text", text: prompt }, ...pendingAttachments.filter((file) => file.image).map((file) => file.image)];
     conversation.push({ role: "user", content });
-    const data = await request("/v1/messages", {
-      method: "POST",
-      body: JSON.stringify({ model: activeModel, max_tokens: 4096, messages: conversation }),
+    const response = await streamMessage({
+      model: activeModel,
+      max_tokens: 4096,
+      messages: conversation,
+    }, (partial) => {
+      assistant.querySelector(".message-body").innerHTML = esc(partial).replace(/\n/g, "<br>");
     });
-    const response = (data.content || []).map((part) => part.text || "").join("") || "Resposta recebida.";
+    pendingAttachments.forEach((file) => { file.sent = true; });
     conversation.push({ role: "assistant", content: response });
-    assistant.querySelector(".message-body").innerHTML = esc(response).replace(/\n/g, "<br>");
+    assistant.querySelector(".message-body").innerHTML = esc(response || "Resposta recebida.").replace(/\n/g, "<br>");
     assistant.insertAdjacentHTML("beforeend", sourceMarkup(sources));
     saveHistory(clean, response);
     await refreshAccount();
   } catch (exception) {
+    if (conversation.at(-1)?.role === "user") conversation.pop();
     assistant.querySelector(".message-body").textContent = `Erro: ${exception.message}`;
   }
 }
