@@ -10,6 +10,7 @@ This enables any OpenAI-compatible provider to work with Anthropic clients.
 """
 
 import json
+import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Union
@@ -62,6 +63,13 @@ VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "when a file operation is needed. Answer concisely. Do not repeat the same "
     "question, instruction, status, or conclusion in different words. Once the "
     "answer is complete, stop generating."
+)
+VLLM_TEXTUAL_TOOL_PROMPT = (
+    "The upstream vLLM server may not support native OpenAI tool calling. "
+    "When you need a tool, output exactly one tool call using this format and "
+    "no extra prose:\n"
+    "<tool_call><function=ToolName><parameter=param_name>value</parameter></function></tool_call>\n"
+    "Use only tool names from the available tools list."
 )
 VLLM_TOOL_PRIORITY = {
     "create": 0,
@@ -578,12 +586,32 @@ def _strip_vllm_rejected_fields(value: Any) -> Any:
     return value
 
 
+def _env_int(names: List[str], default: int, minimum: int = 0) -> int:
+    for name in names:
+        value = os.getenv(name)
+        if value is None:
+            continue
+        try:
+            return max(minimum, int(value))
+        except ValueError:
+            return default
+    return default
+
+
 def _vllm_max_output_tokens() -> int:
-    return VLLM_MAX_OUTPUT_TOKENS
+    return _env_int(
+        ["HOSTED_VLLM_MAX_TOKENS", "VLLM_MAX_OUTPUT_TOKENS"],
+        VLLM_MAX_OUTPUT_TOKENS,
+        minimum=1,
+    )
 
 
 def _vllm_max_input_chars() -> int:
-    return VLLM_MAX_INPUT_CHARS
+    return _env_int(
+        ["HOSTED_VLLM_MAX_INPUT_CHARS", "VLLM_MAX_INPUT_CHARS"],
+        VLLM_MAX_INPUT_CHARS,
+        minimum=1000,
+    )
 
 
 def _message_char_size(message: Dict[str, Any]) -> int:
@@ -725,7 +753,10 @@ def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str
 
 
 def _vllm_max_tools() -> int:
-    return VLLM_MAX_TOOLS
+    return _env_int(
+        ["HOSTED_VLLM_MAX_TOOLS", "VLLM_MAX_TOOLS"],
+        VLLM_MAX_TOOLS,
+    )
 
 
 def _tool_name(tool: Dict[str, Any]) -> str:
@@ -779,16 +810,141 @@ def _compact_tools_for_vllm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return compacted_tools
 
 
-def _inject_vllm_tool_use_prompt(openai_request: Dict[str, Any]) -> None:
-    if not openai_request.get("tools"):
+def _env_flag_enabled(*names: str, default: bool = False) -> bool:
+    for name in names:
+        value = os.getenv(name)
+        if value is None:
+            continue
+        return value.lower() in {"1", "true", "yes", "on"}
+    return default
+
+
+def _vllm_native_tools_enabled() -> bool:
+    return _env_flag_enabled("HOSTED_VLLM_NATIVE_TOOLS", "VLLM_NATIVE_TOOLS")
+
+
+def _format_vllm_textual_tool_prompt(tools: Optional[List[Dict[str, Any]]]) -> str:
+    if not tools:
+        return VLLM_TOOL_USE_SYSTEM_PROMPT
+
+    lines = [
+        VLLM_TOOL_USE_SYSTEM_PROMPT,
+        "",
+        VLLM_TEXTUAL_TOOL_PROMPT,
+        "",
+        "Available tools:",
+    ]
+    for tool in tools:
+        function = tool.get("function") or {}
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        description = str(function.get("description") or "").strip()
+        schema = function.get("parameters") or {}
+        try:
+            schema_text = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, ValueError):
+            schema_text = str(schema)
+        schema_text = _compact_text_middle(schema_text, 900, f"{name} schema")
+        lines.append(f"- {name}: {description}\n  input_schema: {schema_text}")
+    return "\n".join(lines).strip()
+
+
+def _content_to_vllm_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                block_type = block.get("type")
+                if block_type == "text":
+                    parts.append(str(block.get("text") or ""))
+                else:
+                    parts.append(json.dumps(block, ensure_ascii=False))
+            else:
+                parts.append(str(block))
+        return "\n".join(part for part in parts if part)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _tool_call_to_textual_block(tool_call: Dict[str, Any]) -> str:
+    function = tool_call.get("function") or {}
+    name = str(function.get("name") or "").strip()
+    if not name:
+        return ""
+
+    raw_arguments = function.get("arguments") or {}
+    if isinstance(raw_arguments, str):
+        try:
+            arguments = json.loads(raw_arguments) if raw_arguments.strip() else {}
+        except json.JSONDecodeError:
+            arguments = {"arguments": raw_arguments}
+    elif isinstance(raw_arguments, dict):
+        arguments = raw_arguments
+    else:
+        arguments = {"arguments": raw_arguments}
+
+    params = []
+    for key, value in arguments.items():
+        if isinstance(value, (dict, list)):
+            value_text = json.dumps(value, ensure_ascii=False)
+        else:
+            value_text = "" if value is None else str(value)
+        params.append(f"<parameter={key}>{value_text}</parameter>")
+
+    return f"<tool_call><function={name}>{''.join(params)}</function></tool_call>"
+
+
+def _linearize_vllm_tool_messages(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    linearized = []
+    for message in messages:
+        message_copy = dict(message)
+        if message_copy.get("role") == "tool":
+            tool_result = _content_to_vllm_text(message_copy.get("content", ""))
+            tool_call_id = message_copy.get("tool_call_id") or "unknown"
+            linearized.append(
+                {
+                    "role": "user",
+                    "content": f"Tool result for {tool_call_id}:\n{tool_result}",
+                }
+            )
+            continue
+
+        tool_calls = message_copy.pop("tool_calls", None) or []
+        if tool_calls:
+            text = _content_to_vllm_text(message_copy.get("content", ""))
+            textual_calls = [
+                block
+                for block in (_tool_call_to_textual_block(tc) for tc in tool_calls)
+                if block
+            ]
+            message_copy["content"] = "\n".join(
+                part for part in [text, *textual_calls] if part
+            )
+
+        linearized.append(message_copy)
+    return linearized
+
+
+def _inject_vllm_tool_use_prompt(
+    openai_request: Dict[str, Any],
+    tools: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    if not tools:
         return
+    prompt = _format_vllm_textual_tool_prompt(tools)
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
         existing = messages[0].get("content") or ""
         if VLLM_TOOL_USE_SYSTEM_PROMPT not in existing:
-            messages[0]["content"] = f"{existing}\n\n{VLLM_TOOL_USE_SYSTEM_PROMPT}".strip()
+            messages[0]["content"] = f"{existing}\n\n{prompt}".strip()
         return
-    messages.insert(0, {"role": "system", "content": VLLM_TOOL_USE_SYSTEM_PROMPT})
+    messages.insert(0, {"role": "system", "content": prompt})
 
 
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
@@ -806,21 +962,37 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     openai_request["messages"] = _strip_vllm_rejected_fields(
         openai_request.get("messages", [])
     )
-    _inject_vllm_tool_use_prompt(openai_request)
+
+    native_tools_enabled = _vllm_native_tools_enabled()
+    tools = openai_request.get("tools")
+    if tools:
+        tools = _strip_vllm_rejected_fields(tools)
+        tools = _compact_tools_for_vllm(tools)
+        if not tools:
+            openai_request.pop("tools", None)
+            openai_request.pop("tool_choice", None)
+        elif native_tools_enabled:
+            openai_request["tools"] = tools
+            _inject_vllm_tool_use_prompt(openai_request, tools)
+            if openai_request.get("tool_choice") not in (None, "auto"):
+                # vLLM's OpenAI server is picky about forced/required tool choice,
+                # while Claude Code still works with auto tool selection.
+                openai_request["tool_choice"] = "auto"
+        else:
+            _inject_vllm_tool_use_prompt(openai_request, tools)
+            openai_request.pop("tools", None)
+            openai_request.pop("tool_choice", None)
+            openai_request["messages"] = _linearize_vllm_tool_messages(
+                openai_request.get("messages", [])
+            )
+    elif not native_tools_enabled:
+        openai_request["messages"] = _linearize_vllm_tool_messages(
+            openai_request.get("messages", [])
+        )
+
     openai_request["messages"] = _truncate_messages_for_vllm(
         openai_request.get("messages", [])
     )
-    if openai_request.get("tools"):
-        openai_request["tools"] = _strip_vllm_rejected_fields(openai_request["tools"])
-        openai_request["tools"] = _compact_tools_for_vllm(openai_request["tools"])
-        if not openai_request["tools"]:
-            openai_request.pop("tools", None)
-            openai_request.pop("tool_choice", None)
-            return
-        if openai_request.get("tool_choice") not in (None, "auto"):
-            # vLLM's OpenAI server is picky about forced/required tool choice,
-            # while Claude Code still works with auto tool selection.
-            openai_request["tool_choice"] = "auto"
 
 
 def openai_to_anthropic_response(openai_response: dict, original_model: str) -> dict:

@@ -94,11 +94,14 @@ if proxy_api_key:
     key_display = f"✓ {proxy_api_key}"
 else:
     key_display = "✗ Not Set (INSECURE - anyone can access!)"
+project_github_url = os.getenv(
+    "PROJECT_GITHUB_URL", "https://github.com/amthedev/claudecodenovo"
+)
 
 print("━" * 70)
 print(f"Starting proxy on {args.host}:{args.port}")
 print(f"Proxy API Key: {key_display}")
-print(f"GitHub: https://github.com/Mirrowel/LLM-API-Key-Proxy")
+print(f"GitHub: {project_github_url}")
 print("━" * 70)
 print("Loading server components...")
 
@@ -255,7 +258,7 @@ _os_module.system("cls" if _os_module.name == "nt" else "clear")
 print("━" * 70)
 print(f"Starting proxy on {args.host}:{args.port}")
 print(f"Proxy API Key: {key_display}")
-print(f"GitHub: https://github.com/Mirrowel/LLM-API-Key-Proxy")
+print(f"GitHub: {project_github_url}")
 print("━" * 70)
 print(
     f"✓ Server ready in {_elapsed:.2f}s ({_plugin_count} providers discovered in {_provider_time:.2f}s)"
