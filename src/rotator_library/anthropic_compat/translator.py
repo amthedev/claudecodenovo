@@ -41,7 +41,7 @@ GRANULAR_REASONING_PROVIDERS = set()
 # Hosted vLLM defaults are intentionally conservative because Claude Desktop
 # and Claude Code assume much larger Claude-native limits than local/vLLM
 # deployments usually have.
-VLLM_MAX_OUTPUT_TOKENS = 4096
+VLLM_MAX_OUTPUT_TOKENS = 8192
 VLLM_MAX_INPUT_CHARS = 36000
 VLLM_MAX_MESSAGE_CHARS = 12000
 VLLM_MAX_TOOL_RESULT_CHARS = 6000
@@ -100,10 +100,12 @@ VLLM_CREATE_FILE_TOOL_PROMPT = (
     "language or artifact. Then run it or compile it before finalizing."
 )
 VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
-    "This is a project inspection request. Start by inspecting the current "
-    "directory with LS, Glob, Read, Grep, or Bash; do not ask the user to "
-    "provide the project structure. Read the main docs/config files and finish "
-    "with a concise project report."
+    "This is a project inspection request. You MUST complete the full analysis "
+    "without stopping early. Steps: 1) Call LS or Glob to list all files, "
+    "2) Read each relevant file (source code, configs, docs), "
+    "3) After reading ALL files, give a complete analysis report. "
+    "Do NOT stop after just listing files. Do NOT say you will read files — read them. "
+    "Do NOT stop mid-task. The task is only done when you deliver the full report."
 )
 VLLM_RUN_COMMAND_TOOL_PROMPT = (
     "This is a run/test request. Use Bash to execute the relevant command "
