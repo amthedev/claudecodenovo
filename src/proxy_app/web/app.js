@@ -428,13 +428,38 @@ $$("[data-work-mode]").forEach((button) => button.onclick = () => setWorkMode(bu
 $$(".attach-button").forEach((button) => button.onclick = () => toggleFloatingMenu($("#attachMenu"), button));
 $$("[data-attach-action='files']").forEach((button) => button.onclick = () => { $("#attachMenu").classList.add("hidden"); $("#attachmentInput").click(); });
 $("#attachmentInput").onchange = async (event) => { await addFiles(event.target.files); event.target.value = ""; };
-$$(".quick-actions [data-prompt]").forEach((button) => button.onclick = () => { $("#heroComposer textarea").value = button.dataset.prompt; $("#heroComposer textarea").focus(); });
-[$("#heroComposer"), $("#bottomComposer")].forEach((form) => form.onsubmit = async (event) => {
-  event.preventDefault();
+$$(".quick-actions [data-prompt]").forEach((button) => button.onclick = () => { const ta = $("#heroComposer textarea"); ta.value = button.dataset.prompt; ta.dispatchEvent(new Event("input")); ta.focus(); });
+[$("#heroComposer"), $("#bottomComposer")].forEach((form) => {
+  if (!form) return;
   const textarea = form.querySelector("textarea");
-  const value = textarea.value;
-  textarea.value = "";
-  await sendPrompt(value);
+
+  // Mostra/esconde o botão de enviar conforme há texto (classe has-draft)
+  const syncDraft = () => {
+    form.classList.toggle("has-draft", textarea.value.trim().length > 0);
+    textarea.style.height = "auto";
+    textarea.style.height = Math.min(textarea.scrollHeight, 240) + "px";
+  };
+  textarea.addEventListener("input", syncDraft);
+
+  // Enter envia; Shift+Enter quebra linha
+  textarea.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      if (textarea.value.trim().length > 0) {
+        form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event("submit", { cancelable: true }));
+      }
+    }
+  });
+
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const value = textarea.value;
+    if (!value.trim()) return;
+    textarea.value = "";
+    textarea.style.height = "auto";
+    form.classList.remove("has-draft");
+    await sendPrompt(value);
+  };
 });
 $$("#newChat, #railNewChat, #sidebarNewChat").forEach((button) => button.onclick = newChat);
 $("#sidebarAccountButton").onclick = () => account ? $("#accountMenu").classList.toggle("hidden") : openAuth();
@@ -476,6 +501,7 @@ $$(".voice-button").forEach((button) => button.onclick = () => {
   recognition.onresult = (event) => {
     const textarea = $("#bottomComposer:not(.hidden) textarea") || $("#heroComposer textarea");
     textarea.value = `${textarea.value} ${event.results[0][0].transcript}`.trim();
+    textarea.dispatchEvent(new Event("input"));
     textarea.focus();
   };
   recognition.start();

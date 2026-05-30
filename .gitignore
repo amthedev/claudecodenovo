@@ -137,3 +137,4 @@ cache/antigravity/thought_signatures.json
 # Proxy admin local state
 admin_data.json
 admin_data.tmp
+admin.db
