@@ -414,11 +414,33 @@ async def anthropic_streaming_wrapper(
                     "content_filter": "end_turn",
                     "function_call": "tool_use",
                 }
-                stop_reason = (
-                    "tool_use"
-                    if tool_block_indices
-                    else stop_reason_map.get(provider_finish_reason, "end_turn")
-                )
+                # If the provider truncated the response (finish_reason == "length"),
+                # the tool_call arguments are very likely incomplete JSON (the vLLM
+                # hermes parser raises "Unterminated string"). Emitting stop_reason
+                # "tool_use" with broken input makes Claude Code retry the same call
+                # forever (the edit-the-same-file loop). Signal max_tokens instead so
+                # the client surfaces a truncation error instead of looping.
+                # Also treat any tool call whose accumulated arguments are not valid
+                # JSON as truncated — covers cases where the provider didn't set
+                # finish_reason=length but the JSON still came out incomplete.
+                def _args_incomplete() -> bool:
+                    for tc in tool_calls_by_index.values():
+                        args = tc.get("arguments", "")
+                        if not args:
+                            continue
+                        try:
+                            json.loads(args)
+                        except (json.JSONDecodeError, TypeError):
+                            return True
+                    return False
+
+                truncated = provider_finish_reason == "length" or _args_incomplete()
+                if tool_block_indices and not truncated:
+                    stop_reason = "tool_use"
+                elif tool_block_indices and truncated:
+                    stop_reason = "max_tokens"
+                else:
+                    stop_reason = stop_reason_map.get(provider_finish_reason, "end_turn")
                 stop_reason_final = stop_reason
 
                 # Build final usage dict with cached tokens
