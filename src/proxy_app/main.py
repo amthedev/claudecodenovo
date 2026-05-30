@@ -1548,7 +1548,10 @@ async def chat_completions(
                 raw_logger.log_final_response(
                     status_code=500, headers=None, body={"error": str(e)}
                 )
-        raise HTTPException(status_code=500, detail=str(e))
+        err_str = str(e)
+        if "BadGateway" in err_str or "bad gateway" in err_str.lower() or "502" in err_str:
+            raise HTTPException(status_code=503, detail="Servidor de IA iniciando. Tente em 1-2 minutos.")
+        raise HTTPException(status_code=500, detail=err_str)
 
 
 # --- Anthropic Messages API Endpoint ---
@@ -1664,16 +1667,23 @@ async def anthropic_messages(
         }
         raise HTTPException(status_code=504, detail=error_response)
     except Exception as e:
+        err_str = str(e)
         logging.error(f"Anthropic messages endpoint error: {e}")
         if logger:
-            logger.log_final_response(
-                status_code=500,
-                headers=None,
-                body={"error": str(e)},
-            )
+            logger.log_final_response(status_code=500, headers=None, body={"error": err_str})
+        # BadGateway/502 = provider server still starting up (e.g. vLLM loading model)
+        if "BadGateway" in err_str or "bad gateway" in err_str.lower() or "502" in err_str:
+            error_response = {
+                "type": "error",
+                "error": {
+                    "type": "overloaded_error",
+                    "message": "O servidor de IA está iniciando (carregando modelo). Aguarde ~1-2 minutos e tente novamente.",
+                },
+            }
+            raise HTTPException(status_code=529, detail=error_response)
         error_response = {
             "type": "error",
-            "error": {"type": "api_error", "message": str(e)},
+            "error": {"type": "api_error", "message": err_str},
         }
         raise HTTPException(status_code=500, detail=error_response)
 
