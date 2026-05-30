@@ -68,7 +68,7 @@ VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "provided in this request, preserve the user's requested scope, and continue "
     "from tool results until the task is complete. Do not expose private "
     "reasoning or <think> blocks. "
-    f"{VLLM_SENSITIVE_WORKSPACE_PROMPT}"
+    # Sensitive-workspace boundary is injected unconditionally elsewhere.
 )
 VLLM_TEXTUAL_TOOL_PROMPT = (
     "The upstream vLLM server may not support native OpenAI tool calling. "
@@ -83,7 +83,7 @@ VLLM_AGENT_FLOW_PROMPT = (
     "through tool results until the user-visible task is complete, and verify "
     "edits when a relevant lightweight check is available. Inspect only the "
     "files needed for the current task; do not broaden the scope on your own. "
-    f"{VLLM_SENSITIVE_WORKSPACE_PROMPT}"
+    # Sensitive-workspace boundary is injected unconditionally elsewhere.
 )
 VLLM_MANDATORY_TOOL_PROMPT = (
     f"{VLLM_MANDATORY_TOOL_MARKER}: The next output must be one tool call in "
@@ -129,7 +129,7 @@ VLLM_TOOL_PRIORITY = {
 
 
 _TEXTUAL_TOOL_CALL_START_RE = re.compile(
-    r"(?:<tool_call>\s*)?<function=([A-Za-z0-9_.:-]+)>",
+    r"(?:<tool_call>\s*)?<function=[\"']?([A-Za-z0-9_.:-]+)[\"']?>",
     re.DOTALL,
 )
 _TEXTUAL_TOOL_CALL_END_RE = re.compile(
@@ -142,6 +142,13 @@ _TEXTUAL_TOOL_PARAM_RE = re.compile(
 )
 _EXECUTE_TOOL_CALL_RE = re.compile(
     r"<execute>\s*(\{.*?\})\s*</execute>",
+    re.DOTALL | re.IGNORECASE,
+)
+# Hermes/Qwen canonical format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+# This is what Qwen2.5-Coder actually emits most often, so parse it before the
+# <function=...> markup form below.
+_JSON_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
     re.DOTALL | re.IGNORECASE,
 )
 _THINK_TAG_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
@@ -387,6 +394,46 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
 
     cleaned_execute_parts.append(text[last_execute_pos:])
     text = "".join(cleaned_execute_parts)
+
+    # Hermes/Qwen canonical JSON form: <tool_call>{"name": ..., "arguments": ...}</tool_call>
+    cleaned_json_parts: List[str] = []
+    last_json_pos = 0
+    for match in _JSON_TOOL_CALL_RE.finditer(text):
+        cleaned_json_parts.append(text[last_json_pos : match.start()])
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            cleaned_json_parts.append(match.group(0))
+            last_json_pos = match.end()
+            continue
+
+        tool_name = str(payload.get("name") or payload.get("tool") or "").strip()
+        tool_input = payload.get("arguments")
+        if tool_input is None:
+            tool_input = payload.get("input") or {}
+        if isinstance(tool_input, str):
+            try:
+                tool_input = json.loads(tool_input)
+            except json.JSONDecodeError:
+                tool_input = {}
+        if tool_name.lower() == "write" and isinstance(tool_input, dict):
+            if "file_path" not in tool_input and "path" in tool_input:
+                tool_input["file_path"] = tool_input.pop("path")
+
+        if tool_name and isinstance(tool_input, dict):
+            tool_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": f"toolu_{uuid.uuid4().hex[:12]}",
+                    "name": tool_name,
+                    "input": tool_input,
+                }
+            )
+        else:
+            cleaned_json_parts.append(match.group(0))
+        last_json_pos = match.end()
+    cleaned_json_parts.append(text[last_json_pos:])
+    text = "".join(cleaned_json_parts)
 
     if "<function=" not in text:
         return text.strip(), tool_blocks
@@ -1683,9 +1730,26 @@ def _inject_vllm_tool_use_prompt(
     messages.insert(0, {"role": "system", "content": prompt})
 
 
+def _inject_sensitive_workspace_boundary(openai_request: Dict[str, Any]) -> None:
+    """Always present the secrets boundary, regardless of tool/intent heuristics."""
+    messages = openai_request.setdefault("messages", [])
+    marker = "Sensitive workspace boundary:"
+    if messages and messages[0].get("role") == "system":
+        existing = messages[0].get("content") or ""
+        if marker not in existing:
+            messages[0]["content"] = (
+                f"{existing}\n\n{VLLM_SENSITIVE_WORKSPACE_PROMPT}".strip()
+            )
+        return
+    messages.insert(
+        0, {"role": "system", "content": VLLM_SENSITIVE_WORKSPACE_PROMPT}
+    )
+
+
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
+    _inject_sensitive_workspace_boundary(openai_request)
     openai_request.pop("top_k", None)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
