@@ -16,7 +16,7 @@ from typing import Any, Optional
 from xml.etree import ElementTree
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import admin_db
@@ -192,8 +192,27 @@ def register_web_routes(app: FastAPI) -> None:
     app.mount("/web/assets", StaticFiles(directory=str(WEB_DIR)), name="web-assets")
 
     @app.get("/web")
-    async def web_index() -> FileResponse:
-        return FileResponse(WEB_DIR / "index.html")
+    async def web_index() -> HTMLResponse:
+        # Cache-busting: injeta ?v=<mtime> nos assets para furar o cache do
+        # Cloudflare (que cacheia .js/.css por 31 dias). A versão muda a cada
+        # deploy (novo mtime dos arquivos), forçando o CDN a buscar o novo.
+        html_text = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        try:
+            version = int(max(
+                (WEB_DIR / "app.js").stat().st_mtime,
+                (WEB_DIR / "styles.css").stat().st_mtime,
+            ))
+        except Exception:
+            version = 1
+        for asset in ("app.js", "styles.css"):
+            html_text = html_text.replace(
+                f"/web/assets/{asset}",
+                f"/web/assets/{asset}?v={version}",
+            )
+        return HTMLResponse(
+            html_text,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     @app.get("/chat")
     async def chat_redirect() -> RedirectResponse:
