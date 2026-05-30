@@ -32,6 +32,16 @@ if TYPE_CHECKING:
 lib_logger = logging.getLogger("rotator_library")
 
 
+def _raise_if_error_response(response: Any) -> None:
+    if not isinstance(response, dict) or "error" not in response:
+        return
+    error = response.get("error") or {}
+    message = error.get("message") if isinstance(error, dict) else str(error)
+    if not message:
+        message = str(response)
+    raise ValueError(message)
+
+
 class AnthropicHandler:
     """
     Handler for Anthropic API compatibility methods.
@@ -126,6 +136,7 @@ class AnthropicHandler:
                 if hasattr(response, "model_dump")
                 else dict(response)
             )
+            _raise_if_error_response(openai_response)
             anthropic_response = openai_to_anthropic_response(
                 openai_response, original_model
             )
@@ -173,6 +184,7 @@ class AnthropicHandler:
                 if hasattr(response, "model_dump")
                 else dict(response)
             )
+            _raise_if_error_response(openai_response)
             anthropic_response = openai_to_anthropic_response(
                 openai_response, original_model
             )

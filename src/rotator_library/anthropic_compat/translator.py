@@ -554,6 +554,72 @@ def _vllm_max_output_tokens() -> int:
     return 2048
 
 
+def _vllm_max_input_chars() -> int:
+    for env_name in (
+        "HOSTED_VLLM_MAX_INPUT_CHARS",
+        "ANTHROPIC_VLLM_MAX_INPUT_CHARS",
+        "PROXY_MAX_INPUT_CHARS",
+    ):
+        value = os.getenv(env_name)
+        if not value:
+            continue
+        try:
+            return max(1000, int(value))
+        except ValueError:
+            continue
+    return 60000
+
+
+def _message_char_size(message: Dict[str, Any]) -> int:
+    try:
+        return len(json.dumps(message, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return len(str(message))
+
+
+def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    max_chars = _vllm_max_input_chars()
+    if sum(_message_char_size(message) for message in messages) <= max_chars:
+        return messages
+
+    system_messages = [m for m in messages if m.get("role") == "system"]
+    conversation = [m for m in messages if m.get("role") != "system"]
+
+    kept_reversed: List[Dict[str, Any]] = []
+    used_chars = sum(_message_char_size(message) for message in system_messages)
+    omitted_count = 0
+
+    for message in reversed(conversation):
+        message_size = _message_char_size(message)
+        if kept_reversed and used_chars + message_size > max_chars:
+            omitted_count += 1
+            continue
+        if not kept_reversed and message_size > max_chars:
+            trimmed = dict(message)
+            content = trimmed.get("content")
+            if isinstance(content, str):
+                trimmed["content"] = content[-max_chars:]
+            elif isinstance(content, list):
+                trimmed["content"] = content[-8:]
+            message = trimmed
+            message_size = _message_char_size(message)
+        kept_reversed.append(message)
+        used_chars += message_size
+
+    kept = list(reversed(kept_reversed))
+    if omitted_count:
+        notice = {
+            "role": "system",
+            "content": (
+                f"{omitted_count} older conversation message(s) were omitted "
+                "because the hosted vLLM context window is smaller than Claude's."
+            ),
+        }
+        system_messages = [*system_messages, notice]
+
+    return [*system_messages, *kept]
+
+
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
@@ -566,6 +632,9 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         openai_request["max_tokens"] = max_output_tokens
 
     openai_request["messages"] = _strip_vllm_rejected_fields(
+        openai_request.get("messages", [])
+    )
+    openai_request["messages"] = _truncate_messages_for_vllm(
         openai_request.get("messages", [])
     )
     if openai_request.get("tools"):
