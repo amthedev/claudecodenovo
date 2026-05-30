@@ -178,6 +178,60 @@ def generate_sk_key() -> str:
     return "sk-" + secrets.token_urlsafe(32).replace("_", "").replace("-", "")[:42]
 
 
+def generate_proxy_key() -> str:
+    """Gera uma chave root no formato proxy_xxxx."""
+    return "proxy_" + secrets.token_urlsafe(32).replace("_", "").replace("-", "")[:42]
+
+
+# ── App settings (override de chave root) ───────────────────────────────────────
+
+def _ensure_settings_table(c) -> None:
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)"
+    )
+
+
+def set_root_key_override(new_key: str) -> str:
+    """Armazena o hash da nova chave root (precede a env var). Retorna reveal token."""
+    h = hash_api_key(new_key)
+    preview = new_key[:18] + "..."
+    with _db() as c:
+        _ensure_settings_table(c)
+        c.execute(
+            "INSERT OR REPLACE INTO app_settings(key,value) VALUES('root_key_hash',?)",
+            (h,),
+        )
+        c.execute(
+            "INSERT OR REPLACE INTO app_settings(key,value) VALUES('root_key_preview',?)",
+            (preview,),
+        )
+    return store_reveal(new_key, "root", "Chave Root (proxy)", "rotate")
+
+
+def get_root_key_hash() -> Optional[str]:
+    with _db() as c:
+        try:
+            _ensure_settings_table(c)
+            r = c.execute(
+                "SELECT value FROM app_settings WHERE key='root_key_hash'"
+            ).fetchone()
+            return r["value"] if r else None
+        except Exception:
+            return None
+
+
+def get_root_key_preview() -> Optional[str]:
+    with _db() as c:
+        try:
+            _ensure_settings_table(c)
+            r = c.execute(
+                "SELECT value FROM app_settings WHERE key='root_key_preview'"
+            ).fetchone()
+            return r["value"] if r else None
+        except Exception:
+            return None
+
+
 # ── Admin auth ────────────────────────────────────────────────────────────────
 
 def admin_exists() -> bool:

@@ -1086,7 +1086,21 @@ def _verify_managed_api_key(api_key: str) -> Optional[Dict[str, Any]]:
 def _verify_proxy_api_key_value(raw_key: Optional[str]) -> Optional[Dict[str, Any]]:
     if not raw_key:
         return None
-    if PROXY_API_KEY and hmac.compare_digest(raw_key, PROXY_API_KEY):
+    # Override de chave root pelo painel (precede a env var). Se rotacionada,
+    # SÓ a nova chave vale — a env var antiga é invalidada.
+    override_hash = None
+    try:
+        from proxy_app import admin_db as _adb
+        override_hash = _adb.get_root_key_hash()
+    except Exception:
+        override_hash = None
+    if override_hash:
+        try:
+            if _adb.hash_api_key(raw_key) == override_hash:
+                return {"type": "root", "app_name": "root"}
+        except Exception:
+            pass
+    elif PROXY_API_KEY and hmac.compare_digest(raw_key, PROXY_API_KEY):
         return {"type": "root", "app_name": "root"}
     return _verify_managed_api_key(raw_key)
 

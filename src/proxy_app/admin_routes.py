@@ -427,10 +427,16 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
 
         # Conexão
         root_html = ""
-        if pk:
-            root_html = f"""<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Chave Root</div>
-              <div class="copy-row mono" style="padding:8px 12px"><span>{_e(pk[:18])}...</span>
-              <button class="btn-ghost btn-sm" onclick='cp({_j(pk)},this)'>Copiar</button></div></div>"""
+        root_override_preview = admin_db.get_root_key_preview()
+        root_is_rotated = bool(root_override_preview)
+        root_preview = root_override_preview if root_is_rotated else (pk[:18] + "..." if pk else "")
+        if pk or root_is_rotated:
+            rotated_badge = '<span class="badge badge-blue" style="margin-left:6px">rotacionada</span>' if root_is_rotated else ''
+            copy_btn = '' if root_is_rotated else f'<button class="btn-ghost btn-sm" onclick=\'cp({_j(pk)},this)\'>Copiar</button>'
+            root_html = f"""<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Chave Root{rotated_badge}</div>
+              <div class="copy-row mono" style="padding:8px 12px"><span>{_e(root_preview)}</span>
+              {copy_btn}
+              <button class="btn btn-sm" onclick="openModal('m-rotate-root')">Rotacionar</button></div></div>"""
         conn_html = f"""<div class="card" style="margin-bottom:24px">
           <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
             <div style="flex:1;min-width:200px">
@@ -451,7 +457,22 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         error_html = f'<div class="reveal-banner" style="border-color:rgba(239,68,68,.4);color:var(--red)">{_e(err)}</div>' if err else ""
         # Tabela de chaves
         rows = ""
-        modals = ""
+        # Modal de rotação da chave root
+        modals = """<div class="modal-bg" id="m-rotate-root">
+          <div class="modal">
+            <button class="x" onclick="closeModal('m-rotate-root')">✕</button>
+            <h2>🔄 Rotacionar chave Root</h2>
+            <p>A chave root atual será <b>invalidada imediatamente</b>.<br>
+               A nova chave <span class="mono">proxy_...</span> aparecerá no topo para copiar.<br>
+               <span style="color:var(--yellow)">Atualize o Claude Desktop/Code com a nova chave depois.</span></p>
+            <form method="post" action="/admin/root/rotate">
+              <div style="display:flex;gap:10px">
+                <button class="btn">Confirmar rotação</button>
+                <button class="btn-ghost" type="button" onclick="closeModal('m-rotate-root')">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>"""
         for k in keys:
             active_b = '<span class="badge badge-green">● Ativa</span>' if k["active"] else '<span class="badge badge-red">○ Inativa</span>'
             exp = _ft(k["expires_at"]) if k["expires_at"] else '<span class="badge badge-green">Sem expiração</span>'
@@ -698,6 +719,13 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             _, rev_tok = admin_db.rotate_api_key(kid)
         except ValueError as exc:
             return _with_error("/admin/dashboard", str(exc))
+        return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
+
+    @app.post("/admin/root/rotate")
+    async def rotate_root_key(req: Request):
+        _need(req)
+        new_key = admin_db.generate_proxy_key()
+        rev_tok = admin_db.set_root_key_override(new_key)
         return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
 
     @app.post("/admin/keys/{kid}/recharge")
