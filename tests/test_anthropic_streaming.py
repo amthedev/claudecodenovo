@@ -349,6 +349,24 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
             {"file_path": "cronometro_avancado.py", "content": "print('ok')"},
         )
 
+    def test_parses_execute_json_tool_call(self):
+        text = (
+            "Vou criar o arquivo agora.\n"
+            "<execute>\n"
+            '{"tool":"Write","input":{"path":"agent_probe.txt","content":"agent-ok"}}\n'
+            "</execute>"
+        )
+
+        cleaned_text, tool_blocks = _parse_textual_tool_calls(text)
+
+        self.assertEqual(cleaned_text, "Vou criar o arquivo agora.")
+        self.assertEqual(len(tool_blocks), 1)
+        self.assertEqual(tool_blocks[0]["name"], "Write")
+        self.assertEqual(
+            tool_blocks[0]["input"],
+            {"file_path": "agent_probe.txt", "content": "agent-ok"},
+        )
+
     async def test_converts_textual_tool_call_after_prose_to_tool_use(self):
         events = await _collect_events(
             [
@@ -395,6 +413,59 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             json.loads(partial_json),
             {"file_path": "cronometro_avancado.py", "content": "print('ok')"},
+        )
+
+        message_delta = next(
+            data for event_type, data in events if event_type == "message_delta"
+        )
+        self.assertEqual(message_delta["delta"]["stop_reason"], "tool_use")
+
+    async def test_converts_execute_json_stream_to_tool_use(self):
+        events = await _collect_events(
+            [
+                {"choices": [{"delta": {"content": "Vou criar o arquivo agora.\n"}}]},
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": (
+                                    "<execute>\n"
+                                    '{"tool":"Write","input":{"path":"agent_probe.txt",'
+                                    '"content":"agent-ok"}}\n'
+                                    "</execute>"
+                                )
+                            }
+                        }
+                    ]
+                },
+            ]
+        )
+
+        text_delta = "".join(
+            data["delta"]["text"]
+            for event_type, data in events
+            if event_type == "content_block_delta"
+            and data["delta"]["type"] == "text_delta"
+        )
+        self.assertNotIn("<execute>", text_delta)
+
+        tool_start = next(
+            data
+            for event_type, data in events
+            if event_type == "content_block_start"
+            and data["content_block"]["type"] == "tool_use"
+        )
+        self.assertEqual(tool_start["content_block"]["name"], "Write")
+
+        partial_json = "".join(
+            data["delta"]["partial_json"]
+            for event_type, data in events
+            if event_type == "content_block_delta"
+            and data["delta"]["type"] == "input_json_delta"
+        )
+        self.assertEqual(
+            json.loads(partial_json),
+            {"file_path": "agent_probe.txt", "content": "agent-ok"},
         )
 
         message_delta = next(

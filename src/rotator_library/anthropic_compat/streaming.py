@@ -590,6 +590,7 @@ async def anthropic_streaming_wrapper(
                     for pos in (
                         content.find("<tool_call"),
                         content.find("<function="),
+                        content.find("<execute"),
                     )
                     if pos >= 0
                 ]
@@ -605,6 +606,7 @@ async def anthropic_streaming_wrapper(
                         stripped.startswith("<tool")
                         or stripped.startswith("<fun")
                         or stripped.startswith("<function")
+                        or stripped.startswith("<exe")
                     ):
                         textual_tool_buffer = content
                         continue

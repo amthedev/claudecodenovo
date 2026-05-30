@@ -140,6 +140,10 @@ _TEXTUAL_TOOL_PARAM_RE = re.compile(
     r"<parameter=([A-Za-z0-9_.:-]+)>\s*(.*?)(?=(?:</parameter>\s*)?<parameter=|</function>|\Z)",
     re.DOTALL,
 )
+_EXECUTE_TOOL_CALL_RE = re.compile(
+    r"<execute>\s*(\{.*?\})\s*</execute>",
+    re.DOTALL | re.IGNORECASE,
+)
 _THINK_TAG_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 _REASONING_PREAMBLE_MARKERS = (
     "i need to ",
@@ -341,10 +345,52 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
         <tool_call><function=Bash><parameter=command>ls</parameter></function></tool_call>
     Claude Code only executes real Anthropic tool_use blocks, so normalize here.
     """
-    if not text or "<function=" not in text:
+    if not text:
         return text, []
 
     tool_blocks: List[dict] = []
+    cleaned_execute_parts: List[str] = []
+    last_execute_pos = 0
+
+    for match in _EXECUTE_TOOL_CALL_RE.finditer(text):
+        cleaned_execute_parts.append(text[last_execute_pos : match.start()])
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            cleaned_execute_parts.append(match.group(0))
+            last_execute_pos = match.end()
+            continue
+
+        tool_name = str(payload.get("tool") or payload.get("name") or "").strip()
+        tool_input = payload.get("input") or payload.get("arguments") or {}
+        if isinstance(tool_input, str):
+            try:
+                tool_input = json.loads(tool_input)
+            except json.JSONDecodeError:
+                tool_input = {}
+        if tool_name.lower() == "write" and isinstance(tool_input, dict):
+            if "file_path" not in tool_input and "path" in tool_input:
+                tool_input["file_path"] = tool_input.pop("path")
+
+        if tool_name and isinstance(tool_input, dict):
+            tool_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": f"toolu_{uuid.uuid4().hex[:12]}",
+                    "name": tool_name,
+                    "input": tool_input,
+                }
+            )
+        else:
+            cleaned_execute_parts.append(match.group(0))
+        last_execute_pos = match.end()
+
+    cleaned_execute_parts.append(text[last_execute_pos:])
+    text = "".join(cleaned_execute_parts)
+
+    if "<function=" not in text:
+        return text.strip(), tool_blocks
+
     cleaned_parts: List[str] = []
 
     def parse_tool_body(tool_name: str, body: str) -> Optional[dict]:
