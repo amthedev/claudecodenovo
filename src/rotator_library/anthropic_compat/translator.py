@@ -42,14 +42,16 @@ THINKING_BUDGET_THRESHOLDS = {
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
 
-# Hosted vLLM defaults are intentionally conservative because Claude Desktop
-# and Claude Code assume much larger Claude-native limits than local/vLLM
-# deployments usually have.
-VLLM_MAX_OUTPUT_TOKENS = 8192
-VLLM_MAX_INPUT_CHARS = 36000
-VLLM_MAX_MESSAGE_CHARS = 12000
-VLLM_MAX_TOOL_RESULT_CHARS = 6000
-VLLM_MAX_RESPONSE_TEXT_CHARS = 5000
+# Hosted vLLM defaults. These were originally very conservative (32k-context
+# servers). They are now sized for a ~64k context window; every value is also
+# overridable via env so you can match your actual --max-model-len without code
+# changes. Too-low values truncate history/file-reads and make the agent look
+# "superficial" or loop on large edits.
+VLLM_MAX_OUTPUT_TOKENS = 16384
+VLLM_MAX_INPUT_CHARS = 180000
+VLLM_MAX_MESSAGE_CHARS = 48000
+VLLM_MAX_TOOL_RESULT_CHARS = 24000
+VLLM_MAX_RESPONSE_TEXT_CHARS = 16000
 VLLM_MAX_TOOLS = 16
 VLLM_SENSITIVE_WORKSPACE_PROMPT = (
     "Sensitive workspace boundary: Do not inspect, grep, read, print, summarize, "
@@ -1051,6 +1053,22 @@ def _vllm_max_input_chars() -> int:
     )
 
 
+def _vllm_max_message_chars() -> int:
+    return _env_int(
+        ["HOSTED_VLLM_MAX_MESSAGE_CHARS", "VLLM_MAX_MESSAGE_CHARS"],
+        VLLM_MAX_MESSAGE_CHARS,
+        minimum=1000,
+    )
+
+
+def _vllm_max_tool_result_chars() -> int:
+    return _env_int(
+        ["HOSTED_VLLM_MAX_TOOL_RESULT_CHARS", "VLLM_MAX_TOOL_RESULT_CHARS"],
+        VLLM_MAX_TOOL_RESULT_CHARS,
+        minimum=500,
+    )
+
+
 def _message_char_size(message: Dict[str, Any]) -> int:
     try:
         return len(json.dumps(message, ensure_ascii=False))
@@ -1132,6 +1150,8 @@ def _compact_content_for_vllm(content: Any, max_chars: int, label: str) -> Any:
 def _compact_large_messages_for_vllm(
     messages: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
+    max_tool_result_chars = _vllm_max_tool_result_chars()
+    max_message_chars = _vllm_max_message_chars()
     compacted = []
     for message in messages:
         message_copy = dict(message)
@@ -1139,13 +1159,13 @@ def _compact_large_messages_for_vllm(
         if role == "tool":
             message_copy["content"] = _compact_content_for_vllm(
                 message_copy.get("content", ""),
-                VLLM_MAX_TOOL_RESULT_CHARS,
+                max_tool_result_chars,
                 "tool output",
             )
-        elif _message_char_size(message_copy) > VLLM_MAX_MESSAGE_CHARS:
+        elif _message_char_size(message_copy) > max_message_chars:
             message_copy["content"] = _compact_content_for_vllm(
                 message_copy.get("content", ""),
-                VLLM_MAX_MESSAGE_CHARS,
+                max_message_chars,
                 f"{role or 'message'} content",
             )
         compacted.append(message_copy)
