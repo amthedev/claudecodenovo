@@ -42,15 +42,16 @@ THINKING_BUDGET_THRESHOLDS = {
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
 
-# Hosted vLLM defaults. These were originally very conservative (32k-context
-# servers). They are now sized for a ~64k context window; every value is also
-# overridable via env so you can match your actual --max-model-len without code
-# changes. Too-low values truncate history/file-reads and make the agent look
+# Hosted vLLM defaults, sized for Qwen3-32B's real context ceiling of 40960
+# tokens (max_position_embeddings in config.json — vLLM refuses higher). Budget:
+# ~40k total -> reserve 12k for output, leaving ~28k tokens (~95k chars) for
+# input. Every value is overridable via env to match your own --max-model-len.
+# Too-low values truncate history/file-reads and make the agent look
 # "superficial" or loop on large edits.
-VLLM_MAX_OUTPUT_TOKENS = 16384
-VLLM_MAX_INPUT_CHARS = 180000
-VLLM_MAX_MESSAGE_CHARS = 48000
-VLLM_MAX_TOOL_RESULT_CHARS = 24000
+VLLM_MAX_OUTPUT_TOKENS = 12288
+VLLM_MAX_INPUT_CHARS = 95000
+VLLM_MAX_MESSAGE_CHARS = 40000
+VLLM_MAX_TOOL_RESULT_CHARS = 20000
 VLLM_MAX_RESPONSE_TEXT_CHARS = 16000
 VLLM_MAX_TOOLS = 16
 VLLM_SENSITIVE_WORKSPACE_PROMPT = (
