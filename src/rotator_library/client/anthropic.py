@@ -24,6 +24,7 @@ from ..anthropic_compat import (
     anthropic_to_openai_messages,
     anthropic_to_openai_tools,
 )
+from ..anthropic_compat.streaming import _model_text_to_write_tool_call
 from ..transaction_logger import TransactionLogger
 
 if TYPE_CHECKING:
@@ -58,6 +59,16 @@ def _force_tool_use_response(
 
     response = dict(anthropic_response)
     content = list(response.get("content") or [])
+    if forced_tool_call.get("_proxy_strategy") == "write_from_model_text":
+        model_text = "\n".join(
+            str(block.get("text") or "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+        forced_tool_call = _model_text_to_write_tool_call(
+            forced_tool_call, model_text
+        )
+        content = []
     content.append(
         {
             "type": "tool_use",

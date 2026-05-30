@@ -103,11 +103,9 @@ VLLM_MANDATORY_TOOL_PROMPT = (
 )
 VLLM_CREATE_FILE_TOOL_PROMPT = (
     "This is a create/edit request. Use a file editing tool such as Write, "
-    "Create, Edit, Update, or MultiEdit. If the user asks for a Python "
-    "calculator and no path is specified, create or update calculadora.py. "
-    "If the user asks for a Python stopwatch/cronometro and no path is "
-    "specified, create or update cronometro.py. "
-    "Then run it or compile it before finalizing."
+    "Create, Edit, Update, or MultiEdit. If no path is specified, choose a "
+    "short descriptive filename with the right extension for the requested "
+    "language or artifact. Then run it or compile it before finalizing."
 )
 VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
     "This is a project inspection request. Start by inspecting the current "
@@ -211,6 +209,13 @@ _RUN_COMMAND_MARKERS = (
     "testa",
     "teste",
     "run ",
+)
+_PYTHON_REQUEST_MARKERS = (
+    "python",
+    "py ",
+    " py",
+    "oython",
+    "python3",
 )
 
 
@@ -1152,92 +1157,57 @@ def _tool_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _calculator_source() -> str:
-    return (
-        "#!/usr/bin/env python3\n"
-        "\"\"\"Calculadora simples de terminal.\"\"\"\n\n"
-        "def calcular(a, operador, b):\n"
-        "    if operador == '+':\n"
-        "        return a + b\n"
-        "    if operador == '-':\n"
-        "        return a - b\n"
-        "    if operador == '*':\n"
-        "        return a * b\n"
-        "    if operador == '/':\n"
-        "        if b == 0:\n"
-        "            raise ZeroDivisionError('divisao por zero')\n"
-        "        return a / b\n"
-        "    raise ValueError('operador invalido')\n\n"
-        "def main():\n"
-        "    print('Calculadora Python')\n"
-        "    print('Exemplo: 10 + 5')\n"
-        "    entrada = input('Digite a conta: ').strip().split()\n"
-        "    if len(entrada) != 3:\n"
-        "        print('Formato invalido')\n"
-        "        return\n"
-        "    a = float(entrada[0])\n"
-        "    operador = entrada[1]\n"
-        "    b = float(entrada[2])\n"
-        "    print(calcular(a, operador, b))\n\n"
-        "if __name__ == '__main__':\n"
-        "    main()\n"
-    )
+def _slugify_filename(value: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    value = re.sub(r"_+", "_", value)
+    return value or "script"
 
 
-def _stopwatch_source() -> str:
-    return (
-        "#!/usr/bin/env python3\n"
-        "\"\"\"Cronometro simples de terminal.\"\"\"\n\n"
-        "import time\n\n"
-        "class Cronometro:\n"
-        "    def __init__(self):\n"
-        "        self._inicio = None\n"
-        "        self._acumulado = 0.0\n"
-        "        self._rodando = False\n\n"
-        "    def iniciar(self):\n"
-        "        if self._rodando:\n"
-        "            return 'Cronometro ja esta rodando.'\n"
-        "        self._inicio = time.monotonic()\n"
-        "        self._rodando = True\n"
-        "        return 'Cronometro iniciado.'\n\n"
-        "    def pausar(self):\n"
-        "        if not self._rodando:\n"
-        "            return 'Cronometro nao esta rodando.'\n"
-        "        self._acumulado += time.monotonic() - self._inicio\n"
-        "        self._inicio = None\n"
-        "        self._rodando = False\n"
-        "        return f'Cronometro pausado em {self.tempo():.2f}s.'\n\n"
-        "    def zerar(self):\n"
-        "        self._inicio = time.monotonic() if self._rodando else None\n"
-        "        self._acumulado = 0.0\n"
-        "        return 'Cronometro zerado.'\n\n"
-        "    def tempo(self):\n"
-        "        if self._rodando:\n"
-        "            return self._acumulado + (time.monotonic() - self._inicio)\n"
-        "        return self._acumulado\n\n"
-        "    def status(self):\n"
-        "        estado = 'rodando' if self._rodando else 'pausado'\n"
-        "        return f'{estado}: {self.tempo():.2f}s'\n\n"
-        "def main():\n"
-        "    cronometro = Cronometro()\n"
-        "    print('Comandos: iniciar, pausar, zerar, status, sair')\n"
-        "    while True:\n"
-        "        comando = input('> ').strip().lower()\n"
-        "        if comando in {'sair', 'exit', 'quit'}:\n"
-        "            break\n"
-        "        if comando == 'iniciar':\n"
-        "            print(cronometro.iniciar())\n"
-        "        elif comando == 'pausar':\n"
-        "            print(cronometro.pausar())\n"
-        "        elif comando == 'zerar':\n"
-        "            print(cronometro.zerar())\n"
-        "        elif comando == 'status':\n"
-        "            print(cronometro.status())\n"
-        "        else:\n"
-        "            print('Comando invalido.')\n\n"
-        "if __name__ == '__main__':\n"
-        "    main()\n"
+def _infer_create_file_path(user_text: str) -> str:
+    lowered = user_text.lower()
+    explicit = re.search(
+        r"([A-Za-z0-9_.-]+\.(?:py|js|ts|tsx|jsx|html|css|go|rs))",
+        user_text,
     )
+    if explicit:
+        return explicit.group(1)
+
+    if "calculadora" in lowered or "calculator" in lowered:
+        return "calculadora.py"
+    if (
+        "cronometro" in lowered
+        or "cronômetro" in lowered
+        or "stopwatch" in lowered
+        or "timer" in lowered
+    ):
+        return "cronometro.py"
+    if (
+        "cobrinha" in lowered
+        or "snake" in lowered
+        or "jogo da cobra" in lowered
+    ):
+        return "snake_game.py"
+
+    stem = re.sub(
+        r"\b(fa[çc]a|fassa|crie|criar|um|uma|em|de|do|da|no|na|com|avancado|avançado|simples|python|oython)\b",
+        " ",
+        lowered,
+    )
+    stem = _slugify_filename(stem)
+    extension = (
+        ".py" if _contains_any_marker(lowered, _PYTHON_REQUEST_MARKERS) else ".txt"
+    )
+    return f"{stem}{extension}"
+
+
+def _write_from_model_text_tool_call(
+    write_tool_name: str,
+    file_path: str,
+) -> Dict[str, Any]:
+    tool_call = _tool_call(write_tool_name, {"file_path": file_path, "content": ""})
+    tool_call["_proxy_strategy"] = "write_from_model_text"
+    tool_call["_proxy_file_path_hint"] = file_path
+    return tool_call
 
 
 def _build_vllm_forced_tool_call(
@@ -1261,12 +1231,10 @@ def _build_vllm_forced_tool_call(
             or "stopwatch" in lowered
             or "timer" in lowered
         )
-        if is_calculator and previous_count == 0:
-            if write:
-                return _tool_call(
-                    write,
-                    {"file_path": "calculadora.py", "content": _calculator_source()},
-                )
+        if previous_count == 0 and write:
+            return _write_from_model_text_tool_call(
+                write, _infer_create_file_path(user_text)
+            )
         if is_calculator and 0 < previous_count <= 1 and bash:
             return _tool_call(
                 bash,
@@ -1278,12 +1246,6 @@ def _build_vllm_forced_tool_call(
                     "description": "Verify the Python calculator",
                 },
             )
-        if is_stopwatch and previous_count == 0:
-            if write:
-                return _tool_call(
-                    write,
-                    {"file_path": "cronometro.py", "content": _stopwatch_source()},
-                )
         if is_stopwatch and 0 < previous_count <= 1 and bash:
             return _tool_call(
                 bash,

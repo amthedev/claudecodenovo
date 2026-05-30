@@ -10,6 +10,7 @@ OpenAI SSE (Server-Sent Events) format to Anthropic's streaming format.
 
 import json
 import logging
+import re
 import uuid
 from typing import AsyncGenerator, Callable, Optional, Awaitable, Any, TYPE_CHECKING
 
@@ -19,6 +20,76 @@ if TYPE_CHECKING:
     from ..transaction_logger import TransactionLogger
 
 logger = logging.getLogger("rotator_library.anthropic_compat")
+
+_FENCED_CODE_RE = re.compile(
+    r"```(?:[A-Za-z0-9_+.-]+)?\s*\n(.*?)```",
+    re.DOTALL,
+)
+_FILE_PATH_RE = re.compile(
+    r"([A-Za-z0-9_.-]+\.(?:py|js|ts|tsx|jsx|html|css|go|rs))"
+)
+_CODE_START_RE = re.compile(
+    r"(?m)^(?:#![^\n]*\n)?\s*(?:import |from |class |def |async def |if __name__|print\(|[A-Za-z_][A-Za-z0-9_]*\s*=)"
+)
+
+
+def _extract_file_path_from_text(text: str, fallback: str) -> str:
+    match = _FILE_PATH_RE.search(text or "")
+    return match.group(1) if match else fallback
+
+
+def _strip_leaked_reasoning(text: str) -> str:
+    text = re.sub(r"(?is)<think>.*?</think>\s*", "", text or "")
+    text = re.sub(
+        r"(?is)^\s*okay,.*?(?=\n\s*(?:vou|i will|i'll|import |from |class |def |```))",
+        "",
+        text,
+    )
+    return text.strip()
+
+
+def _extract_code_from_model_text(text: str) -> str:
+    text = _strip_leaked_reasoning(text)
+    fenced = _FENCED_CODE_RE.findall(text)
+    if fenced:
+        return max((block.strip() for block in fenced), key=len, default="")
+
+    match = _CODE_START_RE.search(text)
+    if not match:
+        return text.strip()
+
+    code = text[match.start() :].strip()
+    trailing_markers = (
+        "\n\nO arquivo ",
+        "\n\nA calculadora ",
+        "\n\nO cron",
+        "\n\nO jogo ",
+        "\n\nVocê pode ",
+        "\n\nPara executar",
+        "\n\nSe quiser",
+        "\n\nThe file ",
+    )
+    cut_at = len(code)
+    for marker in trailing_markers:
+        pos = code.find(marker)
+        if pos >= 0:
+            cut_at = min(cut_at, pos)
+    return code[:cut_at].strip()
+
+
+def _model_text_to_write_tool_call(
+    forced_tool_call: dict,
+    model_text: str,
+) -> dict:
+    file_path = _extract_file_path_from_text(
+        model_text, forced_tool_call.get("_proxy_file_path_hint") or "script.py"
+    )
+    content = _extract_code_from_model_text(model_text)
+    return {
+        "id": forced_tool_call.get("id", f"toolu_proxy_{uuid.uuid4().hex[:12]}"),
+        "name": forced_tool_call.get("name", ""),
+        "input": {"file_path": file_path, "content": content},
+    }
 
 
 async def anthropic_response_to_streaming_events(
@@ -164,7 +235,12 @@ async def anthropic_streaming_wrapper(
     accumulated_text = ""  # Track accumulated text for logging
     accumulated_thinking = ""  # Track accumulated thinking for logging
     textual_tool_buffer = ""  # Buffer text-emitted tool calls until complete
+    delayed_model_text_buffer = ""
     stop_reason_final = "end_turn"  # Track final stop reason for logging
+    write_from_model_text = bool(
+        forced_tool_call
+        and forced_tool_call.get("_proxy_strategy") == "write_from_model_text"
+    )
 
     try:
         async for chunk_str in openai_stream:
@@ -217,13 +293,21 @@ async def anthropic_streaming_wrapper(
                     current_block_index += 1
                     content_block_started = False
 
-                if textual_tool_buffer:
+                model_text_buffer = delayed_model_text_buffer + textual_tool_buffer
+                if model_text_buffer:
                     cleaned_text, textual_tool_blocks = _parse_textual_tool_calls(
-                        textual_tool_buffer
+                        model_text_buffer
                     )
+                    delayed_model_text_buffer = ""
                     textual_tool_buffer = ""
 
-                    if cleaned_text:
+                    if write_from_model_text and not textual_tool_blocks:
+                        forced_tool_call = _model_text_to_write_tool_call(
+                            forced_tool_call or {}, cleaned_text
+                        )
+                        cleaned_text = ""
+
+                    if cleaned_text and not write_from_model_text:
                         block_start = {
                             "type": "content_block_start",
                             "index": current_block_index,
@@ -468,6 +552,10 @@ async def anthropic_streaming_wrapper(
             # Handle text content
             content = delta.get("content")
             if content:
+                if write_from_model_text and not tool_calls_by_index:
+                    delayed_model_text_buffer += content
+                    continue
+
                 if textual_tool_buffer:
                     textual_tool_buffer += content
                     continue
