@@ -362,6 +362,8 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("<tool_call><function=ToolName>", system_text)
         self.assertIn("- Write:", system_text)
+        self.assertIn("CURRENT REQUEST REQUIRES TOOL USE", system_text)
+        self.assertNotIn("_vllm_forced_tool_call", openai_request)
 
     def test_parses_malformed_textual_tool_call_without_closing_tags(self):
         text = (

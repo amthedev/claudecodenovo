@@ -1352,6 +1352,7 @@ def _append_system_instruction(
 def _inject_vllm_mandatory_tool_instruction(
     openai_request: Dict[str, Any],
     tools: Optional[List[Dict[str, Any]]],
+    attach_fallback: bool = True,
 ) -> None:
     if not tools:
         return
@@ -1375,9 +1376,10 @@ def _inject_vllm_mandatory_tool_instruction(
     openai_request["_vllm_previous_tool_count"] = _count_prior_tool_calls(
         openai_request.get("messages", [])
     )
-    fallback = _build_vllm_forced_tool_call(intent, tools, openai_request)
-    if fallback:
-        openai_request["_vllm_forced_tool_call"] = fallback
+    if attach_fallback:
+        fallback = _build_vllm_forced_tool_call(intent, tools, openai_request)
+        if fallback:
+            openai_request["_vllm_forced_tool_call"] = fallback
 
 
 def _attach_mandatory_tool_fallback(
@@ -1719,8 +1721,11 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         elif native_tools_enabled:
             openai_request["tools"] = tools
             _inject_vllm_tool_use_prompt(openai_request, tools)
-            if _force_tool_fallback_enabled():
-                _inject_vllm_mandatory_tool_instruction(openai_request, tools)
+            _inject_vllm_mandatory_tool_instruction(
+                openai_request,
+                tools,
+                attach_fallback=_force_tool_fallback_enabled(),
+            )
             if openai_request.get("tool_choice") not in (None, "auto"):
                 # vLLM's OpenAI server is picky about forced/required tool choice,
                 # while Claude Code still works with auto tool selection.
