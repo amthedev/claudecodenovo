@@ -76,27 +76,47 @@ VLLM_TEXTUAL_TOOL_PROMPT = (
     "Use only tool names from the available tools list."
 )
 VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
+VLLM_AGENT_FLOW_PROMPT = (
+    "Agent workflow contract:\n"
+    "1. Keep working until the user's task is actually complete; do not stop "
+    "after a partial edit or first command result.\n"
+    "2. For multi-step work, call TodoWrite when available, then keep statuses "
+    "current as you inspect, edit, run, and verify.\n"
+    "3. Before using a file path, verify it from the current workspace with LS, "
+    "Glob, Grep, Read, pwd, or rg --files when uncertain. Never invent paths.\n"
+    "4. If a command fails because of path, cwd, missing file, syntax, or usage, "
+    "inspect the error and retry with a corrected command instead of giving up.\n"
+    "5. After creating or editing code, run a relevant verification command "
+    "such as py_compile, unit tests, lint, or a small smoke test. If verification "
+    "cannot run, state the concrete blocker in the final answer.\n"
+    "6. Do not give a final answer until edits and verification are complete. "
+    "The final answer must briefly list files changed and verification results."
+)
 VLLM_MANDATORY_TOOL_PROMPT = (
     f"{VLLM_MANDATORY_TOOL_MARKER}: Do not answer with prose, examples, code "
     "blocks, or permission questions. Your next output must be exactly one "
     "tool call in the textual tool-call format. You already have permission "
     "to inspect, edit, create, and run project files when the user asks for it. "
     "After tool results come back, continue with more tool calls when needed; "
-    "only give the final answer after the task is actually done."
+    "only give the final answer after the task is actually done.\n"
+    f"{VLLM_AGENT_FLOW_PROMPT}"
 )
 VLLM_CREATE_FILE_TOOL_PROMPT = (
     "This is a create/edit request. Use a file editing tool such as Write, "
     "Create, Edit, Update, or MultiEdit. If the user asks for a Python "
-    "calculator and no path is specified, create or update calculadora.py."
+    "calculator and no path is specified, create or update calculadora.py. "
+    "Then run it or compile it before finalizing."
 )
 VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
     "This is a project inspection request. Start by inspecting the current "
     "directory with LS, Glob, Read, Grep, or Bash; do not ask the user to "
-    "provide the project structure."
+    "provide the project structure. Read the main docs/config files and finish "
+    "with a concise project report."
 )
 VLLM_RUN_COMMAND_TOOL_PROMPT = (
     "This is a run/test request. Use Bash to execute the relevant command "
-    "instead of explaining how the user can run it."
+    "instead of explaining how the user can run it. If the command fails, "
+    "inspect and retry when the fix is obvious."
 )
 VLLM_TOOL_PRIORITY = {
     "create": 0,
