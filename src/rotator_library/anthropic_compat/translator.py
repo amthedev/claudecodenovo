@@ -75,6 +75,29 @@ VLLM_TEXTUAL_TOOL_PROMPT = (
     "<tool_call><function=ToolName><parameter=param_name>value</parameter></function></tool_call>\n"
     "Use only tool names from the available tools list."
 )
+VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
+VLLM_MANDATORY_TOOL_PROMPT = (
+    f"{VLLM_MANDATORY_TOOL_MARKER}: Do not answer with prose, examples, code "
+    "blocks, or permission questions. Your next output must be exactly one "
+    "tool call in the textual tool-call format. You already have permission "
+    "to inspect, edit, create, and run project files when the user asks for it. "
+    "After tool results come back, continue with more tool calls when needed; "
+    "only give the final answer after the task is actually done."
+)
+VLLM_CREATE_FILE_TOOL_PROMPT = (
+    "This is a create/edit request. Use a file editing tool such as Write, "
+    "Create, Edit, Update, or MultiEdit. If the user asks for a Python "
+    "calculator and no path is specified, create or update calculadora.py."
+)
+VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
+    "This is a project inspection request. Start by inspecting the current "
+    "directory with LS, Glob, Read, Grep, or Bash; do not ask the user to "
+    "provide the project structure."
+)
+VLLM_RUN_COMMAND_TOOL_PROMPT = (
+    "This is a run/test request. Use Bash to execute the relevant command "
+    "instead of explaining how the user can run it."
+)
 VLLM_TOOL_PRIORITY = {
     "create": 0,
     "update": 1,
@@ -115,6 +138,53 @@ _REASONING_PREAMBLE_MARKERS = (
     "allowed scope",
     "no need for that",
     "straightforward language switch",
+)
+_CREATE_OR_EDIT_MARKERS = (
+    "crie",
+    "criar",
+    "cria",
+    "faca",
+    "fassa",
+    "faça",
+    "faz",
+    "implemente",
+    "implementa",
+    "edite",
+    "editar",
+    "altere",
+    "modifique",
+    "corrija",
+    "conserte",
+    "salve",
+    "write ",
+    "create ",
+    "edit ",
+    "modify ",
+    "fix ",
+)
+_PROJECT_INSPECTION_MARKERS = (
+    "analise",
+    "analisa",
+    "analisar",
+    "veja oq",
+    "veja o que",
+    "o que e",
+    "oq e",
+    "projeto",
+    "repo",
+    "repositorio",
+    "repository",
+    "estrutura",
+    "codebase",
+)
+_RUN_COMMAND_MARKERS = (
+    "rode",
+    "rodar",
+    "execute",
+    "executar",
+    "testa",
+    "teste",
+    "run ",
 )
 
 
@@ -930,6 +1000,69 @@ def _content_to_vllm_text(content: Any) -> str:
     return str(content)
 
 
+def _latest_user_text(messages: List[Dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return _content_to_vllm_text(message.get("content", ""))
+    return ""
+
+
+def _contains_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in markers)
+
+
+def _classify_tool_intent(user_text: str) -> Optional[str]:
+    if not user_text.strip():
+        return None
+
+    lowered = user_text.lower()
+    if _contains_any_marker(lowered, _RUN_COMMAND_MARKERS):
+        return "run"
+    if _contains_any_marker(lowered, _CREATE_OR_EDIT_MARKERS):
+        return "create"
+    if _contains_any_marker(lowered, _PROJECT_INSPECTION_MARKERS):
+        return "inspect"
+    return None
+
+
+def _append_system_instruction(
+    openai_request: Dict[str, Any],
+    instruction: str,
+) -> None:
+    messages = openai_request.setdefault("messages", [])
+    if messages and messages[0].get("role") == "system":
+        existing = messages[0].get("content") or ""
+        if VLLM_MANDATORY_TOOL_MARKER not in existing:
+            messages[0]["content"] = f"{existing}\n\n{instruction}".strip()
+        return
+    messages.insert(0, {"role": "system", "content": instruction})
+
+
+def _inject_vllm_mandatory_tool_instruction(
+    openai_request: Dict[str, Any],
+    tools: Optional[List[Dict[str, Any]]],
+) -> None:
+    if not tools:
+        return
+
+    intent = _classify_tool_intent(
+        _latest_user_text(openai_request.get("messages", []))
+    )
+    if intent is None:
+        return
+
+    intent_prompt = {
+        "create": VLLM_CREATE_FILE_TOOL_PROMPT,
+        "inspect": VLLM_INSPECT_PROJECT_TOOL_PROMPT,
+        "run": VLLM_RUN_COMMAND_TOOL_PROMPT,
+    }[intent]
+    _append_system_instruction(
+        openai_request,
+        f"{VLLM_MANDATORY_TOOL_PROMPT}\n{intent_prompt}",
+    )
+
+
 def _tool_call_to_textual_block(tool_call: Dict[str, Any]) -> str:
     function = tool_call.get("function") or {}
     name = str(function.get("name") or "").strip()
@@ -1034,12 +1167,14 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         elif native_tools_enabled:
             openai_request["tools"] = tools
             _inject_vllm_tool_use_prompt(openai_request, tools)
+            _inject_vllm_mandatory_tool_instruction(openai_request, tools)
             if openai_request.get("tool_choice") not in (None, "auto"):
                 # vLLM's OpenAI server is picky about forced/required tool choice,
                 # while Claude Code still works with auto tool selection.
                 openai_request["tool_choice"] = "auto"
         else:
             _inject_vllm_tool_use_prompt(openai_request, tools)
+            _inject_vllm_mandatory_tool_instruction(openai_request, tools)
             openai_request.pop("tools", None)
             openai_request.pop("tool_choice", None)
             openai_request["messages"] = _linearize_vllm_tool_messages(
