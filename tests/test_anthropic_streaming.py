@@ -22,6 +22,8 @@ from rotator_library.anthropic_compat.models import AnthropicMessagesRequest
 from rotator_library.anthropic_compat.translator import (
     _build_vllm_forced_tool_call,
     _parse_textual_tool_calls,
+    anthropic_to_openai_messages,
+    openai_to_anthropic_response,
     translate_anthropic_request,
 )
 
@@ -114,6 +116,127 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fallback["name"], "Write")
         self.assertEqual(fallback["_proxy_strategy"], "write_from_model_text")
         self.assertEqual(fallback["input"]["file_path"], "snake_game.py")
+
+    def test_long_tool_names_round_trip_through_openai_limit(self):
+        long_name = (
+            "mcp__project_management__create_issue_with_extended_context"
+            "__and_repository_metadata"
+        )
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            stream=False,
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_1",
+                            "name": long_name,
+                            "input": {"title": "Fix"},
+                        }
+                    ],
+                }
+            ],
+            tools=[
+                {
+                    "name": long_name,
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"title": {"type": "string"}},
+                    },
+                }
+            ],
+            tool_choice={"type": "tool", "name": long_name},
+        )
+
+        openai_request = translate_anthropic_request(request)
+        mapping = openai_request["_anthropic_tool_name_mapping"]
+        mapped_name = openai_request["tools"][0]["function"]["name"]
+
+        self.assertLessEqual(len(mapped_name), 64)
+        self.assertEqual(mapping[mapped_name], long_name)
+        self.assertEqual(
+            openai_request["messages"][0]["tool_calls"][0]["function"]["name"],
+            mapped_name,
+        )
+        self.assertEqual(
+            openai_request["tool_choice"]["function"]["name"],
+            mapped_name,
+        )
+
+        anthropic_response = openai_to_anthropic_response(
+            {
+                "id": "chatcmpl_1",
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": mapped_name,
+                                        "arguments": '{"title":"Fix"}',
+                                    },
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+            "claude-sonnet-4-5",
+            tool_name_mapping=mapping,
+        )
+
+        self.assertEqual(anthropic_response["content"][0]["name"], long_name)
+        self.assertEqual(anthropic_response["stop_reason"], "tool_use")
+
+        textual_response = openai_to_anthropic_response(
+            {
+                "id": "chatcmpl_2",
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                f"<function={mapped_name}>"
+                                "<parameter=title>Fix</parameter>"
+                                "</function>"
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+            "claude-sonnet-4-5",
+            tool_name_mapping=mapping,
+        )
+        self.assertEqual(textual_response["content"][0]["name"], long_name)
+        self.assertEqual(textual_response["stop_reason"], "tool_use")
+
+    def test_empty_text_blocks_are_not_forwarded_to_openai(self):
+        openai_messages = anthropic_to_openai_messages(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": ""},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_1",
+                            "name": "Bash",
+                            "input": {"command": "pwd"},
+                        },
+                    ],
+                }
+            ]
+        )
+
+        self.assertIsNone(openai_messages[0]["content"])
+        self.assertEqual(openai_messages[0]["tool_calls"][0]["function"]["name"], "Bash")
 
     def test_generic_create_intent_uses_write_from_model_text_fallback(self):
         fallback = _build_vllm_forced_tool_call(

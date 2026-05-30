@@ -13,11 +13,15 @@ import json
 import os
 import re
 import uuid
+import hashlib
 from typing import Any, Dict, List, Optional, Union
 
 from .models import AnthropicMessagesRequest
 
 MIN_THINKING_SIGNATURE_LENGTH = 100
+OPENAI_MAX_TOOL_NAME_LENGTH = 64
+TOOL_NAME_HASH_LENGTH = 8
+TOOL_NAME_PREFIX_LENGTH = OPENAI_MAX_TOOL_NAME_LENGTH - TOOL_NAME_HASH_LENGTH - 1
 
 # =============================================================================
 # THINKING BUDGET TO REASONING EFFORT MAPPING
@@ -400,6 +404,33 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
     return cleaned_text, tool_blocks
 
 
+def _truncate_openai_tool_name(name: str) -> str:
+    """Keep Anthropic tool names compatible with OpenAI's 64-char function limit."""
+    if len(name) <= OPENAI_MAX_TOOL_NAME_LENGTH:
+        return name
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:TOOL_NAME_HASH_LENGTH]
+    return f"{name[:TOOL_NAME_PREFIX_LENGTH]}_{digest}"
+
+
+def _map_tool_name_for_openai(
+    name: str,
+    tool_name_mapping: Optional[Dict[str, str]] = None,
+) -> str:
+    mapped = _truncate_openai_tool_name(name)
+    if tool_name_mapping is not None and mapped != name:
+        tool_name_mapping[mapped] = name
+    return mapped
+
+
+def _restore_tool_name(
+    name: str,
+    tool_name_mapping: Optional[Dict[str, str]] = None,
+) -> str:
+    if not tool_name_mapping:
+        return name
+    return tool_name_mapping.get(name, name)
+
+
 def _vllm_response_language_instruction() -> str:
     language = os.getenv("PROXY_RESPONSE_LANGUAGE", "pt-BR").strip()
     if not language:
@@ -504,7 +535,9 @@ def _reorder_assistant_content(content: List[dict]) -> List[dict]:
 
 
 def anthropic_to_openai_messages(
-    anthropic_messages: List[dict], system: Optional[Union[str, List[dict]]] = None
+    anthropic_messages: List[dict],
+    system: Optional[Union[str, List[dict]]] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None,
 ) -> List[dict]:
     """
     Convert Anthropic message format to OpenAI format.
@@ -559,9 +592,12 @@ def anthropic_to_openai_messages(
                     block_type = block.get("type", "text")
 
                     if block_type == "text":
-                        openai_content.append(
-                            {"type": "text", "text": block.get("text", "")}
-                        )
+                        text = block.get("text", "")
+                        # Claude Code can replay empty text blocks next to tool_use.
+                        # Anthropic accepts that, but OpenAI-compatible providers
+                        # often reject empty content blocks.
+                        if isinstance(text, str) and text.strip():
+                            openai_content.append({"type": "text", "text": text})
                     elif block_type == "image":
                         # Convert Anthropic image format to OpenAI
                         source = block.get("source", {})
@@ -620,12 +656,16 @@ def anthropic_to_openai_messages(
                             thinking_signature = signature
                     elif block_type == "tool_use":
                         # Anthropic tool_use -> OpenAI tool_calls
+                        tool_name = _map_tool_name_for_openai(
+                            str(block.get("name", "")),
+                            tool_name_mapping,
+                        )
                         tool_calls.append(
                             {
                                 "id": block.get("id", ""),
                                 "type": "function",
                                 "function": {
-                                    "name": block.get("name", ""),
+                                    "name": tool_name,
                                     "arguments": json.dumps(block.get("input", {})),
                                 },
                             }
@@ -771,6 +811,7 @@ def anthropic_to_openai_messages(
 
 def anthropic_to_openai_tools(
     anthropic_tools: Optional[List[dict]],
+    tool_name_mapping: Optional[Dict[str, str]] = None,
 ) -> Optional[List[dict]]:
     """
     Convert Anthropic tool definitions to OpenAI format.
@@ -785,12 +826,16 @@ def anthropic_to_openai_tools(
         return None
 
     openai_tools = []
-    for tool in anthropic_tools:
+    for index, tool in enumerate(anthropic_tools):
+        raw_name = str(tool.get("name") or "").strip()
+        if not raw_name:
+            raw_name = f"proxy_unnamed_tool_{index}"
+        name = _map_tool_name_for_openai(raw_name, tool_name_mapping)
         openai_tools.append(
             {
                 "type": "function",
                 "function": {
-                    "name": tool.get("name", ""),
+                    "name": name,
                     "description": tool.get("description", ""),
                     "parameters": tool.get("input_schema", {}),
                 },
@@ -801,6 +846,7 @@ def anthropic_to_openai_tools(
 
 def anthropic_to_openai_tool_choice(
     anthropic_tool_choice: Optional[dict],
+    tool_name_mapping: Optional[Dict[str, str]] = None,
 ) -> Optional[Union[str, dict]]:
     """
     Convert Anthropic tool_choice to OpenAI format.
@@ -821,9 +867,13 @@ def anthropic_to_openai_tool_choice(
     elif choice_type == "any":
         return "required"
     elif choice_type == "tool":
+        name = _map_tool_name_for_openai(
+            str(anthropic_tool_choice.get("name", "")),
+            tool_name_mapping,
+        )
         return {
             "type": "function",
-            "function": {"name": anthropic_tool_choice.get("name", "")},
+            "function": {"name": name},
         }
     elif choice_type == "none":
         return "none"
@@ -1644,7 +1694,11 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     )
 
 
-def openai_to_anthropic_response(openai_response: dict, original_model: str) -> dict:
+def openai_to_anthropic_response(
+    openai_response: dict,
+    original_model: str,
+    tool_name_mapping: Optional[Dict[str, str]] = None,
+) -> dict:
     """
     Convert OpenAI chat completion response to Anthropic Messages format.
 
@@ -1686,6 +1740,12 @@ def openai_to_anthropic_response(openai_response: dict, original_model: str) -> 
     if text_content:
         text_content = _sanitize_vllm_response_text(text_content)
         text_content, textual_tool_blocks = _parse_textual_tool_calls(text_content)
+        for block in textual_tool_blocks:
+            if isinstance(block, dict):
+                block["name"] = _restore_tool_name(
+                    str(block.get("name", "")),
+                    tool_name_mapping,
+                )
         if text_content:
             content_blocks.append({"type": "text", "text": text_content})
 
@@ -1702,7 +1762,10 @@ def openai_to_anthropic_response(openai_response: dict, original_model: str) -> 
             {
                 "type": "tool_use",
                 "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
-                "name": func.get("name", ""),
+                "name": _restore_tool_name(
+                    str(func.get("name", "")),
+                    tool_name_mapping,
+                ),
                 "input": input_data,
             }
         )
@@ -1772,13 +1835,20 @@ def translate_anthropic_request(request: AnthropicMessagesRequest) -> Dict[str, 
     anthropic_request = request.model_dump(exclude_none=True)
 
     messages = anthropic_request.get("messages", [])
+    tool_name_mapping: Dict[str, str] = {}
     openai_messages = anthropic_to_openai_messages(
-        messages, anthropic_request.get("system")
+        messages,
+        anthropic_request.get("system"),
+        tool_name_mapping=tool_name_mapping,
     )
 
-    openai_tools = anthropic_to_openai_tools(anthropic_request.get("tools"))
+    openai_tools = anthropic_to_openai_tools(
+        anthropic_request.get("tools"),
+        tool_name_mapping=tool_name_mapping,
+    )
     openai_tool_choice = anthropic_to_openai_tool_choice(
-        anthropic_request.get("tool_choice")
+        anthropic_request.get("tool_choice"),
+        tool_name_mapping=tool_name_mapping,
     )
 
     # Build OpenAI-compatible request
@@ -1801,6 +1871,8 @@ def translate_anthropic_request(request: AnthropicMessagesRequest) -> Dict[str, 
         openai_request["tools"] = openai_tools
     if openai_tool_choice:
         openai_request["tool_choice"] = openai_tool_choice
+    if tool_name_mapping:
+        openai_request["_anthropic_tool_name_mapping"] = tool_name_mapping
 
     # Note: request.metadata is intentionally not mapped.
     # OpenAI's API doesn't have an equivalent field for client-side metadata.

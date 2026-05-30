@@ -14,7 +14,7 @@ import re
 import uuid
 from typing import AsyncGenerator, Callable, Optional, Awaitable, Any, TYPE_CHECKING
 
-from .translator import _parse_textual_tool_calls
+from .translator import _parse_textual_tool_calls, _restore_tool_name
 
 if TYPE_CHECKING:
     from ..transaction_logger import TransactionLogger
@@ -192,6 +192,7 @@ async def anthropic_streaming_wrapper(
     is_disconnected: Optional[Callable[[], Awaitable[bool]]] = None,
     transaction_logger: Optional["TransactionLogger"] = None,
     forced_tool_call: Optional[dict] = None,
+    tool_name_mapping: Optional[dict] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Convert OpenAI streaming format to Anthropic streaming format.
@@ -329,9 +330,13 @@ async def anthropic_streaming_wrapper(
                         tc_index = len(tool_calls_by_index)
                         block_idx = current_block_index
                         arguments = json.dumps(block.get("input") or {})
+                        tool_name = _restore_tool_name(
+                            str(block.get("name", "")),
+                            tool_name_mapping,
+                        )
                         tool_calls_by_index[tc_index] = {
                             "id": block.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
-                            "name": block.get("name", ""),
+                            "name": tool_name,
                             "arguments": arguments,
                         }
                         tool_block_indices[tc_index] = block_idx
@@ -650,7 +655,10 @@ async def anthropic_streaming_wrapper(
                 # Accumulate arguments
                 func = tc.get("function", {})
                 if func.get("name"):
-                    tool_calls_by_index[tc_index]["name"] = func["name"]
+                    tool_calls_by_index[tc_index]["name"] = _restore_tool_name(
+                        str(func["name"]),
+                        tool_name_mapping,
+                    )
                 if func.get("arguments"):
                     tool_calls_by_index[tc_index]["arguments"] += func["arguments"]
 

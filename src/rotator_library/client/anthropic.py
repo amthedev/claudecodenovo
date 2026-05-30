@@ -150,6 +150,7 @@ class AnthropicHandler:
         # Translate Anthropic request to OpenAI format
         openai_request = translate_anthropic_request(request)
         forced_tool_call = openai_request.pop("_vllm_forced_tool_call", None)
+        tool_name_mapping = openai_request.pop("_anthropic_tool_name_mapping", None)
         openai_request.pop("_vllm_tool_intent", None)
         openai_request.pop("_vllm_previous_tool_count", None)
 
@@ -181,7 +182,9 @@ class AnthropicHandler:
             )
             _raise_if_error_response(openai_response)
             anthropic_response = openai_to_anthropic_response(
-                openai_response, original_model
+                openai_response,
+                original_model,
+                tool_name_mapping=tool_name_mapping,
             )
             anthropic_response["id"] = request_id
             anthropic_response = _force_tool_use_response(
@@ -216,6 +219,7 @@ class AnthropicHandler:
                 is_disconnected=is_disconnected,
                 transaction_logger=anthropic_logger,
                 forced_tool_call=forced_tool_call,
+                tool_name_mapping=tool_name_mapping,
             )
         else:
             # Non-streaming response
@@ -233,7 +237,9 @@ class AnthropicHandler:
             )
             _raise_if_error_response(openai_response)
             anthropic_response = openai_to_anthropic_response(
-                openai_response, original_model
+                openai_response,
+                original_model,
+                tool_name_mapping=tool_name_mapping,
             )
 
             # Override the ID with our request ID

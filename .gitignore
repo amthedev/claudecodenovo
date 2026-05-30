@@ -138,3 +138,6 @@ cache/antigravity/thought_signatures.json
 admin_data.json
 admin_data.tmp
 admin.db
+
+# Local reference clones used for compatibility research
+reference_repos/
