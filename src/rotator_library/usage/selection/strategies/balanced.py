@@ -12,11 +12,12 @@ import logging
 from typing import Dict, List, Optional
 
 from ...types import CredentialState, SelectionContext, RotationMode
+from .base import RoutingStrategy
 
 lib_logger = logging.getLogger("rotator_library")
 
 
-class BalancedStrategy:
+class BalancedStrategy(RoutingStrategy):
     """
     Balanced credential rotation strategy.
 

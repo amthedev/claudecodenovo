@@ -13,12 +13,12 @@ from typing import Dict, List, Optional
 
 from ...types import CredentialState, SelectionContext, RotationMode
 from ....error_handler import mask_credential
-from ....error_handler import mask_credential
+from .base import RoutingStrategy
 
 lib_logger = logging.getLogger("rotator_library")
 
 
-class SequentialStrategy:
+class SequentialStrategy(RoutingStrategy):
     """
     Sequential credential rotation strategy.
 

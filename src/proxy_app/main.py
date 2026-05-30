@@ -362,6 +362,12 @@ logging.debug(f"Modules loaded in {_elapsed:.2f}s")
 # Load environment variables from .env file
 load_dotenv(_root_dir / ".env")
 
+# Apply model_list from proxy_config.json (if present) before api_keys are discovered
+from rotator_library.deployment_config import load_deployment_config, apply_deployment_config as _apply_deployment_config
+_deployment_entries = load_deployment_config(_root_dir / "proxy_config.json")
+if _deployment_entries:
+    _apply_deployment_config(_deployment_entries)
+
 # --- Configuration ---
 USE_EMBEDDING_BATCHER = False
 ENABLE_REQUEST_LOGGING = args.enable_request_logging

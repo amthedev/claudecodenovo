@@ -105,6 +105,8 @@ class CredentialContext:
         else:
             success = True
 
+        latency_ms = (time.time() - self._acquired_at) * 1000
+
         await self._manager._handle_request_complete(
             stable_id=self.stable_id,
             model=self.model,
@@ -119,6 +121,7 @@ class CredentialContext:
             prompt_tokens_cache_read=self._tokens.get("prompt_cached", 0),
             prompt_tokens_cache_write=self._tokens.get("prompt_cache_write", 0),
             approx_cost=self._approx_cost,
+            latency_ms=latency_ms,
         )
 
         return False  # Don't suppress exceptions
@@ -769,6 +772,7 @@ class UsageManager:
         prompt_tokens_cache_read: int = 0,
         prompt_tokens_cache_write: int = 0,
         approx_cost: float = 0.0,
+        latency_ms: float = 0.0,
     ) -> None:
         """Handle provider hooks and record request outcome."""
         state = self._states.get(stable_id)
@@ -857,6 +861,16 @@ class UsageManager:
                 prompt_tokens_cache_write=prompt_tokens_cache_write,
                 approx_cost=approx_cost,
             )
+
+        error_type = error.error_type if error else ""
+        self._selection.notify_strategy_result(
+            stable_id=stable_id,
+            provider=self.provider,
+            model=normalized_model,
+            success=success,
+            latency_ms=latency_ms,
+            error_type=error_type,
+        )
 
     async def apply_cooldown(
         self,

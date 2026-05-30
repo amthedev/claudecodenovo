@@ -3,7 +3,9 @@
 
 """Rotation strategy implementations."""
 
+from .base import RoutingStrategy
 from .balanced import BalancedStrategy
 from .sequential import SequentialStrategy
+from .lowest_latency import LowestLatencyStrategy
 
-__all__ = ["BalancedStrategy", "SequentialStrategy"]
+__all__ = ["RoutingStrategy", "BalancedStrategy", "SequentialStrategy", "LowestLatencyStrategy"]

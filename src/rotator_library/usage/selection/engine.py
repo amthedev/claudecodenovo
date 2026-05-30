@@ -21,8 +21,10 @@ from ..types import (
 from ..config import ProviderUsageConfig
 from ..limits.engine import LimitEngine
 from ..tracking.windows import WindowManager
+from .strategies.base import RoutingStrategy
 from .strategies.balanced import BalancedStrategy
 from .strategies.sequential import SequentialStrategy
+from .strategies.lowest_latency import LowestLatencyStrategy
 
 lib_logger = logging.getLogger("rotator_library")
 
@@ -57,10 +59,13 @@ class SelectionEngine:
         # Initialize strategies
         self._balanced = BalancedStrategy(config.rotation_tolerance)
         self._sequential = SequentialStrategy(config.sequential_fallback_multiplier)
+        self._lowest_latency = LowestLatencyStrategy()
 
         # Current strategy
         if config.rotation_mode == RotationMode.SEQUENTIAL:
-            self._strategy = self._sequential
+            self._strategy: RoutingStrategy = self._sequential
+        elif config.rotation_mode == RotationMode.LOWEST_LATENCY:
+            self._strategy = self._lowest_latency
         else:
             self._strategy = self._balanced
 
@@ -287,10 +292,32 @@ class SelectionEngine:
         self._config.rotation_mode = mode
         if mode == RotationMode.SEQUENTIAL:
             self._strategy = self._sequential
+        elif mode == RotationMode.LOWEST_LATENCY:
+            self._strategy = self._lowest_latency
         else:
             self._strategy = self._balanced
 
         lib_logger.info(f"Rotation mode changed to {mode.value}")
+
+    def notify_strategy_result(
+        self,
+        stable_id: str,
+        provider: str,
+        model: str,
+        success: bool,
+        latency_ms: float,
+        error_type: str = "",
+    ) -> None:
+        """
+        Forward request outcome to the active strategy.
+
+        Strategies that track per-credential state (e.g. LowestLatencyStrategy)
+        use this to update their internal metrics after each request.
+        """
+        if success:
+            self._strategy.on_success(stable_id, provider, model, latency_ms)
+        else:
+            self._strategy.on_failure(stable_id, provider, model, error_type)
 
     def mark_exhausted(self, provider: str, model_or_group: str) -> None:
         """

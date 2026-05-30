@@ -56,6 +56,7 @@ class RotationMode(str, Enum):
 
     BALANCED = "balanced"  # Weighted random selection
     SEQUENTIAL = "sequential"  # Sticky until exhausted
+    LOWEST_LATENCY = "lowest_latency"  # Selects credential with lowest avg response time
 
 
 class TrackingMode(str, Enum):
