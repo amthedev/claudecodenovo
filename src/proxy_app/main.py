@@ -1114,12 +1114,48 @@ async def verify_anthropic_api_key(
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
+def _record_managed_usage(auth: Optional[Dict[str, Any]], usage: Optional[Dict[str, Any]]) -> None:
+    if not auth or auth.get("type") != "managed" or not usage:
+        return
+    from proxy_app import admin_db as _admin_db
+    input_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+    output_tokens = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+    total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or input_tokens + output_tokens)
+    _admin_db.record_api_key_usage(auth.get("app_id"), input_tokens, output_tokens, total_tokens)
+
+
+async def anthropic_usage_wrapper(
+    response_stream: AsyncGenerator[str, None],
+    auth: Optional[Dict[str, Any]],
+) -> AsyncGenerator[str, None]:
+    input_tokens = 0
+    output_tokens = 0
+    async for event_str in response_stream:
+        for line in event_str.splitlines():
+            if not line.startswith("data:"):
+                continue
+            try:
+                data = json.loads(line[len("data:"):].strip())
+            except json.JSONDecodeError:
+                continue
+            usage = data.get("usage") or (data.get("message") or {}).get("usage") or {}
+            input_tokens = max(input_tokens, int(usage.get("input_tokens", 0) or 0))
+            output_tokens = max(output_tokens, int(usage.get("output_tokens", 0) or 0))
+        yield event_str
+    _record_managed_usage(auth, {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    })
+
+
 async def streaming_response_wrapper(
     request: Request,
     request_data: dict,
     response_stream: AsyncGenerator[str, None],
     logger: Optional[RawIOLogger] = None,
     public_model: Optional[str] = None,
+    auth: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Wraps a streaming response to log the full response after completion
@@ -1288,6 +1324,7 @@ async def streaming_response_wrapper(
                 headers=None,  # Headers are not available at this stage
                 body=full_response,
             )
+        _record_managed_usage(auth, full_response.get("usage") or {})
 
 
 async def anthropic_public_model_wrapper(
@@ -1329,7 +1366,7 @@ async def anthropic_public_model_wrapper(
 async def chat_completions(
     request: Request,
     client: RotatingClient = Depends(get_rotating_client),
-    _=Depends(verify_api_key),
+    auth=Depends(verify_api_key),
 ):
     """
     OpenAI-compatible endpoint powered by the RotatingClient.
@@ -1413,6 +1450,7 @@ async def chat_completions(
                     response_generator,
                     raw_logger,
                     public_model=_public_model,
+                    auth=auth,
                 ),
                 media_type="text/event-stream",
             )
@@ -1439,6 +1477,8 @@ async def chat_completions(
                     headers=response_headers,
                     body=response.model_dump(),
                 )
+            if hasattr(response, "model_dump"):
+                _record_managed_usage(auth, response.model_dump().get("usage") or {})
             if _public_model and hasattr(response, "model_dump"):
                 response_data = response.model_dump()
                 response_data["model"] = _public_model
@@ -1485,7 +1525,7 @@ async def anthropic_messages(
     request: Request,
     body: AnthropicMessagesRequest,
     client: RotatingClient = Depends(get_rotating_client),
-    _=Depends(verify_anthropic_api_key),
+    auth=Depends(verify_anthropic_api_key),
 ):
     """
     Anthropic-compatible Messages API endpoint.
@@ -1531,7 +1571,10 @@ async def anthropic_messages(
         if body.stream:
             # Streaming response
             return StreamingResponse(
-                anthropic_public_model_wrapper(result, _public_model_anthr),
+                anthropic_usage_wrapper(
+                    anthropic_public_model_wrapper(result, _public_model_anthr),
+                    auth,
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1549,6 +1592,8 @@ async def anthropic_messages(
                 )
             if _public_model_anthr and isinstance(result, dict):
                 result["model"] = _public_model_anthr
+            if isinstance(result, dict):
+                _record_managed_usage(auth, result.get("usage") or {})
             return JSONResponse(content=result)
 
     except (

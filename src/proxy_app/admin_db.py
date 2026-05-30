@@ -76,6 +76,9 @@ def init_db() -> None:
                 key_id TEXT NOT NULL,
                 date TEXT NOT NULL,
                 request_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (key_id, date),
                 FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
             );
@@ -93,6 +96,13 @@ def init_db() -> None:
                 created_at REAL NOT NULL,
                 expires_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS reseller_sessions (
+                token TEXT PRIMARY KEY,
+                key_id TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS key_reveals (
                 token TEXT PRIMARY KEY,
                 key_value TEXT NOT NULL,
@@ -108,6 +118,12 @@ def init_db() -> None:
             ("api_keys", "description",     "TEXT DEFAULT ''"),
             ("api_keys", "monthly_limit",   "INTEGER NOT NULL DEFAULT 0"),
             ("api_keys", "notes",           "TEXT DEFAULT ''"),
+            ("api_keys", "key_type",        "TEXT NOT NULL DEFAULT 'client'"),
+            ("api_keys", "parent_key_id",   "TEXT"),
+            ("api_keys", "token_limit",     "INTEGER NOT NULL DEFAULT 0"),
+            ("key_usage", "input_tokens",   "INTEGER NOT NULL DEFAULT 0"),
+            ("key_usage", "output_tokens",  "INTEGER NOT NULL DEFAULT 0"),
+            ("key_usage", "total_tokens",   "INTEGER NOT NULL DEFAULT 0"),
         ]
         for table, col, typedef in new_cols:
             try:
@@ -230,6 +246,9 @@ def create_api_key(
     validity_days: int = 0,
     price_per_1k: float = 0.0,
     notes: str = "",
+    key_type: str = "client",
+    parent_key_id: Optional[str] = None,
+    token_limit: int = 0,
 ) -> tuple[str, str]:
     """Cria chave. Retorna (key_value, reveal_token)."""
     key = generate_sk_key()
@@ -240,10 +259,12 @@ def create_api_key(
         c.execute(
             """INSERT INTO api_keys
                (id,name,description,key_hash,key_preview,daily_limit,monthly_limit,
-                price_per_1k,active,expires_at,validity_days,created_at,updated_at,notes)
-               VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?)""",
+                price_per_1k,active,expires_at,validity_days,created_at,updated_at,notes,
+                key_type,parent_key_id,token_limit)
+               VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)""",
             (kid, name, description, hash_api_key(key), key[:14] + "...",
-             daily_limit, monthly_limit, price_per_1k, expires, validity_days, now, now, notes),
+             daily_limit, monthly_limit, price_per_1k, expires, validity_days, now, now, notes,
+             key_type, parent_key_id, token_limit),
         )
     reveal_token = store_reveal(key, kid, name, "create")
     return key, reveal_token
@@ -256,18 +277,32 @@ def list_api_keys() -> List[Dict[str, Any]]:
         rows = c.execute("SELECT * FROM api_keys ORDER BY created_at DESC").fetchall()
         result = []
         for r in rows:
-            day_u = c.execute("SELECT request_count FROM key_usage WHERE key_id=? AND date=?",
+            day_u = c.execute("SELECT request_count,total_tokens FROM key_usage WHERE key_id=? AND date=?",
                                (r["id"], today)).fetchone()
             mon_u = c.execute(
-                "SELECT COALESCE(SUM(request_count),0) AS cnt FROM key_usage WHERE key_id=? AND date LIKE ?",
+                "SELECT COALESCE(SUM(request_count),0) AS cnt, COALESCE(SUM(total_tokens),0) AS tokens FROM key_usage WHERE key_id=? AND date LIKE ?",
                 (r["id"], month + "%")).fetchone()
             total_u = c.execute(
-                "SELECT COALESCE(SUM(request_count),0) AS cnt FROM key_usage WHERE key_id=?",
+                "SELECT COALESCE(SUM(request_count),0) AS cnt, COALESCE(SUM(total_tokens),0) AS tokens FROM key_usage WHERE key_id=?",
                 (r["id"],)).fetchone()
             today_count = day_u["request_count"] if day_u else 0
+            today_tokens = day_u["total_tokens"] if day_u else 0
             month_count = mon_u["cnt"] if mon_u else 0
+            month_tokens = mon_u["tokens"] if mon_u else 0
             total_count = total_u["cnt"] if total_u else 0
-            revenue = round(total_count / 1000 * r["price_per_1k"], 4)
+            total_tokens = total_u["tokens"] if total_u else 0
+            child_usage = c.execute(
+                """SELECT COALESCE(SUM(ku.total_tokens),0) AS tokens
+                   FROM key_usage ku JOIN api_keys child ON child.id=ku.key_id
+                   WHERE child.parent_key_id=?""", (r["id"],)
+            ).fetchone()["tokens"]
+            allocated = c.execute(
+                "SELECT COALESCE(SUM(token_limit),0) AS tokens FROM api_keys WHERE parent_key_id=?",
+                (r["id"],)
+            ).fetchone()["tokens"]
+            effective_tokens = total_tokens + child_usage
+            token_limit = r["token_limit"] or 0
+            revenue = round(total_tokens / 1000 * r["price_per_1k"], 4)
             result.append({
                 "id": r["id"], "name": r["name"], "description": r["description"],
                 "key_preview": r["key_preview"], "daily_limit": r["daily_limit"],
@@ -276,7 +311,15 @@ def list_api_keys() -> List[Dict[str, Any]]:
                 "validity_days": r["validity_days"], "created_at": r["created_at"],
                 "last_used_at": r["last_used_at"], "notes": r["notes"] or "",
                 "usage_today": today_count, "usage_month": month_count,
-                "usage_total": total_count, "revenue_total": revenue,
+                "usage_total": total_count, "tokens_today": today_tokens,
+                "tokens_month": month_tokens, "tokens_total": total_tokens,
+                "effective_tokens_total": effective_tokens,
+                "token_limit": token_limit,
+                "tokens_remaining": max(0, token_limit - effective_tokens) if token_limit else None,
+                "allocated_tokens": allocated,
+                "key_type": r["key_type"] or "client",
+                "parent_key_id": r["parent_key_id"],
+                "revenue_total": revenue,
             })
         return result
 
@@ -289,7 +332,7 @@ def get_api_key(kid: str) -> Optional[Dict[str, Any]]:
 
 def update_api_key(kid: str, **kwargs) -> bool:
     allowed = {"name", "description", "daily_limit", "monthly_limit",
-                "price_per_1k", "active", "notes", "expires_at"}
+                "price_per_1k", "active", "notes", "expires_at", "token_limit"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
@@ -337,17 +380,140 @@ def verify_api_key_db(raw: str) -> Optional[Dict[str, Any]]:
             return {"error": "expired"}
         dl = r["daily_limit"]
         if dl > 0:
-            u = c.execute("SELECT request_count FROM key_usage WHERE key_id=? AND date=?",
+            u = c.execute("SELECT total_tokens FROM key_usage WHERE key_id=? AND date=?",
                            (r["id"], today)).fetchone()
-            if u and u["request_count"] >= dl:
+            if u and u["total_tokens"] >= dl:
                 return {"error": "limit_exceeded"}
-        c.execute(
-            """INSERT INTO key_usage(key_id,date,request_count) VALUES(?,?,1)
-               ON CONFLICT(key_id,date) DO UPDATE SET request_count=request_count+1""",
-            (r["id"], today))
-        c.execute("UPDATE api_keys SET last_used_at=? WHERE id=?", (now, r["id"]))
+        month = today[:7]
+        ml = r["monthly_limit"]
+        if ml > 0:
+            month_tokens = c.execute(
+                "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE key_id=? AND date LIKE ?",
+                (r["id"], month + "%"),
+            ).fetchone()[0]
+            if month_tokens >= ml:
+                return {"error": "limit_exceeded"}
+        remaining = _remaining_tokens_for_row(c, r)
+        if remaining is not None and remaining <= 0:
+            return {"error": "limit_exceeded"}
         return {"type": "managed", "app_id": r["id"], "app_name": r["name"],
-                "key_preview": r["key_preview"]}
+                "key_preview": r["key_preview"], "key_type": r["key_type"] or "client"}
+
+
+def _total_tokens(c: sqlite3.Connection, key_id: str) -> int:
+    return int(c.execute(
+        "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE key_id=?", (key_id,)
+    ).fetchone()[0])
+
+
+def _children_tokens(c: sqlite3.Connection, key_id: str) -> int:
+    return int(c.execute(
+        """SELECT COALESCE(SUM(ku.total_tokens),0)
+           FROM key_usage ku JOIN api_keys child ON child.id=ku.key_id
+           WHERE child.parent_key_id=?""", (key_id,)
+    ).fetchone()[0])
+
+
+def _remaining_tokens_for_row(c: sqlite3.Connection, row: sqlite3.Row) -> Optional[int]:
+    limit = int(row["token_limit"] or 0)
+    if limit <= 0:
+        return None
+    used = _total_tokens(c, row["id"])
+    if (row["key_type"] or "client") == "reseller":
+        used += _children_tokens(c, row["id"])
+    remaining = limit - used
+    parent_id = row["parent_key_id"]
+    if parent_id:
+        parent = c.execute("SELECT * FROM api_keys WHERE id=?", (parent_id,)).fetchone()
+        if parent:
+            parent_remaining = _remaining_tokens_for_row(c, parent)
+            if parent_remaining is not None:
+                remaining = min(remaining, parent_remaining)
+    return remaining
+
+
+def record_api_key_usage(key_id: Optional[str], input_tokens: int = 0,
+                         output_tokens: int = 0, total_tokens: int = 0) -> None:
+    """Registra consumo real depois da resposta do provider."""
+    if not key_id:
+        return
+    input_tokens = max(0, int(input_tokens or 0))
+    output_tokens = max(0, int(output_tokens or 0))
+    total_tokens = max(0, int(total_tokens or input_tokens + output_tokens))
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    with _db() as c:
+        c.execute(
+            """INSERT INTO key_usage(key_id,date,request_count,input_tokens,output_tokens,total_tokens)
+               VALUES(?,?,1,?,?,?)
+               ON CONFLICT(key_id,date) DO UPDATE SET
+                 request_count=request_count+1,
+                 input_tokens=input_tokens+excluded.input_tokens,
+                 output_tokens=output_tokens+excluded.output_tokens,
+                 total_tokens=total_tokens+excluded.total_tokens""",
+            (key_id, today, input_tokens, output_tokens, total_tokens),
+        )
+        c.execute("UPDATE api_keys SET last_used_at=? WHERE id=?", (time.time(), key_id))
+
+
+def create_reseller_key(name: str, token_limit: int, description: str = "",
+                        validity_days: int = 0, notes: str = "") -> tuple[str, str]:
+    return create_api_key(name, description=description, validity_days=validity_days,
+                          notes=notes, key_type="reseller", token_limit=max(0, token_limit))
+
+
+def create_reseller_client_key(reseller_id: str, name: str, token_limit: int,
+                               daily_limit: int = 0, monthly_limit: int = 0,
+                               validity_days: int = 0) -> tuple[str, str]:
+    token_limit = max(0, int(token_limit))
+    with _db() as c:
+        reseller = c.execute("SELECT * FROM api_keys WHERE id=?", (reseller_id,)).fetchone()
+        if not reseller or reseller["key_type"] != "reseller" or not reseller["active"]:
+            raise ValueError("Revendedor inválido ou inativo.")
+        available = _remaining_tokens_for_row(c, reseller)
+        allocated = int(c.execute(
+            "SELECT COALESCE(SUM(token_limit),0) FROM api_keys WHERE parent_key_id=?",
+            (reseller_id,),
+        ).fetchone()[0])
+        pool = int(reseller["token_limit"] or 0)
+        if token_limit <= 0:
+            raise ValueError("Defina um limite de tokens maior que zero.")
+        if pool > 0 and allocated + token_limit > pool:
+            raise ValueError("O limite distribuído ultrapassa o saldo da chave mestre.")
+        if available is not None and token_limit > available:
+            raise ValueError("Saldo insuficiente na chave mestre.")
+    return create_api_key(name, daily_limit=daily_limit, monthly_limit=monthly_limit,
+                          validity_days=validity_days, key_type="client",
+                          parent_key_id=reseller_id, token_limit=token_limit)
+
+
+def list_reseller_clients(reseller_id: str) -> List[Dict[str, Any]]:
+    return [k for k in list_api_keys() if k.get("parent_key_id") == reseller_id]
+
+
+def create_reseller_session(raw_key: str) -> Optional[str]:
+    verified = verify_api_key_db(raw_key)
+    if not verified or verified.get("error") or verified.get("key_type") != "reseller":
+        return None
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with _db() as c:
+        c.execute("DELETE FROM reseller_sessions WHERE expires_at<?", (now,))
+        c.execute("INSERT INTO reseller_sessions(token,key_id,created_at,expires_at) VALUES(?,?,?,?)",
+                  (token, verified["app_id"], now, now + SESSION_TTL))
+    return token
+
+
+def validate_reseller_session(token: str) -> Optional[Dict[str, Any]]:
+    if not token:
+        return None
+    with _db() as c:
+        r = c.execute("""SELECT rs.key_id,rs.expires_at,ak.active,ak.key_type
+                         FROM reseller_sessions rs JOIN api_keys ak ON ak.id=rs.key_id
+                         WHERE rs.token=?""", (token,)).fetchone()
+        if not r or r["expires_at"] < time.time() or not r["active"] or r["key_type"] != "reseller":
+            return None
+        keys = {k["id"]: k for k in list_api_keys()}
+        return keys.get(r["key_id"])
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
@@ -359,18 +525,29 @@ def get_stats() -> Dict[str, Any]:
         active = c.execute("SELECT COUNT(*) FROM api_keys WHERE active=1").fetchone()[0]
         today_r = c.execute(
             "SELECT COALESCE(SUM(request_count),0) FROM key_usage WHERE date=?", (today,)).fetchone()[0]
+        today_t = c.execute(
+            "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE date=?", (today,)).fetchone()[0]
         month_r = c.execute(
             "SELECT COALESCE(SUM(request_count),0) FROM key_usage WHERE date LIKE ?",
             (month + "%",)).fetchone()[0]
+        month_t = c.execute(
+            "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE date LIKE ?",
+            (month + "%",)).fetchone()[0]
         total_r = c.execute(
             "SELECT COALESCE(SUM(request_count),0) FROM key_usage").fetchone()[0]
+        total_t = c.execute(
+            "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage").fetchone()[0]
         revenue = c.execute("""
-            SELECT COALESCE(SUM(ku.request_count * ak.price_per_1k / 1000.0),0)
+            SELECT COALESCE(SUM(ku.total_tokens * ak.price_per_1k / 1000.0),0)
             FROM key_usage ku JOIN api_keys ak ON ku.key_id=ak.id
         """).fetchone()[0]
+        resellers = c.execute(
+            "SELECT COUNT(*) FROM api_keys WHERE key_type='reseller'").fetchone()[0]
     return {
         "active_keys": active, "today_requests": today_r,
         "month_requests": month_r, "total_requests": total_r,
+        "today_tokens": today_t, "month_tokens": month_t, "total_tokens": total_t,
+        "resellers": resellers,
         "total_revenue": round(revenue, 2), "date": today,
     }
 
@@ -383,7 +560,7 @@ def get_usage_chart(days: int = 14) -> List[Dict[str, Any]]:
         d = time.strftime("%Y-%m-%d", time.gmtime(ts))
         with _db() as c:
             cnt = c.execute(
-                "SELECT COALESCE(SUM(request_count),0) FROM key_usage WHERE date=?", (d,)
+                "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE date=?", (d,)
             ).fetchone()[0]
         result.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)), "count": cnt})
     return result
@@ -395,10 +572,10 @@ def get_key_usage_history(kid: str, days: int = 14) -> List[Dict[str, Any]]:
         ts = time.time() - i * 86400
         d = time.strftime("%Y-%m-%d", time.gmtime(ts))
         with _db() as c:
-            r = c.execute("SELECT request_count FROM key_usage WHERE key_id=? AND date=?",
+            r = c.execute("SELECT total_tokens FROM key_usage WHERE key_id=? AND date=?",
                            (kid, d)).fetchone()
         result.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)),
-                       "count": r["request_count"] if r else 0})
+                       "count": r["total_tokens"] if r else 0})
     return result
 
 

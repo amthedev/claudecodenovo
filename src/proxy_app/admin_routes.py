@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from . import admin_db
 
 COOKIE = "proxy_admin_v2"
+RESELLER_COOKIE = "proxy_reseller_v1"
 
 async def _form(req) -> dict:
     """Parse URL-encoded form sem precisar de python-multipart."""
@@ -24,6 +25,14 @@ def _need(req: Request) -> str:
     if not u: raise HTTPException(401, "Login required")
     return u
 
+def _reseller(req: Request):
+    return admin_db.validate_reseller_session(req.cookies.get(RESELLER_COOKIE, ""))
+
+def _need_reseller(req: Request):
+    reseller = _reseller(req)
+    if not reseller: raise HTTPException(401, "Reseller login required")
+    return reseller
+
 def _hmac_eq(a: str, b: str) -> bool:
     try: return _hmac.compare_digest(a, b)
     except: return False
@@ -37,6 +46,10 @@ def _flim(n: int) -> str:
     if n >= 1_000_000: return f"{n//1_000_000}M"
     if n >= 1_000: return f"{n//1_000}K"
     return str(n)
+
+def _tokens(n) -> str:
+    if n is None: return "∞"
+    return _flim(int(n))
 
 def _svg_bars(data, color="#6366f1", height=60):
     if not data: return ""
@@ -353,13 +366,13 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           </div>
           <div class="card stat">
             <div class="stat-icon" style="background:rgba(34,197,94,.12)">📊</div>
-            <div class="stat-num" style="color:var(--green)">{stats['today_requests']:,}</div>
-            <div class="stat-label">Requests hoje</div>
+            <div class="stat-num" style="color:var(--green)">{stats['today_tokens']:,}</div>
+            <div class="stat-label">Tokens hoje</div>
           </div>
           <div class="card stat">
             <div class="stat-icon" style="background:rgba(59,130,246,.12)">📅</div>
-            <div class="stat-num" style="color:var(--blue)">{stats['month_requests']:,}</div>
-            <div class="stat-label">Requests este mês</div>
+            <div class="stat-num" style="color:var(--blue)">{stats['month_tokens']:,}</div>
+            <div class="stat-label">Tokens este mês</div>
           </div>
           <div class="card stat">
             <div class="stat-icon" style="background:rgba(245,158,11,.12)">💰</div>
@@ -373,12 +386,17 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         chart_html = f"""<div class="card" style="margin-bottom:24px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
             <b style="font-size:14px">Uso — últimos 14 dias</b>
-            <span style="font-size:12px;color:var(--muted)">{stats['total_requests']:,} total</span>
+            <span style="font-size:12px;color:var(--muted)">{stats['total_tokens']:,} tokens total</span>
           </div>
           {chart_svg}
         </div>"""
 
         # Conexão
+        root_html = ""
+        if pk:
+            root_html = f"""<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Chave Root</div>
+              <div class="copy-row mono" style="padding:8px 12px"><span>{pk[:18]}...</span>
+              <button class="btn-ghost btn-sm" onclick="cp('{pk}',this)">Copiar</button></div></div>"""
         conn_html = f"""<div class="card" style="margin-bottom:24px">
           <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
             <div style="flex:1;min-width:200px">
@@ -388,7 +406,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                 <button class="btn-ghost btn-sm" onclick="cp('{url}',this)">Copiar</button>
               </div>
             </div>
-            {'<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Chave Root</div><div class="copy-row mono" style="padding:8px 12px"><span>'+pk[:18]+'...</span><button class="btn-ghost btn-sm" onclick="cp(\''+pk+'\',this)">Copiar</button></div></div>' if pk else ''}
+            {root_html}
             <div>
               <button id="test-btn" class="btn btn-sm" onclick="testConn('{pk}','{url}')">Testar</button>
               <div id="test-res" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>
@@ -402,9 +420,12 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             active_b = '<span class="badge badge-green">● Ativa</span>' if k["active"] else '<span class="badge badge-red">○ Inativa</span>'
             exp = _ft(k["expires_at"]) if k["expires_at"] else '<span class="badge badge-green">Sem expiração</span>'
             dlim = k["daily_limit"]
-            pct = min(100, int(k["usage_today"] / dlim * 100)) if dlim > 0 else 0
+            pct = min(100, int(k["tokens_today"] / dlim * 100)) if dlim > 0 else 0
             bar = f'<div class="progress"><div class="progress-bar" style="width:{pct}%"></div></div>' if dlim > 0 else ""
-            usage_disp = f'{k["usage_today"]:,} / {_flim(dlim)}{bar}'
+            usage_disp = f'{k["tokens_today"]:,} / {_flim(dlim)}{bar}'
+            balance_disp = f'{k["tokens_total"]:,} / {_tokens(k["token_limit"])}'
+            if k["key_type"] == "reseller":
+                balance_disp += f'<br><span style="color:var(--muted);font-size:11px">Restante: {_tokens(k["tokens_remaining"])} · Alocado: {_tokens(k["allocated_tokens"])}</span>'
             kid = k["id"]
             rev_btn = f'<button class="btn btn-sm" onclick="openModal(\'m-rotate-{kid}\')">Rotacionar</button>'
             tog = f'<button class="btn-red btn-sm" onclick="toggleKey(\'{kid}\',false)">Desativar</button>' if k["active"] else f'<button class="btn-green btn-sm" onclick="toggleKey(\'{kid}\',true)">Ativar</button>'
@@ -412,10 +433,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             info_btn = f'<button class="btn-ghost btn-sm" onclick="openModal(\'m-info-{kid}\')">Detalhes</button>'
             rev_total = f'${k["revenue_total"]:.2f}' if k["price_per_1k"] > 0 else "—"
             rows += f"""<tr class="key-row">
-              <td><b>{k['name']}</b>{'<br><span style="color:var(--muted);font-size:11px">'+k['description']+'</span>' if k['description'] else ''}</td>
+              <td><b>{k['name']}</b><br><span class="badge badge-blue">{'Revendedor' if k['key_type']=='reseller' else 'Cliente'}</span>{'<br><span style="color:var(--muted);font-size:11px">'+k['description']+'</span>' if k['description'] else ''}</td>
               <td class="mono" style="color:var(--muted)">{k['key_preview']}</td>
               <td>{active_b}</td>
               <td>{usage_disp}</td>
+              <td>{balance_disp}</td>
               <td style="color:var(--yellow)">{rev_total}</td>
               <td>{exp}</td>
               <td style="color:var(--muted);font-size:12px">{_ft(k['last_used_at'])}</td>
@@ -462,19 +484,27 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
                   <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
                     <div style="font-size:11px;color:var(--muted);margin-bottom:4px">HOJE</div>
-                    <b style="font-size:1.4rem">{k['usage_today']:,}</b>
+                    <b style="font-size:1.4rem">{k['tokens_today']:,}</b>
                   </div>
                   <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
                     <div style="font-size:11px;color:var(--muted);margin-bottom:4px">TOTAL</div>
-                    <b style="font-size:1.4rem">{k['usage_total']:,}</b>
+                    <b style="font-size:1.4rem">{k['tokens_total']:,}</b>
                   </div>
                   <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
                     <div style="font-size:11px;color:var(--muted);margin-bottom:4px">RECEITA</div>
                     <b style="font-size:1.4rem;color:var(--yellow)">${k['revenue_total']:.2f}</b>
                   </div>
                   <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
-                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">PREÇO / 1K</div>
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">PREÇO / 1K TOKENS</div>
                     <b style="font-size:1.4rem">${k['price_per_1k']:.4f}</b>
+                  </div>
+                  <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">SALDO RESTANTE</div>
+                    <b style="font-size:1.4rem;color:var(--green)">{_tokens(k['tokens_remaining'])}</b>
+                  </div>
+                  <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">TOKENS ALOCADOS</div>
+                    <b style="font-size:1.4rem">{_tokens(k['allocated_tokens'])}</b>
                   </div>
                 </div>
                 <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Últimos 7 dias</div>
@@ -488,7 +518,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             </div>"""
 
         if not rows:
-            rows = '<tr><td colspan="8" class="empty">Nenhuma chave criada ainda.</td></tr>'
+            rows = '<tr><td colspan="9" class="empty">Nenhuma chave criada ainda.</td></tr>'
 
         keys_html = f"""<div class="card" style="margin-bottom:24px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
@@ -499,7 +529,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <table>
             <thead><tr>
               <th>App</th><th>Preview</th><th>Status</th>
-              <th>Uso hoje / Limite</th><th>Receita</th>
+              <th>Tokens hoje / Limite</th><th>Saldo total</th><th>Receita</th>
               <th>Expira em</th><th>Último uso</th><th>Ações</th>
             </tr></thead>
             <tbody>{rows}</tbody>
@@ -519,12 +549,13 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
               <label>Descrição</label>
               <input name="description" placeholder="Opcional">
               <div class="field-row">
-                <div><label>Limite diário (0=∞)</label><input name="daily_limit" type="number" value="0" min="0"></div>
-                <div><label>Limite mensal (0=∞)</label><input name="monthly_limit" type="number" value="0" min="0"></div>
+                <div><label>Tokens por dia (0=∞)</label><input name="daily_limit" type="number" value="0" min="0"></div>
+                <div><label>Tokens por mês (0=∞)</label><input name="monthly_limit" type="number" value="0" min="0"></div>
                 <div><label>Validade (dias, 0=∞)</label><input name="validity_days" type="number" value="0" min="0"></div>
               </div>
               <div class="field-row">
-                <div><label>Preço por 1K requests ($)</label><input name="price_per_1k" type="number" value="0" min="0" step="0.0001"></div>
+                <div><label>Saldo total tokens (0=∞)</label><input name="token_limit" type="number" value="0" min="0"></div>
+                <div><label>Preço por 1K tokens ($)</label><input name="price_per_1k" type="number" value="0" min="0" step="0.0001"></div>
               </div>
               <label>Notas internas</label>
               <textarea name="notes" rows="2" style="resize:vertical" placeholder="Ex: contrato, contato..."></textarea>
@@ -545,10 +576,19 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         }
         </script>"""
 
+        reseller_modal = """<div class="modal-bg" id="m-reseller">
+          <div class="modal"><button class="x" onclick="closeModal('m-reseller')">✕</button>
+          <h2>Nova chave mestre</h2><p>Gere acesso para um revendedor distribuir tokens aos clientes dele.</p>
+          <form method="post" action="/admin/create-reseller">
+          <label>Nome do revendedor</label><input name="name" required>
+          <label>Saldo total de tokens</label><input type="number" name="token_limit" min="1" required>
+          <label>Validade em dias (0=∞)</label><input type="number" name="validity_days" min="0" value="0">
+          <label>Notas internas</label><textarea name="notes" rows="2"></textarea>
+          <button class="btn" style="margin-top:18px">Gerar chave mestre</button></form></div></div>"""
         body = f"""<div class="container">
-          {rev_html}{stats_html}{chart_html}{conn_html}{keys_html}
+          {rev_html}<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-sm" onclick="openModal('m-reseller')">+ Chave mestre revendedor</button></div>{stats_html}{chart_html}{conn_html}{keys_html}
         </div>{create_modal}{js_extra}"""
-        return _page("Dashboard", body, logged=True, proxy_key=pk)
+        return _page("Dashboard", body + reseller_modal, logged=True, proxy_key=pk)
 
     # ── Key actions ───────────────────────────────────────────────────────────
     @app.post("/admin/create-key")
@@ -562,7 +602,21 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         vdays    = int(f.get("validity_days",0) or 0)
         price    = float(f.get("price_per_1k",0) or 0)
         notes    = f.get("notes","").strip()
-        _, rev_tok = admin_db.create_api_key(name, desc, dlim, mlim, vdays, price, notes)
+        token_limit = int(f.get("token_limit",0) or 0)
+        _, rev_tok = admin_db.create_api_key(name, desc, dlim, mlim, vdays, price, notes,
+                                              token_limit=token_limit)
+        return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
+
+    @app.post("/admin/create-reseller")
+    async def create_reseller(req: Request):
+        _need(req)
+        f = await _form(req)
+        _, rev_tok = admin_db.create_reseller_key(
+            f.get("name", "").strip() or "revendedor",
+            int(f.get("token_limit", 0) or 0),
+            validity_days=int(f.get("validity_days", 0) or 0),
+            notes=f.get("notes", "").strip(),
+        )
         return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
 
     @app.post("/admin/keys/{kid}/rotate")
@@ -600,6 +654,72 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     async def api_chart(req: Request, days: int = 14):
         _need(req)
         return JSONResponse(admin_db.get_usage_chart(min(days, 90)))
+
+    # ── Painel do revendedor ─────────────────────────────────────────────────
+    @app.get("/reseller", response_class=HTMLResponse)
+    async def reseller_index(req: Request, err: str = "", reveal: str = ""):
+        reseller = _reseller(req)
+        if not reseller:
+            error = '<div style="color:var(--red);margin-bottom:12px">Chave mestre inválida ou inativa.</div>' if err else ""
+            return _page("Revendedor", f"""<div class="container" style="max-width:460px;padding-top:80px">
+              <div class="card"><h1>Painel do revendedor</h1><p style="color:var(--muted);margin:8px 0 20px">Entre com sua chave mestre.</p>{error}
+              <form method="post" action="/reseller/login"><label>Chave mestre</label>
+              <input type="password" name="key" required autofocus>
+              <button class="btn" style="width:100%;margin-top:18px">Entrar</button></form></div></div>""")
+        clients = admin_db.list_reseller_clients(reseller["id"])
+        rows = "".join(f"""<tr><td><b>{k['name']}</b></td><td class="mono">{k['key_preview']}</td>
+          <td>{k['tokens_total']:,} / {_tokens(k['token_limit'])}</td>
+          <td>{'<span class="badge badge-green">Ativa</span>' if k['active'] else '<span class="badge badge-red">Inativa</span>'}</td></tr>""" for k in clients)
+        if not rows: rows = '<tr><td colspan="4" class="empty">Nenhuma chave de cliente criada.</td></tr>'
+        rev = admin_db.get_reveal(reveal) if reveal else None
+        banner = f"""<div class="reveal-banner"><b>Copie a nova chave agora</b>
+          <div class="copy-row mono"><span>{rev['key_value']}</span><button class="btn btn-sm" onclick="cp('{rev['key_value']}',this)">Copiar</button></div></div>""" if rev else ""
+        return _page("Revendedor", f"""<div class="container">{banner}
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><div><h1>{reseller['name']}</h1>
+          <p style="color:var(--muted)">Saldo mestre disponível: <b style="color:var(--green)">{_tokens(reseller['tokens_remaining'])}</b> tokens</p></div>
+          <form method="post" action="/reseller/logout"><button class="btn-ghost">Sair</button></form></div>
+          <div class="card" style="margin-bottom:18px"><h2 style="font-size:16px;margin-bottom:12px">Nova chave para cliente</h2>
+          <form method="post" action="/reseller/create-key"><div class="field-row">
+          <div><label>Cliente</label><input name="name" required></div>
+          <div><label>Saldo total tokens</label><input type="number" name="token_limit" min="1" required></div>
+          <div><label>Validade dias</label><input type="number" name="validity_days" min="0" value="0"></div>
+          <div><label>Tokens por dia (0=∞)</label><input type="number" name="daily_limit" min="0" value="0"></div>
+          <div><label>Tokens por mês (0=∞)</label><input type="number" name="monthly_limit" min="0" value="0"></div></div>
+          <button class="btn" style="margin-top:16px">Gerar API</button></form></div>
+          <div class="card"><h2 style="font-size:16px;margin-bottom:12px">APIs revendidas</h2><table>
+          <thead><tr><th>Cliente</th><th>Preview</th><th>Tokens usados / saldo</th><th>Status</th></tr></thead>
+          <tbody>{rows}</tbody></table></div></div>""")
+
+    @app.post("/reseller/login")
+    async def reseller_login(req: Request):
+        f = await _form(req)
+        token = admin_db.create_reseller_session(f.get("key", "").strip())
+        if not token: return RedirectResponse("/reseller?err=1", 302)
+        r = RedirectResponse("/reseller", 302)
+        r.set_cookie(RESELLER_COOKIE, token, httponly=True, samesite="lax", max_age=admin_db.SESSION_TTL)
+        return r
+
+    @app.post("/reseller/logout")
+    async def reseller_logout(req: Request):
+        r = RedirectResponse("/reseller", 302)
+        r.delete_cookie(RESELLER_COOKIE)
+        return r
+
+    @app.post("/reseller/create-key")
+    async def reseller_create_key(req: Request):
+        reseller = _need_reseller(req)
+        f = await _form(req)
+        try:
+            _, reveal_token = admin_db.create_reseller_client_key(
+                reseller["id"], f.get("name", "").strip() or "cliente",
+                int(f.get("token_limit", 0) or 0),
+                daily_limit=int(f.get("daily_limit", 0) or 0),
+                monthly_limit=int(f.get("monthly_limit", 0) or 0),
+                validity_days=int(f.get("validity_days", 0) or 0),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return RedirectResponse(f"/reseller?reveal={reveal_token}", 302)
 
     # ── Rotas legadas (compatibilidade) ───────────────────────────────────────
     @app.post("/admin/apps")
