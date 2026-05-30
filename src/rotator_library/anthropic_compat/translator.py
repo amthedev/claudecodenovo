@@ -44,6 +44,7 @@ VLLM_MAX_OUTPUT_TOKENS = 4096
 VLLM_MAX_INPUT_CHARS = 36000
 VLLM_MAX_MESSAGE_CHARS = 12000
 VLLM_MAX_TOOL_RESULT_CHARS = 6000
+VLLM_MAX_RESPONSE_TEXT_CHARS = 5000
 VLLM_MAX_TOOLS = 16
 VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "You are running inside Claude Code. When the user asks to create, edit, "
@@ -58,7 +59,9 @@ VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "timeout; avoid commands that can print endlessly. For Python scripts with "
     "input(), test with piped input such as `printf '1\\n2\\n3\\n' | python3 "
     "file.py`, not plain `python3 file.py`. Do not tell the user to copy code "
-    "when a file operation is needed."
+    "when a file operation is needed. Answer concisely. Do not repeat the same "
+    "question, instruction, status, or conclusion in different words. Once the "
+    "answer is complete, stop generating."
 )
 VLLM_TOOL_PRIORITY = {
     "create": 0,
@@ -603,6 +606,22 @@ def _compact_text_middle(text: str, max_chars: int, label: str) -> str:
     )
 
 
+def _sanitize_vllm_response_text(text: str) -> str:
+    """
+    Bound repetitive vLLM output before returning it to Anthropic clients.
+
+    Local models can occasionally loop through paraphrases until max_tokens.
+    The client only needs the useful prefix, not thousands of repeated lines.
+    """
+    if len(text) <= VLLM_MAX_RESPONSE_TEXT_CHARS:
+        return text
+    return (
+        text[:VLLM_MAX_RESPONSE_TEXT_CHARS].rstrip()
+        + "\n\n[Resposta interrompida pelo proxy porque o modelo começou a gerar "
+        "texto excessivamente longo ou repetitivo.]"
+    )
+
+
 def _compact_content_for_vllm(content: Any, max_chars: int, label: str) -> Any:
     if isinstance(content, str):
         return _compact_text_middle(content, max_chars, label)
@@ -778,6 +797,7 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     openai_request.pop("top_k", None)
     if openai_request.get("reasoning_effort") in {"disable", "disabled", "none"}:
         openai_request.pop("reasoning_effort", None)
+    openai_request.setdefault("frequency_penalty", 0.2)
     max_output_tokens = _vllm_max_output_tokens()
     requested_max_tokens = openai_request.get("max_tokens")
     if requested_max_tokens and requested_max_tokens > max_output_tokens:
@@ -843,6 +863,7 @@ def openai_to_anthropic_response(openai_response: dict, original_model: str) -> 
     text_content = message.get("content")
     textual_tool_blocks = []
     if text_content:
+        text_content = _sanitize_vllm_response_text(text_content)
         text_content, textual_tool_blocks = _parse_textual_tool_calls(text_content)
         if text_content:
             content_blocks.append({"type": "text", "text": text_content})
