@@ -103,6 +103,37 @@ def init_db() -> None:
                 expires_at REAL NOT NULL,
                 FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS web_accounts (
+                id TEXT PRIMARY KEY,
+                key_id TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                password_salt TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS web_sessions (
+                token_hash TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                key_id TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                FOREIGN KEY (account_id) REFERENCES web_accounts(id) ON DELETE CASCADE,
+                FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS drive_automations (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                webhook_url TEXT NOT NULL,
+                action TEXT NOT NULL,
+                source_folder TEXT DEFAULT '',
+                destination_folder TEXT DEFAULT '',
+                file_pattern TEXT DEFAULT '',
+                created_at REAL NOT NULL,
+                FOREIGN KEY (account_id) REFERENCES web_accounts(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS key_reveals (
                 token TEXT PRIMARY KEY,
                 key_value TEXT NOT NULL,
@@ -324,6 +355,11 @@ def list_api_keys() -> List[Dict[str, Any]]:
         return result
 
 
+def has_api_keys() -> bool:
+    with _db() as c:
+        return c.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0] > 0
+
+
 def get_api_key(kid: str) -> Optional[Dict[str, Any]]:
     with _db() as c:
         r = c.execute("SELECT * FROM api_keys WHERE id=?", (kid,)).fetchone()
@@ -414,6 +450,14 @@ def verify_api_key_db(raw: str) -> Optional[Dict[str, Any]]:
     with _db() as c:
         r = c.execute("SELECT * FROM api_keys WHERE key_hash=?", (kh,)).fetchone()
         if not r:
+            c.execute("DELETE FROM web_sessions WHERE expires_at<=?", (now,))
+            r = c.execute(
+                """SELECT ak.* FROM web_sessions ws
+                   JOIN api_keys ak ON ak.id=ws.key_id
+                   WHERE ws.token_hash=? AND ws.expires_at>?""",
+                (kh, now),
+            ).fetchone()
+        if not r:
             return None
         if not r["active"]:
             return {"error": "disabled"}
@@ -439,6 +483,196 @@ def verify_api_key_db(raw: str) -> Optional[Dict[str, Any]]:
             return {"error": "limit_exceeded"}
         return {"type": "managed", "app_id": r["id"], "app_name": r["name"],
                 "key_preview": r["key_preview"], "key_type": r["key_type"] or "client"}
+
+
+# ── Contas web ────────────────────────────────────────────────────────────────
+
+def _web_account_payload(account_id: str) -> Optional[Dict[str, Any]]:
+    with _db() as c:
+        account = c.execute(
+            "SELECT id,key_id,name,email,created_at FROM web_accounts WHERE id=?",
+            (account_id,),
+        ).fetchone()
+    if not account:
+        return None
+    key = next((item for item in list_api_keys() if item["id"] == account["key_id"]), None)
+    if not key:
+        return None
+    return {
+        "id": account["id"],
+        "name": account["name"],
+        "email": account["email"],
+        "created_at": account["created_at"],
+        "plan": key["name"],
+        "active": key["active"],
+        "expires_at": key["expires_at"],
+        "tokens_today": key["tokens_today"],
+        "tokens_total": key["tokens_total"],
+        "token_limit": key["token_limit"],
+        "tokens_remaining": key["tokens_remaining"],
+        "daily_limit": key["daily_limit"],
+        "monthly_limit": key["monthly_limit"],
+    }
+
+
+def _create_web_session(account_id: str, key_id: str) -> str:
+    token = "web-" + secrets.token_urlsafe(36)
+    now = time.time()
+    with _db() as c:
+        c.execute("DELETE FROM web_sessions WHERE expires_at<=?", (now,))
+        c.execute(
+            """INSERT INTO web_sessions(token_hash,account_id,key_id,created_at,expires_at)
+               VALUES(?,?,?,?,?)""",
+            (hash_api_key(token), account_id, key_id, now, now + SESSION_TTL),
+        )
+    return token
+
+
+def create_web_account(name: str, email: str, password: str, raw_key: str) -> Dict[str, Any]:
+    name = name.strip()
+    email = email.strip().lower()
+    if not name:
+        raise ValueError("Informe seu nome.")
+    if "@" not in email:
+        raise ValueError("Informe um e-mail válido.")
+    if len(password) < 8:
+        raise ValueError("A senha precisa ter pelo menos 8 caracteres.")
+    verified = verify_api_key_db(raw_key.strip())
+    if not verified or verified.get("error") or verified.get("key_type") != "client":
+        raise ValueError("Token inválido, expirado ou sem acesso de cliente.")
+    account_id = str(uuid.uuid4()).replace("-", "")
+    ph = _hash_pw(password)
+    try:
+        with _db() as c:
+            c.execute(
+                """INSERT INTO web_accounts
+                   (id,key_id,name,email,password_hash,password_salt,created_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (account_id, verified["app_id"], name, email, ph["hash"], ph["salt"], time.time()),
+            )
+    except sqlite3.IntegrityError as exc:
+        message = str(exc).lower()
+        if "email" in message:
+            raise ValueError("Este e-mail já possui uma conta.") from exc
+        raise ValueError("Este token já foi vinculado a uma conta.") from exc
+    return {"account": _web_account_payload(account_id), "access_token": _create_web_session(account_id, verified["app_id"])}
+
+
+def login_web_account(email: str, password: str) -> Dict[str, Any]:
+    email = email.strip().lower()
+    with _db() as c:
+        account = c.execute("SELECT * FROM web_accounts WHERE email=?", (email,)).fetchone()
+    if not account or not _verify_pw(password, account["password_hash"], account["password_salt"]):
+        raise ValueError("E-mail ou senha incorretos.")
+    verified = verify_api_key_db_by_id(account["key_id"])
+    if not verified or verified.get("error"):
+        raise ValueError("Sua conta está sem saldo, inativa ou expirada.")
+    return {"account": _web_account_payload(account["id"]), "access_token": _create_web_session(account["id"], account["key_id"])}
+
+
+def verify_api_key_db_by_id(key_id: str) -> Optional[Dict[str, Any]]:
+    with _db() as c:
+        key = c.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
+        if not key:
+            return None
+        now = time.time()
+        if not key["active"]:
+            return {"error": "disabled"}
+        if key["expires_at"] and key["expires_at"] <= now:
+            return {"error": "expired"}
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if key["daily_limit"] > 0:
+            day_tokens = c.execute(
+                "SELECT total_tokens FROM key_usage WHERE key_id=? AND date=?",
+                (key_id, today),
+            ).fetchone()
+            if day_tokens and day_tokens["total_tokens"] >= key["daily_limit"]:
+                return {"error": "limit_exceeded"}
+        if key["monthly_limit"] > 0:
+            month_tokens = c.execute(
+                "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE key_id=? AND date LIKE ?",
+                (key_id, today[:7] + "%"),
+            ).fetchone()[0]
+            if month_tokens >= key["monthly_limit"]:
+                return {"error": "limit_exceeded"}
+        remaining = _remaining_tokens_for_row(c, key)
+        if remaining is not None and remaining <= 0:
+            return {"error": "limit_exceeded"}
+        return {"type": "managed", "app_id": key["id"], "app_name": key["name"],
+                "key_preview": key["key_preview"], "key_type": key["key_type"] or "client"}
+
+
+def get_web_account_by_session(raw_token: str) -> Optional[Dict[str, Any]]:
+    if not raw_token:
+        return None
+    now = time.time()
+    with _db() as c:
+        c.execute("DELETE FROM web_sessions WHERE expires_at<=?", (now,))
+        session = c.execute(
+            "SELECT account_id FROM web_sessions WHERE token_hash=? AND expires_at>?",
+            (hash_api_key(raw_token), now),
+        ).fetchone()
+    return _web_account_payload(session["account_id"]) if session else None
+
+
+def get_web_account_id_by_session(raw_token: str) -> Optional[str]:
+    if not raw_token:
+        return None
+    with _db() as c:
+        session = c.execute(
+            "SELECT account_id FROM web_sessions WHERE token_hash=? AND expires_at>?",
+            (hash_api_key(raw_token), time.time()),
+        ).fetchone()
+    return session["account_id"] if session else None
+
+
+def delete_web_session(raw_token: str) -> None:
+    if not raw_token:
+        return
+    with _db() as c:
+        c.execute("DELETE FROM web_sessions WHERE token_hash=?", (hash_api_key(raw_token),))
+
+
+def create_drive_automation(account_id: str, name: str, webhook_url: str, action: str,
+                            source_folder: str = "", destination_folder: str = "",
+                            file_pattern: str = "") -> Dict[str, Any]:
+    automation_id = str(uuid.uuid4()).replace("-", "")
+    with _db() as c:
+        c.execute(
+            """INSERT INTO drive_automations
+               (id,account_id,name,webhook_url,action,source_folder,destination_folder,file_pattern,created_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (automation_id, account_id, name.strip(), webhook_url.strip(), action.strip(),
+             source_folder.strip(), destination_folder.strip(), file_pattern.strip(), time.time()),
+        )
+    return get_drive_automation(account_id, automation_id) or {}
+
+
+def get_drive_automation(account_id: str, automation_id: str) -> Optional[Dict[str, Any]]:
+    with _db() as c:
+        row = c.execute(
+            "SELECT * FROM drive_automations WHERE id=? AND account_id=?",
+            (automation_id, account_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_drive_automations(account_id: str) -> List[Dict[str, Any]]:
+    with _db() as c:
+        rows = c.execute(
+            "SELECT * FROM drive_automations WHERE account_id=? ORDER BY created_at DESC",
+            (account_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_drive_automation(account_id: str, automation_id: str) -> bool:
+    with _db() as c:
+        cur = c.execute(
+            "DELETE FROM drive_automations WHERE id=? AND account_id=?",
+            (automation_id, account_id),
+        )
+    return cur.rowcount > 0
 
 
 def _total_tokens(c: sqlite3.Connection, key_id: str) -> int:

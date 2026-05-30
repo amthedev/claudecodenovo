@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude</title>
+    <link rel="icon" type="image/svg+xml" href="/web/assets/claude-mark.svg" />
+    <link rel="shortcut icon" href="/web/assets/claude-mark.svg" />
+    <link rel="stylesheet" href="/web/assets/styles.css" />
+  </head>
+  <body class="client-page">
+    <main id="clientApp" class="cloud-shell">
+      <aside class="icon-rail">
+        <button id="sidebarOpen" class="icon-button" title="Menu" type="button" aria-label="Abrir menu lateral" aria-expanded="false">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4V6Z" /><path d="M9 6v12" /></svg>
+        </button>
+        <button id="railNewChat" class="icon-button active" title="Novo bate-papo" type="button" aria-label="Novo bate-papo">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+        <button class="icon-button" title="Procurar" data-panel="searchPanel" aria-label="Procurar">
+          <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+        </button>
+        <button class="icon-button" title="Conversas" data-panel="historyPanel" aria-label="Conversas">
+          <svg viewBox="0 0 24 24"><path d="M5 17.5 3.5 21l4-1.2a8.7 8.7 0 0 0 4.5 1.2c4.7 0 8.5-3.4 8.5-7.6S16.7 5.8 12 5.8 3.5 9.2 3.5 13.4c0 1.5.5 2.9 1.5 4.1Z" /></svg>
+        </button>
+        <button class="icon-button" title="Projetos" data-panel="projectsPanel" aria-label="Projetos">
+          <svg viewBox="0 0 24 24"><path d="M6 8h12l-1 11H7L6 8Z" /><path d="M9 8V5h6v3M5 8h14" /></svg>
+        </button>
+        <button class="icon-button" title="Artefatos" data-panel="artifactsPanel" aria-label="Artefatos">
+          <svg viewBox="0 0 24 24"><path d="M12 3.5v4M12 16.5v4M4.6 7.6l2.8 2.8M16.6 16.6l2.8 2.8M3.5 12h4M16.5 12h4M4.6 16.4l2.8-2.8M16.6 7.4l2.8-2.8" /></svg>
+        </button>
+        <button class="icon-button" title="Configurações" data-panel="settingsPanel" aria-label="Abrir configurações">
+          <svg viewBox="0 0 24 24"><path d="M6 19v-7a6 6 0 0 1 12 0v7M6 15h12M8 20l2-2 2 2 2-2 2 2 2-2" /></svg>
+        </button>
+        <button class="icon-button" title="Planos" data-panel="plansPanel" aria-label="Abrir planos">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4V7Z" /><path d="M7 11h3M14 11h3M7 15h10" /></svg>
+        </button>
+        <button class="icon-button auth-only hidden" title="API compatível" data-panel="apiPanel" aria-label="API compatível com Claude Code">
+          <svg viewBox="0 0 24 24"><path d="M6 8h12v11H6V8Z" /><path d="M9 8V5h6v3M8 12h8M8 16h5" /></svg>
+        </button>
+        <button class="icon-button auth-only hidden" title="Suporte" data-panel="supportPanel" aria-label="Suporte">
+          <svg viewBox="0 0 24 24"><path d="M5 18.5 3.8 22l3.8-1.3a9 9 0 1 0-2.6-2.2Z" /><path d="M8 10h8M8 14h5" /></svg>
+        </button>
+        <button id="authOpen" class="icon-button rail-bottom login-corner-button" title="Entrar ou cadastrar" aria-label="Entrar ou cadastrar">
+          Entrar
+        </button>
+        <button id="clientLogout" class="icon-button rail-bottom avatar-button hidden" title="Sair" aria-label="Sair"></button>
+      </aside>
+
+      <aside id="claudeSidebar" class="claude-sidebar" aria-label="Menu lateral do Claude">
+        <div class="sidebar-brand-row">
+          <strong>Claude</strong>
+          <button id="sidebarClose" class="sidebar-icon-button" type="button" aria-label="Fechar menu lateral">
+            <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4V6Z" /><path d="M15 6v12" /></svg>
+          </button>
+        </div>
+
+        <nav class="sidebar-nav" aria-label="Navegação principal">
+          <button id="sidebarNewChat" class="sidebar-action active" type="button">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            <span>Novo bate-papo</span>
+          </button>
+          <button class="sidebar-action" type="button" data-sidebar-panel="searchPanel">
+            <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+            <span>Procurar</span>
+          </button>
+          <button class="sidebar-action" type="button" data-sidebar-panel="historyPanel">
+            <svg viewBox="0 0 24 24"><path d="M5 17.5 3.5 21l4-1.2a8.7 8.7 0 0 0 4.5 1.2c4.7 0 8.5-3.4 8.5-7.6S16.7 5.8 12 5.8 3.5 9.2 3.5 13.4c0 1.5.5 2.9 1.5 4.1Z" /></svg>
+            <span>Conversas</span>
+          </button>
+          <button class="sidebar-action" type="button" data-sidebar-panel="projectsPanel">
+            <svg viewBox="0 0 24 24"><path d="M6 8h12l-1 11H7L6 8Z" /><path d="M9 8V5h6v3M5 8h14" /></svg>
+            <span>Projetos</span>
+          </button>
+          <button class="sidebar-action" type="button" data-sidebar-panel="artifactsPanel">
+            <svg viewBox="0 0 24 24"><path d="M12 3.5v4M12 16.5v4M4.6 7.6l2.8 2.8M16.6 16.6l2.8 2.8M3.5 12h4M16.5 12h4M4.6 16.4l2.8-2.8M16.6 7.4l2.8-2.8" /></svg>
+            <span>Artefatos</span>
+          </button>
+          <button class="sidebar-action" type="button" data-work-mode="document">
+            <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6V3Z" /><path d="M15 3v4h4M9 11h6M9 15h6" /></svg>
+            <span>Documentos</span>
+          </button>
+          <button class="sidebar-action" type="button" data-work-mode="spreadsheet">
+            <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5V4ZM5 9h14M10 4v16M15 4v16M5 14h14" /></svg>
+            <span>Planilhas e gráficos</span>
+          </button>
+          <button class="sidebar-action" type="button" data-work-mode="report">
+            <svg viewBox="0 0 24 24"><path d="M5 20V4h14v16H5Z" /><path d="M8 16h8M8 12h8M8 8h5" /></svg>
+            <span>Relatórios</span>
+          </button>
+          <button class="sidebar-action" type="button" data-work-mode="research">
+            <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+            <span>Pesquisa online</span>
+          </button>
+          <button class="sidebar-action" type="button" data-sidebar-panel="drivePanel">
+            <svg viewBox="0 0 24 24"><path d="M8 4h8l4 7-4 7H8l-4-7 4-7Z" /><path d="m8 4 4 7-4 7M12 11h8" /></svg>
+            <span>Google Drive</span>
+          </button>
+          <button class="sidebar-action auth-only hidden" type="button" data-sidebar-panel="apiPanel" aria-label="Abrir API compatível">
+            <svg viewBox="0 0 24 24"><path d="M6 8h12v11H6V8Z" /><path d="M9 8V5h6v3M8 12h8M8 16h5" /></svg>
+            <span>API compatível</span>
+          </button>
+          <button class="sidebar-action auth-only hidden" type="button" data-sidebar-panel="supportPanel" aria-label="Abrir suporte">
+            <svg viewBox="0 0 24 24"><path d="M5 18.5 3.8 22l3.8-1.3a9 9 0 1 0-2.6-2.2Z" /><path d="M8 10h8M8 14h5" /></svg>
+            <span>Suporte</span>
+          </button>
+          <button class="sidebar-action" type="button" data-sidebar-panel="settingsPanel" aria-label="Abrir configurações">
+            <svg viewBox="0 0 24 24"><path d="M6 8h12v11H6V8Z" /><path d="M9 8V5h6v3M8 12h8M8 16h5" /></svg>
+            <span>Configurações</span>
+          </button>
+          <button class="sidebar-action" type="button" data-sidebar-panel="plansPanel" aria-label="Abrir planos">
+            <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4V7Z" /><path d="M7 11h3M14 11h3M7 15h10" /></svg>
+            <span>Planos</span>
+          </button>
+        </nav>
+
+        <section class="sidebar-recents" aria-label="Conversas recentes">
+          <span>Recentes</span>
+          <div id="sidebarRecentList" class="sidebar-recent-list"></div>
+        </section>
+
+        <button id="sidebarAccountButton" class="sidebar-account" type="button">
+          <span id="sidebarAccountAvatar" class="sidebar-avatar empty"></span>
+          <span class="sidebar-account-text">
+            <strong id="sidebarAccountName">Entrar</strong>
+            <span id="sidebarAccountPlan">Entre para usar</span>
+          </span>
+        </button>
+        <div id="accountMenu" class="account-menu hidden" role="menu" aria-label="Configurações da conta">
+          <div id="accountMenuLogin" class="account-menu-email">Entre para usar</div>
+          <button type="button" data-account-action="settings">Configurações <span>⇧⌘,</span></button>
+          <button type="button" data-account-action="support">Receber ajuda</button>
+          <hr />
+          <button type="button" data-account-action="apps">Obter apps e extensões</button>
+          <hr />
+          <button type="button" data-account-action="logout">Sair</button>
+        </div>
+      </aside>
+
+      <section class="cloud-main">
+        <header class="cloud-top">
+          <div class="plan-pill">
+            <span id="planBadge">Entrar para usar</span>
+            <span>•</span>
+            <button data-panel="plansPanel" type="button" aria-label="Ver planos da conta">Planos</button>
+          </div>
+          <div class="top-actions">
+            <button class="ghost-top" data-panel="settingsPanel" type="button" aria-label="Configurações da conta">
+              <svg viewBox="0 0 24 24"><path d="M6 19v-7a6 6 0 0 1 12 0v7M6 15h12M8 20l2-2 2 2 2-2 2 2 2-2" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <div id="publicTrialBanner" class="trial-banner hidden" aria-live="polite"></div>
+
+        <section id="chatPanel" class="client-panel active">
+          <div id="emptyState" class="chat-empty">
+            <div class="welcome-lockup">
+              <img class="claude-mark" src="/web/assets/claude-mark.svg" alt="" />
+              <h1 id="welcomeTitle">Como posso ajudar hoje?</h1>
+            </div>
+            <form id="heroComposer" class="hero-composer">
+              <textarea name="prompt" placeholder="Como posso ajudar você hoje?"></textarea>
+              <div class="composer-row">
+                <div class="composer-menu-wrap">
+                  <button class="composer-icon attach-button" type="button" aria-label="Adicionar arquivos e projetos">
+                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+                  </button>
+                  <button class="composer-icon code-mode-button" type="button" data-code-chat-open title="Chat de código" aria-label="Abrir chat de código">
+                    <svg viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14" /></svg>
+                  </button>
+                  <button class="composer-icon code-chat-control code-project-icon hidden" type="button" data-code-project-open title="Projeto" aria-label="Escolher projeto de código">
+                    <svg viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v9H4V7Z" /></svg>
+                  </button>
+                  <button class="access-mode-button code-chat-control hidden" type="button" data-code-tools-open title="Permissões" aria-label="Escolher permissões de código">
+                    <svg viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.2c0 4.4-2.8 7.7-7 9.3-4.2-1.6-7-4.9-7-9.3V6l7-2.5Z" /><path d="M9.5 12.2 11.3 14l3.4-4" /></svg>
+                    <span data-code-edit-label>Acesso completo</span>
+                    <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+                  </button>
+                  <button class="composer-icon code-chat-control hidden" type="button" data-code-output-open title="Saídas" aria-label="Escolher saída de código">
+                    <svg viewBox="0 0 24 24"><path d="M5 19V5M5 19h14" /><path d="M9 15v-4M13 15V8M17 15v-7" /></svg>
+                  </button>
+                </div>
+                <div class="composer-right">
+                  <button class="model-trigger reasoning-trigger" type="button" data-reasoning-trigger aria-label="Raciocínio">
+                    <span data-reasoning-label>Auto</span>
+                    <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+                  </button>
+                  <select id="heroModel" class="hidden-model-select" aria-label="Modelo"></select>
+                  <button class="model-trigger" type="button" data-model-trigger="heroModel" aria-label="Modelo">
+                    <span data-model-label="heroModel">Claude Sonnet 4.5</span>
+                    <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+                  </button>
+                  <button class="composer-icon voice-button" type="button" aria-label="Gravar áudio">
+                    <svg viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" /></svg>
+                  </button>
+                  <button class="composer-icon send-button" type="submit" aria-label="Enviar mensagem">
+                    <svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+                  </button>
+                </div>
+              </div>
+            </form>
+            <div class="web-attachment-list" data-web-attachment-list></div>
+            <div class="code-project-strip hidden" data-code-project-strip>
+              <button class="code-project-pill" type="button" data-code-project-open aria-label="Escolher projeto de código">
+                <svg viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v9H4V7Z" /></svg>
+                <span data-code-project-label>Trabalhar em um projeto</span>
+                <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+              </button>
+            </div>
+            <div class="quick-actions">
+              <button data-code-chat-open type="button">
+                <svg viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14" /></svg>
+                Código
+              </button>
+              <button data-suggestion-category="writing" data-prompt="Escreva um texto profissional para meu cliente">
+                <svg viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4ZM13 7l4 4" /></svg>
+                Escrever
+              </button>
+              <button data-suggestion-category="learning" data-prompt="Me ensine este erro passo a passo">
+                <svg viewBox="0 0 24 24"><path d="M4 9 12 5l8 4-8 4-8-4Z" /><path d="M7 11v4c0 1.5 2.2 3 5 3s5-1.5 5-3v-4" /></svg>
+                Aprender
+              </button>
+              <button data-suggestion-category="personal" data-prompt="Organize minhas tarefas de hoje">
+                <svg viewBox="0 0 24 24"><path d="M5 10h14v7a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-7ZM8 10V6M16 10V6M9 6h6" /></svg>
+                Assuntos pessoais
+              </button>
+              <button data-suggestion-category="choice" data-prompt="Escolha o melhor modelo para esta tarefa">
+                <svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-3 11.2V17h6v-2.8A6 6 0 0 0 12 3ZM10 21h4" /></svg>
+                Escolha do Claude
+              </button>
+            </div>
+            <div id="suggestionPanel" class="suggestion-panel hidden" aria-live="polite"></div>
+            <div id="incognitoNotice" class="incognito-notice hidden">
+              Chats anônimos não são salvos, adicionados à memória ou usados para treinar modelos.
+            </div>
+            <div id="previewNotice" class="preview-notice">
+              Entre em uma conta ativa para usar o chat.
+            </div>
+          </div>
+
+          <div id="chatThread" class="chat-thread hidden"></div>
+
+          <form id="bottomComposer" class="bottom-composer hidden">
+            <textarea name="prompt" placeholder="Responder ao Claude..."></textarea>
+            <div class="composer-row">
+              <div class="composer-menu-wrap">
+                <button class="composer-icon attach-button" type="button" aria-label="Adicionar arquivos e projetos">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+                <button class="composer-icon code-mode-button" type="button" data-code-chat-open title="Chat de código" aria-label="Abrir chat de código">
+                  <svg viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14" /></svg>
+                </button>
+                <button class="composer-icon code-chat-control code-project-icon hidden" type="button" data-code-project-open title="Projeto" aria-label="Escolher projeto de código">
+                  <svg viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v9H4V7Z" /></svg>
+                </button>
+                <button class="access-mode-button code-chat-control hidden" type="button" data-code-tools-open title="Permissões" aria-label="Escolher permissões de código">
+                  <svg viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.2c0 4.4-2.8 7.7-7 9.3-4.2-1.6-7-4.9-7-9.3V6l7-2.5Z" /><path d="M9.5 12.2 11.3 14l3.4-4" /></svg>
+                  <span data-code-edit-label>Acesso completo</span>
+                  <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+                </button>
+                <button class="composer-icon code-chat-control hidden" type="button" data-code-output-open title="Saídas" aria-label="Escolher saída de código">
+                  <svg viewBox="0 0 24 24"><path d="M5 19V5M5 19h14" /><path d="M9 15v-4M13 15V8M17 15v-7" /></svg>
+                </button>
+              </div>
+              <div class="composer-right">
+                <button class="model-trigger reasoning-trigger" type="button" data-reasoning-trigger aria-label="Raciocínio">
+                  <span data-reasoning-label>Auto</span>
+                  <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+                </button>
+                <select id="bottomModel" class="hidden-model-select" aria-label="Modelo"></select>
+                <button class="model-trigger" type="button" data-model-trigger="bottomModel" aria-label="Modelo">
+                  <span data-model-label="bottomModel">Claude Sonnet 4.5</span>
+                  <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+                </button>
+                <button class="composer-icon voice-button" type="button" aria-label="Gravar áudio">
+                  <svg viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" /></svg>
+                </button>
+                <button class="composer-icon send-button" type="submit" aria-label="Enviar mensagem">
+                  <svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+                </button>
+              </div>
+            </div>
+          </form>
+          <div class="web-attachment-list bottom-attachment-list" data-web-attachment-list></div>
+          <div class="code-project-strip bottom-project-strip hidden" data-code-project-strip>
+            <button class="code-project-pill" type="button" data-code-project-open aria-label="Escolher projeto de código">
+              <svg viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v9H4V7Z" /></svg>
+              <span data-code-project-label>Trabalhar em um projeto</span>
+              <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+            </button>
+          </div>
+          <div id="chatError" class="form-error chat-error"></div>
+        </section>
+
+        <section id="searchPanel" class="client-panel command-panel" role="dialog" aria-label="Pesquisar conversas, projetos e artefatos">
+          <div class="command-dialog">
+            <div class="command-search-row">
+              <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+              <input id="searchInput" placeholder="Pesquisar conversas, projetos e artefatos" />
+              <button id="searchClose" type="button" aria-label="Fechar">Fechar</button>
+            </div>
+            <div id="searchResults" class="command-results"></div>
+          </div>
+        </section>
+
+        <section id="historyPanel" class="client-panel workspace-panel">
+          <div class="workspace-header">
+            <h1>Conversas</h1>
+            <div class="workspace-actions">
+              <button id="newChat" class="primary" type="button">Novo bate-papo</button>
+            </div>
+          </div>
+          <label class="workspace-search">
+            <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+            <input id="historySearch" placeholder="Pesquisar chats..." />
+          </label>
+          <div id="historyList" class="table-list"></div>
+        </section>
+
+        <section id="projectsPanel" class="client-panel workspace-panel">
+          <div class="workspace-header">
+            <h1>Projetos</h1>
+            <div class="workspace-actions">
+              <button id="openProjectModal" class="primary" type="button">Novo projeto</button>
+            </div>
+          </div>
+          <label class="workspace-search">
+            <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+            <input id="projectSearch" placeholder="Pesquisar projetos" />
+          </label>
+          <div id="projectList" class="project-list"></div>
+        </section>
+
+        <section id="artifactsPanel" class="client-panel workspace-panel">
+          <div class="workspace-header">
+            <h1>Artefatos</h1>
+            <button id="newArtifact" class="primary" type="button">Novo artefato</button>
+          </div>
+          <label class="workspace-search">
+            <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+            <input id="artifactSearch" placeholder="Pesquisar seus artefatos" />
+          </label>
+          <div id="artifactList" class="artifact-list"></div>
+        </section>
+
+        <section id="codePanel" class="client-panel workspace-panel code-panel legacy-code-panel">
+          <div class="workspace-header">
+            <div>
+              <h1>Código</h1>
+              <p class="workspace-subtitle">Conecte um repo autenticado do GitHub, suba um ZIP ou selecione uma pasta para editar e baixar o projeto atualizado.</p>
+            </div>
+          </div>
+          <div class="code-import-grid">
+            <form id="githubImportForm" class="code-import-card">
+              <span class="overline">GitHub</span>
+              <label>
+                Perfil GitHub
+                <input name="profile" placeholder="usuario ou organizacao" required />
+              </label>
+              <label>
+                Branch padrão
+                <input name="ref" placeholder="main" />
+              </label>
+              <label>
+                Chave GitHub
+                <input name="githubToken" type="password" autocomplete="off" placeholder="github_pat_..." required />
+              </label>
+              <button class="primary" type="submit">Conectar GitHub</button>
+              <div id="githubRepoChoices" class="github-repo-choices"></div>
+            </form>
+            <form id="zipUploadForm" class="code-import-card">
+              <span class="overline">Pasta local</span>
+              <label>
+                Nome do projeto
+                <input name="name" placeholder="Meu projeto" />
+              </label>
+              <label>
+                ZIP do projeto
+                <input id="codeZipInput" name="zip" type="file" accept=".zip,application/zip" />
+              </label>
+              <input id="codeFolderInput" class="hidden" type="file" webkitdirectory directory multiple />
+              <div class="code-upload-actions">
+                <button class="primary" type="submit">Subir ZIP</button>
+                <button type="button" data-code-folder-pick>Selecionar pasta</button>
+              </div>
+            </form>
+          </div>
+          <div id="codeStatus" class="form-error neutral"></div>
+          <div class="code-workspace-shell">
+            <aside class="code-workspace-list" id="codeWorkspaceList"></aside>
+            <aside class="code-file-list" id="codeFileList"></aside>
+            <section class="code-editor">
+              <div class="code-editor-head">
+                <strong id="codeFileTitle">Selecione um arquivo</strong>
+                <div>
+                  <button id="downloadCodeWorkspace" type="button">Baixar ZIP</button>
+                  <button id="publishCodeWorkspace" type="button">Enviar GitHub</button>
+                  <button id="saveCodeFile" class="primary" type="button">Salvar arquivo</button>
+                </div>
+              </div>
+              <textarea id="codeEditor" spellcheck="false" placeholder="Escolha um arquivo de texto para editar."></textarea>
+            </section>
+          </div>
+        </section>
+
+        <section id="apiPanel" class="client-panel side-panel">
+          <div class="panel-header">
+            <span class="overline">API</span>
+            <h2>API compatível com Claude Code</h2>
+          </div>
+          <form id="apiForm" class="settings-form">
+            <label>
+              Base URL
+              <input name="baseUrl" placeholder="http://127.0.0.1:8787" />
+            </label>
+            <label>
+              Token
+          <input name="token" type="password" autocomplete="off" placeholder="Token mascarado por segurança" />
+            </label>
+            <label>
+              Modelo padrão
+              <select id="apiModel" name="model"></select>
+            </label>
+            <button class="primary" type="submit">Salvar API</button>
+          </form>
+          <div id="apiInstallGuide" class="api-guide"></div>
+          <div class="api-routes">
+            <code>POST /v1/messages</code>
+            <code>GET /v1/models</code>
+            <code>GET /v1/budget</code>
+          </div>
+        </section>
+
+        <section id="supportPanel" class="client-panel side-panel support-panel">
+          <div class="panel-header">
+            <span class="overline">Suporte</span>
+            <h2>Atendimento humano</h2>
+          </div>
+          <div id="supportStatus" class="support-status">Nenhum atendimento aberto.</div>
+          <div id="supportMessages" class="support-messages"></div>
+          <form id="supportForm" class="support-form" novalidate>
+            <textarea name="message" placeholder="Digite sua dúvida. O assistente responde primeiro; se precisar, peça para falar com o Mano."></textarea>
+            <button class="primary" type="submit">Enviar</button>
+          </form>
+          <div id="supportError" class="form-error"></div>
+        </section>
+
+        <section id="settingsPanel" class="client-panel side-panel">
+          <div class="panel-header">
+            <span class="overline">Conta</span>
+            <h2>Uso e configurações</h2>
+          </div>
+          <div class="usage-card">
+            <strong id="usageTitle">0 de 0 tokens</strong>
+            <div class="usage-bar"><div id="usageFill"></div></div>
+            <p id="usageText">Limite diario do plano.</p>
+          </div>
+          <div id="trialAccountNotice" class="trial-account-notice hidden"></div>
+          <div class="settings-section">
+            <label>
+              Pesquisa web
+              <div class="web-search-toggle" role="group" aria-label="Pesquisa web">
+                <button type="button" data-web-search-mode="auto">Auto</button>
+                <button type="button" data-web-search-mode="required">Web</button>
+                <button type="button" data-web-search-mode="off">Off</button>
+              </div>
+            </label>
+          </div>
+          <div id="accountDetails" class="details-list"></div>
+        </section>
+
+        <section id="drivePanel" class="client-panel side-panel">
+          <div class="panel-header">
+            <span class="overline">Google Drive</span>
+            <h2>Automação de pastas</h2>
+          </div>
+          <p>Use um conector Google Apps Script publicado pela sua própria conta para organizar arquivos com segurança.</p>
+          <p><a href="/web/assets/drive-connector.gs" target="_blank">Abrir código do conector</a></p>
+          <form id="driveForm" class="settings-form">
+            <label>Nome<input name="name" placeholder="Organizar relatórios" required /></label>
+            <label>URL do Apps Script<input name="webhook_url" placeholder="https://script.google.com/macros/s/.../exec" required /></label>
+            <label>Ação<select name="action"><option value="organize">Organizar arquivos</option><option value="create_folder">Criar pasta</option><option value="move_files">Mover arquivos</option></select></label>
+            <label>Pasta de origem<input name="source_folder" placeholder="ID da pasta" /></label>
+            <label>Pasta de destino<input name="destination_folder" placeholder="ID da pasta" /></label>
+            <label>Filtro de arquivo<input name="file_pattern" placeholder=".pdf ou relatorio" /></label>
+            <button class="primary" type="submit">Salvar automação</button>
+          </form>
+          <div id="driveError" class="form-error"></div>
+          <div id="automationList" class="web-automation-list"></div>
+        </section>
+
+        <section id="chartPanel" class="client-panel side-panel">
+          <div class="panel-header">
+            <span class="overline">Planilha</span>
+            <h2>Gráfico rápido</h2>
+          </div>
+          <p id="chartCaption">Anexe uma planilha e clique em gráfico.</p>
+          <svg id="chart" class="web-chart" viewBox="0 0 600 280" role="img" aria-label="Gráfico da planilha"></svg>
+        </section>
+
+        <section id="plansPanel" class="client-panel workspace-panel">
+          <div class="workspace-header">
+            <div>
+              <h1>Planos</h1>
+              <p class="workspace-subtitle">Escolha um plano. O pagamento abre pelo Mercado Pago e o upgrade libera quando o pagamento for aprovado.</p>
+            </div>
+          </div>
+          <div id="planUpgradeNotice" class="upgrade-notice hidden"></div>
+          <div id="planCards" class="plan-grid"></div>
+        </section>
+      </section>
+    </main>
+
+    <button id="incognitoToggle" class="incognito-toggle" type="button" aria-label="Usar incógnito">
+      <svg viewBox="0 0 24 24"><path d="M6 11V9a6 6 0 0 1 12 0v2" /><path d="M4 11h16v4a8 8 0 0 1-16 0v-4Z" /><path d="M8.5 15h0M15.5 15h0" /></svg>
+      <span>Chat anônimo</span>
+    </button>
+
+    <div id="attachMenu" class="floating-menu hidden" role="menu" aria-label="Adicionar arquivos e projetos">
+      <button type="button" data-attach-action="files"><span>＋</span>Adicionar arquivos ou fotos <kbd>⌘U</kbd></button>
+      <button type="button" data-attach-action="project"><span>▤</span>Abrir projetos</button>
+      <button type="button" data-attach-action="code-chat"><span>&lt;/&gt;</span>Chat de código</button>
+    </div>
+
+    <div id="codeProjectMenu" class="floating-menu code-project-menu hidden" role="menu" aria-label="Projeto de código">
+      <label class="project-menu-search">
+        <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+        <input id="codeProjectSearch" placeholder="Pesquisar projetos" />
+      </label>
+      <div class="floating-section code-workspace-section">
+        <div id="codeProjectChoices" class="compact-choice-list"></div>
+      </div>
+      <hr />
+      <form id="codeGithubQuickForm" class="quick-menu-form" novalidate>
+        <strong>Conectar Hub ou GitHub</strong>
+        <input name="profile" placeholder="perfil ou organização" required />
+        <input name="ref" placeholder="branch padrão" />
+        <input name="githubToken" type="password" autocomplete="off" placeholder="chave GitHub obrigatória" required />
+        <button class="primary" type="submit">Listar repos</button>
+        <div id="codeGithubQuickRepos" class="github-repo-choices compact"></div>
+      </form>
+      <button type="button" data-code-project-action="upload"><span>ZIP</span>Subir projeto</button>
+      <button type="button" data-code-project-action="folder"><span>DIR</span>Subir pasta</button>
+      <button type="button" data-code-project-action="new-project"><span>＋</span>Criar novo projeto de código</button>
+    </div>
+
+    <div id="codeToolsMenu" class="floating-menu code-tools-menu hidden" role="menu" aria-label="Modo do chat de código">
+      <button type="button" data-code-edit-mode="review"><span>✓</span>Revisão automática</button>
+      <button type="button" data-code-edit-mode="full"><span>↯</span>Acesso completo</button>
+      <button type="button" data-code-edit-mode="ask"><span>?</span>Pedir antes de editar</button>
+    </div>
+
+    <div id="codeOutputMenu" class="floating-menu code-tools-menu hidden" role="menu" aria-label="Saída do chat de código">
+      <button type="button" data-code-output-mode="normal"><span>•</span>Resposta normal</button>
+      <button type="button" data-code-output-mode="diagram"><span>▥</span>Gráficos e diagramas</button>
+      <button type="button" data-code-output-mode="tests"><span>▣</span>Testes e verificação</button>
+      <button type="button" data-code-output-mode="commit"><span>Git</span>Resumo para GitHub</button>
+    </div>
+
+    <div id="modelMenu" class="floating-menu model-menu hidden" role="menu" aria-label="Modelo">
+      <button type="button" data-model-value="claude-code-pro">
+        <strong>Claude Sonnet 4.5</strong>
+        <span>Modelo padrão</span>
+      </button>
+      <button type="button" data-model-value="claude-code-ultra">
+        <strong>Claude Opus 4.7</strong>
+        <span>Mais raciocínio e pensamento, usa 1.5x mais tokens</span>
+      </button>
+    </div>
+
+    <div id="reasoningMenu" class="floating-menu model-menu hidden" role="menu" aria-label="Raciocínio">
+      <button type="button" data-reasoning-mode="auto">
+        <strong>Automático</strong>
+        <span>Equilibra velocidade e força sozinho</span>
+      </button>
+      <button type="button" data-reasoning-mode="fast">
+        <strong>Rápido</strong>
+        <span>Mais veloz, usa menos toques</span>
+      </button>
+      <button type="button" data-reasoning-mode="normal">
+        <strong>Normal</strong>
+        <span>Padrão do plano</span>
+      </button>
+      <button type="button" data-reasoning-mode="medium">
+        <strong>Médio</strong>
+        <span>Mais análise para perguntas difíceis</span>
+      </button>
+      <button type="button" data-reasoning-mode="strong">
+        <strong>Forte</strong>
+        <span>Raciocínio pesado, usa mais toques</span>
+      </button>
+      <button type="button" data-reasoning-mode="xstrong">
+        <strong>Extra forte</strong>
+        <span>Máxima análise, maior consumo</span>
+      </button>
+    </div>
+
+    <section id="projectModal" class="auth-modal hidden" aria-modal="true" role="dialog" aria-label="Criar um projeto">
+      <form id="projectForm" class="project-dialog dark-card" novalidate>
+        <div class="modal-header">
+          <h2>Criar um projeto</h2>
+          <button id="projectModalClose" type="button">Fechar</button>
+        </div>
+        <label>
+          No que você está trabalhando?
+          <input name="name" placeholder="Dê um nome ao projeto" />
+        </label>
+        <label>
+          O que você quer realizar?
+          <textarea name="context" placeholder="Descreva seu projeto, objetivos, assunto, etc..."></textarea>
+        </label>
+        <div id="projectError" class="form-error"></div>
+        <div class="modal-actions">
+          <button id="projectModalCancel" type="button">Cancelar</button>
+          <button class="primary" type="submit">Criar projeto</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="artifactStartModal" class="auth-modal hidden" aria-modal="true" role="dialog" aria-label="Novo artefato">
+      <div class="artifact-dialog dark-card">
+        <div class="modal-header">
+          <h2>Novo artefato</h2>
+          <button id="artifactStartClose" type="button">Fechar</button>
+        </div>
+        <p>Mãos à obra! Escolha uma categoria de artefato ou comece a construir sua ideia do zero.</p>
+        <div class="artifact-categories">
+          <button type="button" data-artifact-prompt="Crie um aplicativo ou site com layout responsivo">Aplicativos e sites</button>
+          <button type="button" data-artifact-prompt="Crie um documento ou modelo reutilizável">Documentos e modelos</button>
+          <button type="button" data-artifact-prompt="Crie um jogo simples e polido">Jogos</button>
+          <button type="button" data-artifact-prompt="Crie uma ferramenta de produtividade">Ferramentas de produtividade</button>
+          <button type="button" data-artifact-prompt="Crie um projeto criativo">Projetos criativos</button>
+          <button type="button" data-artifact-prompt="Crie um quiz ou pesquisa">Quiz ou pesquisa</button>
+          <button type="button" data-artifact-prompt="">Começar do zero</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="paymentModal" class="auth-modal hidden" aria-modal="true" role="dialog" aria-label="Pagamento do plano">
+      <form id="paymentForm" class="payment-dialog dark-card" novalidate>
+        <div class="modal-header">
+          <div>
+            <span class="overline">Checkout seguro</span>
+            <h2>Assinar plano</h2>
+          </div>
+          <button id="paymentModalClose" type="button">Fechar</button>
+        </div>
+
+        <div id="paymentSummary" class="payment-summary"></div>
+
+        <fieldset class="payment-methods">
+          <legend>Forma de pagamento</legend>
+          <label class="payment-method active">
+            <input type="radio" name="paymentMethod" value="pix" checked />
+            <span>Pix</span>
+            <small>QR Code e copia-e-cola nesta tela</small>
+          </label>
+          <label class="payment-method">
+            <input type="radio" name="paymentMethod" value="card_subscription" />
+            <span>Cartão de crédito</span>
+            <small>Assinatura mensal recorrente</small>
+          </label>
+        </fieldset>
+
+        <label class="payment-field">
+          CPF ou CNPJ do pagador
+          <input name="payerDocument" inputmode="numeric" autocomplete="off" placeholder="Somente números" />
+        </label>
+
+        <div id="paymentError" class="form-error"></div>
+        <div id="paymentResult" class="payment-result hidden"></div>
+
+        <div class="modal-actions payment-actions">
+          <button id="paymentModalCancel" type="button">Cancelar</button>
+          <button class="primary" type="submit">Continuar com segurança</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="authModal" class="auth-modal hidden" aria-modal="true" role="dialog">
+      <div class="auth-dialog dark-card">
+        <div class="modal-header">
+          <div class="product-lockup">
+            <div class="product-mark">
+              <img src="/web/assets/claude-mark.svg" alt="" />
+            </div>
+            <div>
+              <strong>Claude</strong>
+              <span>Entrar ou cadastrar</span>
+            </div>
+          </div>
+          <button id="authClose" type="button">Fechar</button>
+        </div>
+
+        <div class="auth-tabs">
+          <button class="active" type="button" data-auth-tab="clientLoginForm">Login</button>
+          <button type="button" data-auth-tab="clientSignupForm">Cadastro</button>
+        </div>
+
+        <form id="clientLoginForm" class="auth-pane active" novalidate>
+          <p id="clientLoginIntro">Use o e-mail e a senha criados no cadastro.</p>
+          <label>
+            E-mail
+            <input name="login" type="email" autocomplete="username" required />
+          </label>
+          <label>
+            Senha
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="primary" type="submit">Entrar</button>
+          <div id="clientLoginError" class="form-error"></div>
+        </form>
+
+        <form id="clientSignupForm" class="auth-pane" novalidate>
+          <p id="clientSignupIntro">Crie sua conta usando o token de acesso recebido.</p>
+          <label>
+            Nome
+            <input name="name" autocomplete="name" placeholder="Como quer ser chamado" required />
+          </label>
+          <label>
+            E-mail
+            <input name="login" type="email" autocomplete="username" required />
+          </label>
+          <label>
+            Senha
+            <input name="password" type="password" autocomplete="new-password" required />
+          </label>
+          <label>
+            Token de acesso
+            <input name="token" type="password" autocomplete="one-time-code" placeholder="sk-..." required />
+          </label>
+          <button class="primary" type="submit">Criar conta e entrar</button>
+          <div id="clientSignupMessage" class="form-error neutral"></div>
+        </form>
+      </div>
+    </section>
+
+    <input id="attachmentInput" class="hidden" type="file" accept=".txt,.md,.csv,.tsv,.json,.log,.docx,.xlsx,.pdf,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,image/png,image/jpeg,image/webp,image/gif" multiple />
+    <script src="/web/assets/app.js"></script>
+  </body>
+</html>

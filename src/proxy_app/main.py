@@ -632,8 +632,10 @@ async def lifespan(app: FastAPI):
     try:
         from proxy_app.admin_db import init_db as _adb_init
         from proxy_app.admin_routes import register_admin_routes as _areg
+        from proxy_app.web_routes import register_web_routes as _wreg
         _adb_init()
         _areg(app, proxy_api_key=proxy_api_key)
+        _wreg(app)
         logging.info("[admin_db] SQLite admin carregado com sucesso.")
     except ImportError:
         logging.warning("[admin_db] Modulos admin_db/admin_routes nao encontrados — usando admin legado.")
@@ -1088,7 +1090,8 @@ async def verify_api_key(request: Request):
             return verified
 
     # If no root key and no managed apps exist, keep the original open-access behavior.
-    if not PROXY_API_KEY and not _load_admin_data().get("apps"):
+    from proxy_app import admin_db as _admin_db
+    if not PROXY_API_KEY and not _load_admin_data().get("apps") and not _admin_db.has_api_keys():
         return {"type": "open", "app_name": "open"}
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
@@ -1109,7 +1112,8 @@ async def verify_anthropic_api_key(
         if verified:
             return verified
 
-    if not PROXY_API_KEY and not _load_admin_data().get("apps"):
+    from proxy_app import admin_db as _admin_db
+    if not PROXY_API_KEY and not _load_admin_data().get("apps") and not _admin_db.has_api_keys():
         return {"type": "open", "app_name": "open"}
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
