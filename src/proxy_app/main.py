@@ -1114,19 +1114,45 @@ async def verify_anthropic_api_key(
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
-def _record_managed_usage(auth: Optional[Dict[str, Any]], usage: Optional[Dict[str, Any]]) -> None:
+def _billing_multiplier_for_model(model: Optional[str]) -> float:
+    """Commercial token multiplier based on the public model selected by the client."""
+    normalized = (model or "").lower()
+    if "opus" in normalized:
+        return 2.0
+    if "sonnet-4-6" in normalized or "sonnet_4_6" in normalized:
+        return 1.5
+    return 1.0
+
+
+def _billable_tokens(tokens: int, multiplier: float) -> int:
+    import math
+    return int(math.ceil(max(0, int(tokens or 0)) * multiplier))
+
+
+def _record_managed_usage(
+    auth: Optional[Dict[str, Any]],
+    usage: Optional[Dict[str, Any]],
+    public_model: Optional[str] = None,
+) -> None:
     if not auth or auth.get("type") != "managed" or not usage:
         return
     from proxy_app import admin_db as _admin_db
     input_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
     output_tokens = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
     total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or input_tokens + output_tokens)
-    _admin_db.record_api_key_usage(auth.get("app_id"), input_tokens, output_tokens, total_tokens)
+    multiplier = _billing_multiplier_for_model(public_model)
+    _admin_db.record_api_key_usage(
+        auth.get("app_id"),
+        _billable_tokens(input_tokens, multiplier),
+        _billable_tokens(output_tokens, multiplier),
+        _billable_tokens(total_tokens, multiplier),
+    )
 
 
 async def anthropic_usage_wrapper(
     response_stream: AsyncGenerator[str, None],
     auth: Optional[Dict[str, Any]],
+    public_model: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     input_tokens = 0
     output_tokens = 0
@@ -1146,7 +1172,7 @@ async def anthropic_usage_wrapper(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": input_tokens + output_tokens,
-    })
+    }, public_model)
 
 
 async def streaming_response_wrapper(
@@ -1324,7 +1350,7 @@ async def streaming_response_wrapper(
                 headers=None,  # Headers are not available at this stage
                 body=full_response,
             )
-        _record_managed_usage(auth, full_response.get("usage") or {})
+        _record_managed_usage(auth, full_response.get("usage") or {}, public_model)
 
 
 async def anthropic_public_model_wrapper(
@@ -1478,7 +1504,7 @@ async def chat_completions(
                     body=response.model_dump(),
                 )
             if hasattr(response, "model_dump"):
-                _record_managed_usage(auth, response.model_dump().get("usage") or {})
+                _record_managed_usage(auth, response.model_dump().get("usage") or {}, _public_model)
             if _public_model and hasattr(response, "model_dump"):
                 response_data = response.model_dump()
                 response_data["model"] = _public_model
@@ -1574,6 +1600,7 @@ async def anthropic_messages(
                 anthropic_usage_wrapper(
                     anthropic_public_model_wrapper(result, _public_model_anthr),
                     auth,
+                    _public_model_anthr,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1593,7 +1620,7 @@ async def anthropic_messages(
             if _public_model_anthr and isinstance(result, dict):
                 result["model"] = _public_model_anthr
             if isinstance(result, dict):
-                _record_managed_usage(auth, result.get("usage") or {})
+                _record_managed_usage(auth, result.get("usage") or {}, _public_model_anthr)
             return JSONResponse(content=result)
 
     except (
