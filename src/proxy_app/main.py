@@ -922,6 +922,64 @@ def _virtual_claude_models() -> list:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
+def _env_int(names: tuple[str, ...], default: int) -> int:
+    for env_name in names:
+        value = os.getenv(env_name)
+        if not value:
+            continue
+        try:
+            return max(1, int(value))
+        except ValueError:
+            continue
+    return default
+
+
+def _virtual_model_context_window() -> int:
+    return _env_int(
+        (
+            "VIRTUAL_MODEL_CONTEXT_WINDOW",
+            "HOSTED_VLLM_CONTEXT_WINDOW",
+            "ANTHROPIC_VLLM_CONTEXT_WINDOW",
+            "PROXY_CONTEXT_WINDOW",
+            "MAX_CONTEXT_TOKENS",
+        ),
+        32768,
+    )
+
+
+def _virtual_model_max_output_tokens() -> int:
+    return _env_int(
+        (
+            "VIRTUAL_MODEL_MAX_OUTPUT_TOKENS",
+            "HOSTED_VLLM_MAX_TOKENS",
+            "ANTHROPIC_VLLM_MAX_TOKENS",
+            "PROXY_MAX_OUTPUT_TOKENS",
+        ),
+        512,
+    )
+
+
+def _apply_virtual_model_limits(model_cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    virtual_models = set(_virtual_claude_models())
+    if not virtual_models:
+        return model_cards
+
+    context_window = _virtual_model_context_window()
+    max_output_tokens = _virtual_model_max_output_tokens()
+
+    for card in model_cards:
+        if not isinstance(card, dict) or card.get("id") not in virtual_models:
+            continue
+        card["owned_by"] = card.get("id") or "claude"
+        card["context_length"] = context_window
+        card["context_window"] = context_window
+        card["max_input_tokens"] = context_window
+        card["max_completion_tokens"] = max_output_tokens
+        card["max_output_tokens"] = max_output_tokens
+
+    return model_cards
+
+
 def _is_virtual_claude_model(model: Optional[str]) -> bool:
     if not model:
         return False
@@ -1713,6 +1771,11 @@ def read_root():
     return {"Status": "API Key Proxy is running"}
 
 
+@app.head("/")
+def head_root():
+    return JSONResponse(content=None)
+
+
 def _admin_layout(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
         f"""<!doctype html>
@@ -1928,6 +1991,7 @@ async def list_models(
             model_info_service = request.app.state.model_info_service
             if model_info_service.is_ready:
                 enriched_data = model_info_service.enrich_model_list(model_ids)
+                enriched_data = _apply_virtual_model_limits(enriched_data)
                 return {"object": "list", "data": enriched_data}
     except Exception as e:
         logging.error(f"list_models enrich error: {e}")
@@ -1941,6 +2005,7 @@ async def list_models(
         }
         for model_id in model_ids
     ]
+    model_cards = _apply_virtual_model_limits(model_cards)
     return {"object": "list", "data": model_cards}
 
 
