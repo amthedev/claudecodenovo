@@ -47,6 +47,16 @@ VLLM_MAX_MESSAGE_CHARS = 12000
 VLLM_MAX_TOOL_RESULT_CHARS = 6000
 VLLM_MAX_RESPONSE_TEXT_CHARS = 5000
 VLLM_MAX_TOOLS = 16
+VLLM_SENSITIVE_WORKSPACE_PROMPT = (
+    "Sensitive workspace boundary: Do not inspect, grep, read, print, summarize, "
+    "or search for .env files, secrets, tokens, API keys, credentials, private "
+    "URLs, key files, PEM/cert files, SSH files, or auth caches unless the user "
+    "explicitly asks for a security audit or credential configuration help. If "
+    "you encounter such files during normal repo work, ignore their contents. "
+    "Mention only that sensitive files exist if it is directly relevant; never "
+    "reveal values. Adding or opening a repo means work in that repo, not hunting "
+    "for credentials."
+)
 VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "You are running inside Claude Code. STRICT RULES - follow exactly:\n"
     "1. ANALYZE BEFORE ACTING: before any important decision (editing, "
@@ -70,7 +80,8 @@ VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "For git: use Bash (git status/diff/log/add/commit) — never fabricate output.\n"
     "8. Respond in the same language the user used (Portuguese if they wrote in Portuguese).\n"
     "9. Be concise. Do not repeat conclusions. Stop after the task is done.\n"
-    "10. Never reveal <think> blocks, chain-of-thought, or planning notes."
+    "10. Never reveal <think> blocks, chain-of-thought, or planning notes.\n"
+    f"11. {VLLM_SENSITIVE_WORKSPACE_PROMPT}"
 )
 VLLM_TEXTUAL_TOOL_PROMPT = (
     "The upstream vLLM server may not support native OpenAI tool calling. "
@@ -99,7 +110,8 @@ VLLM_AGENT_FLOW_PROMPT = (
     "such as py_compile, unit tests, lint, or a small smoke test. If verification "
     "cannot run, state the concrete blocker in the final answer.\n"
     "7. Do not give a final answer until edits and verification are complete. "
-    "The final answer must briefly list files changed and verification results."
+    "The final answer must briefly list files changed and verification results.\n"
+    f"8. {VLLM_SENSITIVE_WORKSPACE_PROMPT}"
 )
 VLLM_MANDATORY_TOOL_PROMPT = (
     f"{VLLM_MANDATORY_TOOL_MARKER}: Do not answer with prose, examples, code "
@@ -117,12 +129,13 @@ VLLM_CREATE_FILE_TOOL_PROMPT = (
     "language or artifact. Then run it or compile it before finalizing."
 )
 VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
-    "This is a project inspection request. You MUST complete the full analysis "
-    "without stopping early. Steps: 1) Call LS or Glob to list all files, "
-    "2) Read each relevant file (source code, configs, docs), "
-    "3) After reading ALL files, give a complete analysis report. "
-    "Do NOT stop after just listing files. Do NOT say you will read files — read them. "
-    "Do NOT stop mid-task. The task is only done when you deliver the full report."
+    "This is a project inspection request. Inspect only files relevant to the "
+    "user's task. Start with LS/Glob or a safe file listing, then read selected "
+    "source/docs/config files needed to answer. Do not read all files blindly. "
+    "Never inspect .env, secrets, credentials, tokens, API keys, private key "
+    "material, auth caches, or credential dumps unless the user explicitly asks "
+    "for security auditing or credential setup. Do not stop after listing files; "
+    "deliver the requested report or next action."
 )
 VLLM_RUN_COMMAND_TOOL_PROMPT = (
     "This is a run/test request. Use Bash to execute the relevant command "
@@ -319,6 +332,26 @@ _RUN_COMMAND_MARKERS = (
     "install ",
     "lint",
     "format",
+)
+_SAFE_PROJECT_FIND_EXCLUDES = (
+    "-not -path '*/.*' "
+    "-not -path '*/node_modules/*' "
+    "-not -path '*/__pycache__/*' "
+    "-not -path '*/venv/*' "
+    "-not -path '*/.git/*' "
+    "-not -iname '.env' "
+    "-not -iname '.env.*' "
+    "-not -iname '*secret*' "
+    "-not -iname '*token*' "
+    "-not -iname '*credential*' "
+    "-not -iname '*credentials*' "
+    "-not -iname '*api_key*' "
+    "-not -iname '*apikey*' "
+    "-not -iname '*.pem' "
+    "-not -iname '*.key' "
+    "-not -iname '*.crt' "
+    "-not -iname '*.p12' "
+    "-not -iname '*.pfx'"
 )
 _PYTHON_REQUEST_MARKERS = (
     "python",
@@ -1440,15 +1473,14 @@ def _build_vllm_forced_tool_call(
         # direcionados (ex: "procure X", "explique o login"), deixa o modelo
         # escolher Grep/Read direcionado via prompt — não força read-all.
         if previous_count == 0 and bash and _is_whole_project_scope(user_text):
+            safe_excludes = _SAFE_PROJECT_FIND_EXCLUDES
             return _tool_call(
                 bash,
                 {
                     "command": (
                         "pwd; echo '===== ESTRUTURA ====='; "
                         "find . -maxdepth 4 -type f "
-                        "-not -path '*/.*' -not -path '*/node_modules/*' "
-                        "-not -path '*/__pycache__/*' -not -path '*/venv/*' "
-                        "-not -path '*/.git/*' | sort | head -200; "
+                        f"{safe_excludes} | sort | head -200; "
                         "echo '===== CONTEUDO ====='; "
                         "for f in $(find . -maxdepth 4 -type f "
                         "\\( -name '*.py' -o -name '*.js' -o -name '*.ts' "
@@ -1456,9 +1488,7 @@ def _build_vllm_forced_tool_call(
                         "-o -name '*.json' -o -name '*.txt' -o -name '*.html' "
                         "-o -name '*.css' -o -name '*.go' -o -name '*.rs' "
                         "-o -name '*.java' -o -name '*.sh' \\) "
-                        "-not -path '*/.*' -not -path '*/node_modules/*' "
-                        "-not -path '*/__pycache__/*' -not -path '*/venv/*' "
-                        "| head -40); do echo \"===== $f =====\"; "
+                        f"{safe_excludes} | head -40); do echo \"===== $f =====\"; "
                         "sed -n '1,400p' \"$f\"; echo; done"
                     ),
                     "description": "Read entire project for analysis",

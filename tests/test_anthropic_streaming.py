@@ -93,6 +93,55 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fallback["_proxy_strategy"], "write_from_model_text")
         self.assertEqual(fallback["input"]["file_path"], "snake_game.py")
 
+    def test_project_inspection_fallback_excludes_sensitive_files(self):
+        fallback = _build_vllm_forced_tool_call(
+            "inspect",
+            [{"function": {"name": "Bash"}}],
+            {
+                "messages": [
+                    {"role": "user", "content": "analise todo o projeto"}
+                ],
+                "_vllm_previous_tool_count": 0,
+            },
+        )
+
+        self.assertIsNotNone(fallback)
+        command = fallback["input"]["command"]
+        self.assertIn("-not -iname '.env'", command)
+        self.assertIn("-not -iname '*secret*'", command)
+        self.assertIn("-not -iname '*credential*'", command)
+        self.assertIn("-not -iname '*api_key*'", command)
+        self.assertIn("-not -iname '*.pem'", command)
+
+    def test_mandatory_prompt_warns_not_to_hunt_for_credentials(self):
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=1024,
+            stream=True,
+            messages=[
+                {"role": "user", "content": "analise todo o projeto"}
+            ],
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                }
+            ],
+        )
+
+        openai_request = translate_anthropic_request(request)
+        system_text = "\n".join(
+            message.get("content", "")
+            for message in openai_request["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("Do not inspect, grep, read", system_text)
+        self.assertIn(".env files, secrets, tokens, API keys", system_text)
+
     def test_parses_malformed_textual_tool_call_without_closing_tags(self):
         text = (
             "Vou escrever o arquivo agora.\n"
