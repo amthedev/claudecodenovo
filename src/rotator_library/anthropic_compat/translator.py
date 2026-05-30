@@ -1718,6 +1718,7 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             openai_request.pop("tool_choice", None)
         elif native_tools_enabled:
             openai_request["tools"] = tools
+            _inject_vllm_tool_use_prompt(openai_request, tools)
             if _force_tool_fallback_enabled():
                 _inject_vllm_mandatory_tool_instruction(openai_request, tools)
             if openai_request.get("tool_choice") not in (None, "auto"):

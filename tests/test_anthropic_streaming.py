@@ -332,6 +332,37 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Do not inspect, grep, read", system_text)
         self.assertIn(".env files, secrets, tokens, API keys", system_text)
 
+    def test_hosted_vllm_native_tools_include_textual_fallback_contract(self):
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "crie agent_probe.txt"}],
+            tools=[
+                {
+                    "name": "Write",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                    },
+                }
+            ],
+        )
+
+        with mock.patch.dict("os.environ", {"HOSTED_VLLM_NATIVE_TOOLS": "true"}):
+            openai_request = translate_anthropic_request(request)
+
+        self.assertIn("tools", openai_request)
+        system_text = "\n".join(
+            message.get("content", "")
+            for message in openai_request["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("<tool_call><function=ToolName>", system_text)
+        self.assertIn("- Write:", system_text)
+
     def test_parses_malformed_textual_tool_call_without_closing_tags(self):
         text = (
             "Vou escrever o arquivo agora.\n"
