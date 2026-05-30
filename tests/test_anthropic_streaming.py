@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +46,7 @@ async def _collect_events(chunks, forced_tool_call=None):
 
 
 class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
-    def test_providerless_model_gets_mandatory_create_fallback(self):
+    def test_providerless_model_uses_native_tool_contract_by_default(self):
         request = AnthropicMessagesRequest(
             model="claude-sonnet-4-5",
             max_tokens=1024,
@@ -69,8 +70,46 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         )
 
         openai_request = translate_anthropic_request(request)
-        fallback = openai_request.get("_vllm_forced_tool_call")
 
+        self.assertIn("tools", openai_request)
+        self.assertNotIn("_vllm_forced_tool_call", openai_request)
+        self.assertFalse(
+            any(
+                "CURRENT REQUEST REQUIRES TOOL USE" in (message.get("content") or "")
+                for message in openai_request["messages"]
+                if message.get("role") == "system"
+            )
+        )
+
+    def test_providerless_fallback_is_explicit_opt_in(self):
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            stream=True,
+            messages=[
+                {"role": "user", "content": "crie o jogo da cobrinha em python"}
+            ],
+            tools=[
+                {
+                    "name": "Write",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["file_path", "content"],
+                    },
+                }
+            ],
+        )
+
+        with mock.patch.dict(
+            "os.environ", {"ANTHROPIC_COMPAT_FORCE_TOOL_FALLBACK": "true"}
+        ):
+            openai_request = translate_anthropic_request(request)
+
+        fallback = openai_request.get("_vllm_forced_tool_call")
         self.assertIsNotNone(fallback)
         self.assertEqual(fallback["name"], "Write")
         self.assertEqual(fallback["_proxy_strategy"], "write_from_model_text")
@@ -134,6 +173,8 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         )
 
         openai_request = translate_anthropic_request(request)
+        self.assertNotIn("tools", openai_request)
+        self.assertNotIn("_vllm_forced_tool_call", openai_request)
         system_text = "\n".join(
             message.get("content", "")
             for message in openai_request["messages"]
@@ -392,6 +433,19 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
             and data["delta"]["type"] == "input_json_delta"
         )
         self.assertEqual(json.loads(partial_json), {"command": "pwd"})
+
+    async def test_stream_maps_length_finish_reason_to_max_tokens(self):
+        events = await _collect_events(
+            [
+                {"choices": [{"delta": {"content": "texto"}}]},
+                {"choices": [{"delta": {}, "finish_reason": "length"}]},
+            ]
+        )
+
+        message_delta = next(
+            data for event_type, data in events if event_type == "message_delta"
+        )
+        self.assertEqual(message_delta["delta"]["stop_reason"], "max_tokens")
 
 
 if __name__ == "__main__":

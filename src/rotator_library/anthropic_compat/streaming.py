@@ -237,6 +237,7 @@ async def anthropic_streaming_wrapper(
     textual_tool_buffer = ""  # Buffer text-emitted tool calls until complete
     delayed_model_text_buffer = ""
     stop_reason_final = "end_turn"  # Track final stop reason for logging
+    provider_finish_reason = None
     write_from_model_text = bool(
         forced_tool_call
         and forced_tool_call.get("_proxy_strategy") == "write_from_model_text"
@@ -398,8 +399,21 @@ async def anthropic_streaming_wrapper(
                     block_idx = tool_block_indices[tc_index]
                     yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {block_idx}}}\n\n'
 
-                # Determine stop_reason based on whether we had tool calls
-                stop_reason = "tool_use" if tool_block_indices else "end_turn"
+                # Determine stop_reason based on emitted blocks first, then the
+                # provider finish_reason. This mirrors Anthropic's contract while
+                # avoiding heuristic "tool use" stops for plain text responses.
+                stop_reason_map = {
+                    "stop": "end_turn",
+                    "length": "max_tokens",
+                    "tool_calls": "tool_use",
+                    "content_filter": "end_turn",
+                    "function_call": "tool_use",
+                }
+                stop_reason = (
+                    "tool_use"
+                    if tool_block_indices
+                    else stop_reason_map.get(provider_finish_reason, "end_turn")
+                )
                 stop_reason_final = stop_reason
 
                 # Build final usage dict with cached tokens
@@ -524,7 +538,13 @@ async def anthropic_streaming_wrapper(
             if not choices:
                 continue
 
-            delta = choices[0].get("delta", {})
+            choice = choices[0] or {}
+            finish_reason = choice.get("finish_reason")
+            if finish_reason:
+                if finish_reason == "tool_calls" or provider_finish_reason != "tool_calls":
+                    provider_finish_reason = finish_reason
+
+            delta = choice.get("delta", {})
 
             # Handle reasoning/thinking content (from OpenAI-style reasoning_content)
             reasoning_content = delta.get("reasoning_content")

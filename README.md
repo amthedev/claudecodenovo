@@ -201,7 +201,7 @@ For hosted vLLM backends, the Anthropic compatibility layer strips Anthropic-onl
 
 By default, hosted vLLM streams Anthropic responses immediately. Set `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=true` only for vLLM deployments that reject streaming requests. The proxy also avoids native OpenAI `tools` payloads for hosted vLLM unless `HOSTED_VLLM_NATIVE_TOOLS=true`, which prevents 400 responses from vLLM servers started without a tool-call parser. To make smaller local models behave more like Claude Code, hosted vLLM responses default to pt-BR and strip obvious leaked reasoning preambles; set `PROXY_RESPONSE_LANGUAGE` or `HOSTED_VLLM_STRIP_REASONING_PREAMBLE=false` to change that.
 
-For reliable Claude Code behavior, native tool calling is strongly recommended. Claude Code only runs file and shell actions when the response contains Anthropic `tool_use` blocks and finishes with `stop_reason: "tool_use"`. If a vLLM model only answers with prose like "I will save this file" plus a code block, Claude Code treats that as a normal final answer and no file is edited. The proxy includes a best-effort textual fallback for servers without tool parsers, but production Claude Code use should start vLLM with tool calling enabled and set `HOSTED_VLLM_NATIVE_TOOLS=true`.
+For reliable Claude Code behavior, native tool calling is strongly recommended. Claude Code only runs file and shell actions when the response contains Anthropic `tool_use` blocks and finishes with `stop_reason: "tool_use"`. If a vLLM model only answers with prose like "I will save this file" plus a code block, Claude Code treats that as a normal final answer and no file is edited. The proxy includes a best-effort textual fallback for servers without tool parsers. Heuristic forced tool fallback is off by default; enable `ANTHROPIC_COMPAT_FORCE_TOOL_FALLBACK=true` or `HOSTED_VLLM_FORCE_TOOL_FALLBACK=true` only for a backend that cannot return native tool calls and keeps answering with prose. Production Claude Code use should start vLLM with tool calling enabled and set `HOSTED_VLLM_NATIVE_TOOLS=true`.
 
 For Qwen2.5 hosted on vLLM, start the server with Hermes tool parsing, for example:
 
@@ -807,6 +807,7 @@ This repository includes `squarecloud.config` for Square Cloud deploys.
    - optional: `PROXY_DEFAULT_MODEL=hosted_vllm/qwen25-coder-32b`
    - optional: `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=true`
    - recommended for Claude Code: `HOSTED_VLLM_NATIVE_TOOLS=true` when your vLLM server was started with `--enable-auto-tool-choice` and the correct `--tool-call-parser`
+   - optional compatibility mode: `HOSTED_VLLM_FORCE_TOOL_FALLBACK=true` only when the backend cannot emit native tool calls
    - optional: `PROXY_RESPONSE_LANGUAGE=pt-BR`
    - optional: `HOSTED_VLLM_STRIP_REASONING_PREAMBLE=true`
    - optional: `HOSTED_VLLM_MAX_TOKENS=4096`

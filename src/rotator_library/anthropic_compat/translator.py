@@ -58,30 +58,13 @@ VLLM_SENSITIVE_WORKSPACE_PROMPT = (
     "for credentials."
 )
 VLLM_TOOL_USE_SYSTEM_PROMPT = (
-    "You are running inside Claude Code. STRICT RULES - follow exactly:\n"
-    "1. ANALYZE BEFORE ACTING: before any important decision (editing, "
-    "overwriting, refactoring, deleting, or running a state-changing command), "
-    "FIRST Read the relevant file(s) to understand the current state. Never act "
-    "on assumptions about file contents — open and read them first.\n"
-    "2. ALWAYS use tools to act. NEVER paste code or describe what you will do "
-    "instead of doing it. If the user says 'create X', call Write/Create immediately.\n"
-    "3. NEVER say 'Vou salvar', 'I will save', 'Vou criar', 'I will create', "
-    "'Vou analisar', 'Vou ler' without immediately calling the corresponding tool "
-    "in the SAME response. Saying it without doing it is forbidden.\n"
-    "4. To EDIT an existing file: ALWAYS call Read first to get the current content, "
-    "then call Edit/Update with the exact changes. NEVER edit blindly without reading.\n"
-    "5. For NEW files: call Write directly with the complete content.\n"
-    "6. USE THE RIGHT TOOL for each job: Read/Glob/Grep to find and inspect code; "
-    "Write/Edit/MultiEdit to change files; Bash for git, tests, builds, installs, "
-    "and running commands; WebFetch/WebSearch for online info; TodoWrite to track "
-    "multi-step work; and any connected MCP/external tools when the task matches "
-    "them. Prefer a real tool call over explaining how the user could do it.\n"
-    "7. For searching: use Grep/Glob (or rg) to locate code instead of guessing. "
-    "For git: use Bash (git status/diff/log/add/commit) — never fabricate output.\n"
-    "8. Respond in the same language the user used (Portuguese if they wrote in Portuguese).\n"
-    "9. Be concise. Do not repeat conclusions. Stop after the task is done.\n"
-    "10. Never reveal <think> blocks, chain-of-thought, or planning notes.\n"
-    f"11. {VLLM_SENSITIVE_WORKSPACE_PROMPT}"
+    "Anthropic tool bridge contract: when the user asks for an action that "
+    "requires a tool, emit a real tool call instead of narrating the action or "
+    "printing code for the user to copy. Use only the tools and argument schemas "
+    "provided in this request, preserve the user's requested scope, and continue "
+    "from tool results until the task is complete. Do not expose private "
+    "reasoning or <think> blocks. "
+    f"{VLLM_SENSITIVE_WORKSPACE_PROMPT}"
 )
 VLLM_TEXTUAL_TOOL_PROMPT = (
     "The upstream vLLM server may not support native OpenAI tool calling. "
@@ -92,34 +75,17 @@ VLLM_TEXTUAL_TOOL_PROMPT = (
 )
 VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
 VLLM_AGENT_FLOW_PROMPT = (
-    "Agent workflow contract:\n"
-    "1. ANALYZE BEFORE DECIDING: before any important decision (editing, "
-    "overwriting, deleting, refactoring, or running a command that changes "
-    "state), FIRST Read the relevant file(s) and understand the current code. "
-    "Never edit or overwrite a file you have not read in this session. Never "
-    "assume what a file contains — open it and check.\n"
-    "2. Keep working until the user's task is actually complete; do not stop "
-    "after a partial edit or first command result.\n"
-    "3. For multi-step work, call TodoWrite when available, then keep statuses "
-    "current as you inspect, edit, run, and verify.\n"
-    "4. Before using a file path, verify it from the current workspace with LS, "
-    "Glob, Grep, Read, pwd, or rg --files when uncertain. Never invent paths.\n"
-    "5. If a command fails because of path, cwd, missing file, syntax, or usage, "
-    "inspect the error and retry with a corrected command instead of giving up.\n"
-    "6. After creating or editing code, run a relevant verification command "
-    "such as py_compile, unit tests, lint, or a small smoke test. If verification "
-    "cannot run, state the concrete blocker in the final answer.\n"
-    "7. Do not give a final answer until edits and verification are complete. "
-    "The final answer must briefly list files changed and verification results.\n"
-    f"8. {VLLM_SENSITIVE_WORKSPACE_PROMPT}"
+    "Agent workflow contract: use tools for workspace actions, keep working "
+    "through tool results until the user-visible task is complete, and verify "
+    "edits when a relevant lightweight check is available. Inspect only the "
+    "files needed for the current task; do not broaden the scope on your own. "
+    f"{VLLM_SENSITIVE_WORKSPACE_PROMPT}"
 )
 VLLM_MANDATORY_TOOL_PROMPT = (
-    f"{VLLM_MANDATORY_TOOL_MARKER}: Do not answer with prose, examples, code "
-    "blocks, or permission questions. Your next output must be exactly one "
-    "tool call in the textual tool-call format. You already have permission "
-    "to inspect, edit, create, and run project files when the user asks for it. "
-    "After tool results come back, continue with more tool calls when needed; "
-    "only give the final answer after the task is actually done.\n"
+    f"{VLLM_MANDATORY_TOOL_MARKER}: The next output must be one tool call in "
+    "the textual tool-call format. Use this only for compatibility backends "
+    "that cannot return native OpenAI tool_calls. After tool results come back, "
+    "continue normally and keep the user's requested scope.\n"
     f"{VLLM_AGENT_FLOW_PROMPT}"
 )
 VLLM_CREATE_FILE_TOOL_PROMPT = (
@@ -1145,6 +1111,14 @@ def _vllm_native_tools_enabled() -> bool:
     return _env_flag_enabled("HOSTED_VLLM_NATIVE_TOOLS", "VLLM_NATIVE_TOOLS")
 
 
+def _force_tool_fallback_enabled() -> bool:
+    return _env_flag_enabled(
+        "ANTHROPIC_COMPAT_FORCE_TOOL_FALLBACK",
+        "HOSTED_VLLM_FORCE_TOOL_FALLBACK",
+        "VLLM_FORCE_TOOL_FALLBACK",
+    )
+
+
 def _format_vllm_textual_tool_prompt(tools: Optional[List[Dict[str, Any]]]) -> str:
     if not tools:
         return "\n".join(
@@ -1645,15 +1619,16 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             openai_request.pop("tool_choice", None)
         elif native_tools_enabled:
             openai_request["tools"] = tools
-            _inject_vllm_tool_use_prompt(openai_request, tools)
-            _inject_vllm_mandatory_tool_instruction(openai_request, tools)
+            if _force_tool_fallback_enabled():
+                _inject_vllm_mandatory_tool_instruction(openai_request, tools)
             if openai_request.get("tool_choice") not in (None, "auto"):
                 # vLLM's OpenAI server is picky about forced/required tool choice,
                 # while Claude Code still works with auto tool selection.
                 openai_request["tool_choice"] = "auto"
         else:
             _inject_vllm_tool_use_prompt(openai_request, tools)
-            _inject_vllm_mandatory_tool_instruction(openai_request, tools)
+            if _force_tool_fallback_enabled():
+                _inject_vllm_mandatory_tool_instruction(openai_request, tools)
             openai_request.pop("tools", None)
             openai_request.pop("tool_choice", None)
             openai_request["messages"] = _linearize_vllm_tool_messages(
@@ -1846,7 +1821,7 @@ def translate_anthropic_request(request: AnthropicMessagesRequest) -> Dict[str, 
         elif request.thinking.type == "disabled":
             openai_request["reasoning_effort"] = "disable"
 
-    if openai_tools:
+    if openai_tools and _force_tool_fallback_enabled():
         _attach_mandatory_tool_fallback(openai_request, openai_tools)
 
     provider = request.model.split("/", 1)[0].lower() if "/" in request.model else ""
