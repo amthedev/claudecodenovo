@@ -17,6 +17,7 @@ anthropic_package.__path__ = [str(PACKAGE_ROOT / "anthropic_compat")]
 sys.modules.setdefault("rotator_library.anthropic_compat", anthropic_package)
 
 from rotator_library.anthropic_compat.streaming import anthropic_streaming_wrapper
+from rotator_library.anthropic_compat.translator import _parse_textual_tool_calls
 
 
 async def _stream(chunks):
@@ -37,6 +38,76 @@ async def _collect_events(chunks):
 
 
 class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
+    def test_parses_malformed_textual_tool_call_without_closing_tags(self):
+        text = (
+            "Vou escrever o arquivo agora.\n"
+            "<function=Write><parameter=file_path>cronometro_avancado.py"
+            "<parameter=content>print('ok')\n"
+        )
+
+        cleaned_text, tool_blocks = _parse_textual_tool_calls(text)
+
+        self.assertEqual(cleaned_text, "Vou escrever o arquivo agora.")
+        self.assertEqual(len(tool_blocks), 1)
+        self.assertEqual(tool_blocks[0]["name"], "Write")
+        self.assertEqual(
+            tool_blocks[0]["input"],
+            {"file_path": "cronometro_avancado.py", "content": "print('ok')"},
+        )
+
+    async def test_converts_textual_tool_call_after_prose_to_tool_use(self):
+        events = await _collect_events(
+            [
+                {"choices": [{"delta": {"content": "Vou escrever o arquivo agora.\n"}}]},
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": (
+                                    "<function=Write>"
+                                    "<parameter=file_path>cronometro_avancado.py"
+                                    "<parameter=content>print('ok')\n"
+                                )
+                            }
+                        }
+                    ]
+                },
+            ]
+        )
+
+        text_delta = "".join(
+            data["delta"]["text"]
+            for event_type, data in events
+            if event_type == "content_block_delta"
+            and data["delta"]["type"] == "text_delta"
+        )
+        self.assertNotIn("<function=", text_delta)
+
+        tool_starts = [
+            data
+            for event_type, data in events
+            if event_type == "content_block_start"
+            and data["content_block"]["type"] == "tool_use"
+        ]
+        self.assertEqual(len(tool_starts), 1)
+        self.assertEqual(tool_starts[0]["content_block"]["name"], "Write")
+
+        partial_json = "".join(
+            data["delta"]["partial_json"]
+            for event_type, data in events
+            if event_type == "content_block_delta"
+            and data["delta"]["type"] == "input_json_delta"
+        )
+        self.assertEqual(
+            json.loads(partial_json),
+            {"file_path": "cronometro_avancado.py", "content": "print('ok')"},
+        )
+
+        message_delta = next(
+            data for event_type, data in events if event_type == "message_delta"
+        )
+        self.assertEqual(message_delta["delta"]["stop_reason"], "tool_use")
+
     async def test_delays_tool_block_until_name_is_known(self):
         events = await _collect_events(
             [

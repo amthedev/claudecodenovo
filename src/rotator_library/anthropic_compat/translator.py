@@ -136,12 +136,16 @@ VLLM_TOOL_PRIORITY = {
 }
 
 
-_TEXTUAL_TOOL_CALL_RE = re.compile(
-    r"(?:<tool_call>\s*)?<function=([A-Za-z0-9_.:-]+)>(.*?</function>)(?:\s*</tool_call>)?",
+_TEXTUAL_TOOL_CALL_START_RE = re.compile(
+    r"(?:<tool_call>\s*)?<function=([A-Za-z0-9_.:-]+)>",
+    re.DOTALL,
+)
+_TEXTUAL_TOOL_CALL_END_RE = re.compile(
+    r"</function>\s*(?:</tool_call>)?",
     re.DOTALL,
 )
 _TEXTUAL_TOOL_PARAM_RE = re.compile(
-    r"<parameter=([A-Za-z0-9_.:-]+)>\s*(.*?)(?=(?:</parameter>\s*)?<parameter=|</function>)",
+    r"<parameter=([A-Za-z0-9_.:-]+)>\s*(.*?)(?=(?:</parameter>\s*)?<parameter=|</function>|\Z)",
     re.DOTALL,
 )
 _THINK_TAG_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
@@ -223,10 +227,9 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
         return text, []
 
     tool_blocks: List[dict] = []
+    cleaned_parts: List[str] = []
 
-    def replace_tool_call(match: re.Match) -> str:
-        tool_name = match.group(1).strip()
-        body = match.group(2)
+    def parse_tool_body(tool_name: str, body: str) -> Optional[dict]:
         tool_input: Dict[str, Any] = {}
 
         for param_match in _TEXTUAL_TOOL_PARAM_RE.finditer(body):
@@ -245,17 +248,41 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
             tool_input[key] = value
 
         if tool_name and tool_input:
-            tool_blocks.append(
-                {
-                    "type": "tool_use",
-                    "id": f"toolu_{uuid.uuid4().hex[:12]}",
-                    "name": tool_name,
-                    "input": tool_input,
-                }
-            )
-        return ""
+            return {
+                "type": "tool_use",
+                "id": f"toolu_{uuid.uuid4().hex[:12]}",
+                "name": tool_name,
+                "input": tool_input,
+            }
+        return None
 
-    cleaned_text = _TEXTUAL_TOOL_CALL_RE.sub(replace_tool_call, text).strip()
+    last_pos = 0
+    for match in _TEXTUAL_TOOL_CALL_START_RE.finditer(text):
+        if match.start() < last_pos:
+            continue
+        cleaned_parts.append(text[last_pos : match.start()])
+
+        tool_name = match.group(1).strip()
+        body_start = match.end()
+        end_match = _TEXTUAL_TOOL_CALL_END_RE.search(text, body_start)
+        if end_match:
+            body_end = end_match.start()
+            block_end = end_match.end()
+        else:
+            body_end = len(text)
+            block_end = len(text)
+
+        block = parse_tool_body(tool_name, text[body_start:body_end])
+        if block:
+            tool_blocks.append(block)
+        else:
+            cleaned_parts.append(text[match.start() : block_end])
+        last_pos = block_end
+        if not end_match:
+            break
+
+    cleaned_parts.append(text[last_pos:])
+    cleaned_text = "".join(cleaned_parts).strip()
     return cleaned_text, tool_blocks
 
 

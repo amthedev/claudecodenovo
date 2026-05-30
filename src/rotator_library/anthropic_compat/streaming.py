@@ -469,23 +469,29 @@ async def anthropic_streaming_wrapper(
             content = delta.get("content")
             if content:
                 if textual_tool_buffer:
-                    candidate = textual_tool_buffer + content
-                    stripped = candidate.lstrip()
-                    if (
-                        "<tool_call" in stripped
-                        or "<function=" in stripped
-                        or (stripped.startswith("<") and len(candidate) < 128)
-                    ):
-                        textual_tool_buffer = candidate
+                    textual_tool_buffer += content
+                    continue
+
+                marker_positions = [
+                    pos
+                    for pos in (
+                        content.find("<tool_call"),
+                        content.find("<function="),
+                    )
+                    if pos >= 0
+                ]
+                marker_pos = min(marker_positions) if marker_positions else -1
+                if marker_pos >= 0:
+                    textual_tool_buffer = content[marker_pos:]
+                    content = content[:marker_pos]
+                    if not content:
                         continue
-                    content = candidate
-                    textual_tool_buffer = ""
-                elif not content_block_started:
+                else:
                     stripped = content.lstrip()
                     if (
-                        "<tool_call" in stripped
-                        or "<function=" in stripped
-                        or stripped.startswith("<")
+                        stripped.startswith("<tool")
+                        or stripped.startswith("<fun")
+                        or stripped.startswith("<function")
                     ):
                         textual_tool_buffer = content
                         continue
