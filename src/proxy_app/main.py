@@ -955,7 +955,7 @@ def _virtual_model_max_output_tokens() -> int:
             "ANTHROPIC_VLLM_MAX_TOKENS",
             "PROXY_MAX_OUTPUT_TOKENS",
         ),
-        512,
+        2048,
     )
 
 
