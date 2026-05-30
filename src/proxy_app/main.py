@@ -1067,9 +1067,11 @@ def _verify_managed_api_key(api_key: str) -> Optional[Dict[str, Any]]:
     if error == "expired":
         raise HTTPException(status_code=403, detail="API key expired")
     if error == "limit_exceeded":
-        raise HTTPException(status_code=429, detail="Daily API key limit exceeded")
+        raise HTTPException(status_code=429, detail="API key quota exceeded")
     if error:
         return None
+    if result.get("key_type") == "reseller":
+        raise HTTPException(status_code=403, detail="Reseller master keys cannot call model endpoints")
     return result
 
 

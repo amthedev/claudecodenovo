@@ -84,6 +84,31 @@
   color: var(--accent-dark);
 }
 
+.legacy-code-panel,
+.code-mode-button,
+[data-code-chat-open],
+[data-attach-action="code-chat"] {
+  display: none !important;
+}
+
+.web-source-list {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cloud-line);
+  font-size: 12px;
+}
+
+.web-source-list a {
+  color: var(--accent-dark);
+  text-decoration: none;
+}
+
+.web-source-list a:hover {
+  text-decoration: underline;
+}
+
 * {
   box-sizing: border-box;
 }

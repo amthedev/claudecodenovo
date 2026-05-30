@@ -134,14 +134,6 @@ def init_db() -> None:
                 created_at REAL NOT NULL,
                 FOREIGN KEY (account_id) REFERENCES web_accounts(id) ON DELETE CASCADE
             );
-            CREATE TABLE IF NOT EXISTS key_reveals (
-                token TEXT PRIMARY KEY,
-                key_value TEXT NOT NULL,
-                key_id TEXT NOT NULL,
-                key_name TEXT NOT NULL,
-                action TEXT NOT NULL DEFAULT 'create',
-                expires_at REAL NOT NULL
-            );
         """)
         # Migracoes: adiciona colunas novas em tabelas existentes (seguro se ja existirem)
         new_cols = [
@@ -333,6 +325,7 @@ def list_api_keys() -> List[Dict[str, Any]]:
             ).fetchone()["tokens"]
             effective_tokens = total_tokens + child_usage
             token_limit = r["token_limit"] or 0
+            tokens_remaining = _remaining_tokens_for_row(c, r)
             revenue = round(total_tokens / 1000 * r["price_per_1k"], 4)
             result.append({
                 "id": r["id"], "name": r["name"], "description": r["description"],
@@ -346,7 +339,8 @@ def list_api_keys() -> List[Dict[str, Any]]:
                 "tokens_month": month_tokens, "tokens_total": total_tokens,
                 "effective_tokens_total": effective_tokens,
                 "token_limit": token_limit,
-                "tokens_remaining": max(0, token_limit - effective_tokens) if token_limit else None,
+                "tokens_remaining": max(0, tokens_remaining) if tokens_remaining is not None else None,
+                "access_error": _row_access_error(c, r),
                 "allocated_tokens": allocated,
                 "key_type": r["key_type"] or "client",
                 "parent_key_id": r["parent_key_id"],
@@ -400,7 +394,7 @@ def recharge_api_key(kid: str, add_tokens: int = 0, add_daily_tokens: int = 0,
             parent = c.execute(
                 "SELECT * FROM api_keys WHERE id=?", (row["parent_key_id"],)
             ).fetchone()
-            if not parent or not parent["active"]:
+            if not parent or _row_access_error(c, parent):
                 raise ValueError("Chave mestre inválida ou inativa.")
             pool = int(parent["token_limit"] or 0)
             allocated = int(c.execute(
@@ -427,7 +421,9 @@ def rotate_api_key(kid: str) -> tuple[str, str]:
     """Gera nova chave. Retorna (key_value, reveal_token)."""
     new_key = generate_sk_key()
     info = get_api_key(kid)
-    name = info["name"] if info else "key"
+    if not info:
+        raise ValueError("Chave não encontrada.")
+    name = info["name"]
     with _db() as c:
         c.execute("UPDATE api_keys SET key_hash=?,key_preview=?,updated_at=? WHERE id=?",
                   (hash_api_key(new_key), new_key[:14] + "...", time.time(), kid))
@@ -437,6 +433,9 @@ def rotate_api_key(kid: str) -> tuple[str, str]:
 
 def delete_api_key(kid: str) -> bool:
     with _db() as c:
+        c.execute("DELETE FROM key_reveals WHERE key_id=? OR key_id IN (SELECT id FROM api_keys WHERE parent_key_id=?)",
+                  (kid, kid))
+        c.execute("DELETE FROM api_keys WHERE parent_key_id=?", (kid,))
         cur = c.execute("DELETE FROM api_keys WHERE id=?", (kid,))
         return cur.rowcount > 0
 
@@ -459,28 +458,9 @@ def verify_api_key_db(raw: str) -> Optional[Dict[str, Any]]:
             ).fetchone()
         if not r:
             return None
-        if not r["active"]:
-            return {"error": "disabled"}
-        if r["expires_at"] and r["expires_at"] <= now:
-            return {"error": "expired"}
-        dl = r["daily_limit"]
-        if dl > 0:
-            u = c.execute("SELECT total_tokens FROM key_usage WHERE key_id=? AND date=?",
-                           (r["id"], today)).fetchone()
-            if u and u["total_tokens"] >= dl:
-                return {"error": "limit_exceeded"}
-        month = today[:7]
-        ml = r["monthly_limit"]
-        if ml > 0:
-            month_tokens = c.execute(
-                "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE key_id=? AND date LIKE ?",
-                (r["id"], month + "%"),
-            ).fetchone()[0]
-            if month_tokens >= ml:
-                return {"error": "limit_exceeded"}
-        remaining = _remaining_tokens_for_row(c, r)
-        if remaining is not None and remaining <= 0:
-            return {"error": "limit_exceeded"}
+        error = _row_access_error(c, r, now=now, today=today)
+        if error:
+            return {"error": error}
         return {"type": "managed", "app_id": r["id"], "app_name": r["name"],
                 "key_preview": r["key_preview"], "key_type": r["key_type"] or "client"}
 
@@ -505,6 +485,7 @@ def _web_account_payload(account_id: str) -> Optional[Dict[str, Any]]:
         "created_at": account["created_at"],
         "plan": key["name"],
         "active": key["active"],
+        "access_status": (verify_api_key_db_by_id(account["key_id"]) or {}).get("error") or "active",
         "expires_at": key["expires_at"],
         "tokens_today": key["tokens_today"],
         "tokens_total": key["tokens_total"],
@@ -564,9 +545,6 @@ def login_web_account(email: str, password: str) -> Dict[str, Any]:
         account = c.execute("SELECT * FROM web_accounts WHERE email=?", (email,)).fetchone()
     if not account or not _verify_pw(password, account["password_hash"], account["password_salt"]):
         raise ValueError("E-mail ou senha incorretos.")
-    verified = verify_api_key_db_by_id(account["key_id"])
-    if not verified or verified.get("error"):
-        raise ValueError("Sua conta está sem saldo, inativa ou expirada.")
     return {"account": _web_account_payload(account["id"]), "access_token": _create_web_session(account["id"], account["key_id"])}
 
 
@@ -575,29 +553,10 @@ def verify_api_key_db_by_id(key_id: str) -> Optional[Dict[str, Any]]:
         key = c.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
         if not key:
             return None
-        now = time.time()
-        if not key["active"]:
-            return {"error": "disabled"}
-        if key["expires_at"] and key["expires_at"] <= now:
-            return {"error": "expired"}
         today = time.strftime("%Y-%m-%d", time.gmtime())
-        if key["daily_limit"] > 0:
-            day_tokens = c.execute(
-                "SELECT total_tokens FROM key_usage WHERE key_id=? AND date=?",
-                (key_id, today),
-            ).fetchone()
-            if day_tokens and day_tokens["total_tokens"] >= key["daily_limit"]:
-                return {"error": "limit_exceeded"}
-        if key["monthly_limit"] > 0:
-            month_tokens = c.execute(
-                "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE key_id=? AND date LIKE ?",
-                (key_id, today[:7] + "%"),
-            ).fetchone()[0]
-            if month_tokens >= key["monthly_limit"]:
-                return {"error": "limit_exceeded"}
-        remaining = _remaining_tokens_for_row(c, key)
-        if remaining is not None and remaining <= 0:
-            return {"error": "limit_exceeded"}
+        error = _row_access_error(c, key, now=time.time(), today=today)
+        if error:
+            return {"error": error}
         return {"type": "managed", "app_id": key["id"], "app_name": key["name"],
                 "key_preview": key["key_preview"], "key_type": key["key_type"] or "client"}
 
@@ -689,22 +648,70 @@ def _children_tokens(c: sqlite3.Connection, key_id: str) -> int:
     ).fetchone()[0])
 
 
-def _remaining_tokens_for_row(c: sqlite3.Connection, row: sqlite3.Row) -> Optional[int]:
-    limit = int(row["token_limit"] or 0)
-    if limit <= 0:
-        return None
-    used = _total_tokens(c, row["id"])
+def _period_tokens(c: sqlite3.Connection, row: sqlite3.Row, date_pattern: str) -> int:
+    used = int(c.execute(
+        "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE key_id=? AND date LIKE ?",
+        (row["id"], date_pattern),
+    ).fetchone()[0])
     if (row["key_type"] or "client") == "reseller":
-        used += _children_tokens(c, row["id"])
-    remaining = limit - used
+        used += int(c.execute(
+            """SELECT COALESCE(SUM(ku.total_tokens),0)
+               FROM key_usage ku JOIN api_keys child ON child.id=ku.key_id
+               WHERE child.parent_key_id=? AND ku.date LIKE ?""",
+            (row["id"], date_pattern),
+        ).fetchone()[0])
+    return used
+
+
+def _remaining_tokens_for_row(c: sqlite3.Connection, row: sqlite3.Row,
+                              seen: Optional[set[str]] = None) -> Optional[int]:
+    seen = set(seen or ())
+    if row["id"] in seen:
+        return 0
+    seen.add(row["id"])
+    limit = int(row["token_limit"] or 0)
+    remaining = None
+    if limit > 0:
+        used = _total_tokens(c, row["id"])
+        if (row["key_type"] or "client") == "reseller":
+            used += _children_tokens(c, row["id"])
+        remaining = limit - used
     parent_id = row["parent_key_id"]
     if parent_id:
         parent = c.execute("SELECT * FROM api_keys WHERE id=?", (parent_id,)).fetchone()
-        if parent:
-            parent_remaining = _remaining_tokens_for_row(c, parent)
-            if parent_remaining is not None:
-                remaining = min(remaining, parent_remaining)
+        if not parent:
+            return 0
+        parent_remaining = _remaining_tokens_for_row(c, parent, seen)
+        if parent_remaining is not None:
+            remaining = parent_remaining if remaining is None else min(remaining, parent_remaining)
     return remaining
+
+
+def _row_access_error(c: sqlite3.Connection, row: sqlite3.Row, now: Optional[float] = None,
+                      today: Optional[str] = None, seen: Optional[set[str]] = None) -> Optional[str]:
+    now = now or time.time()
+    today = today or time.strftime("%Y-%m-%d", time.gmtime())
+    seen = set(seen or ())
+    if row["id"] in seen:
+        return "disabled"
+    seen.add(row["id"])
+    if not row["active"]:
+        return "disabled"
+    if row["expires_at"] and row["expires_at"] <= now:
+        return "expired"
+    if row["daily_limit"] > 0 and _period_tokens(c, row, today) >= row["daily_limit"]:
+        return "limit_exceeded"
+    if row["monthly_limit"] > 0 and _period_tokens(c, row, today[:7] + "%") >= row["monthly_limit"]:
+        return "limit_exceeded"
+    remaining = _remaining_tokens_for_row(c, row)
+    if remaining is not None and remaining <= 0:
+        return "limit_exceeded"
+    if row["parent_key_id"]:
+        parent = c.execute("SELECT * FROM api_keys WHERE id=?", (row["parent_key_id"],)).fetchone()
+        if not parent:
+            return "disabled"
+        return _row_access_error(c, parent, now=now, today=today, seen=seen)
+    return None
 
 
 def record_api_key_usage(key_id: Optional[str], input_tokens: int = 0,
@@ -742,7 +749,7 @@ def create_reseller_client_key(reseller_id: str, name: str, token_limit: int,
     token_limit = max(0, int(token_limit))
     with _db() as c:
         reseller = c.execute("SELECT * FROM api_keys WHERE id=?", (reseller_id,)).fetchone()
-        if not reseller or reseller["key_type"] != "reseller" or not reseller["active"]:
+        if not reseller or reseller["key_type"] != "reseller" or _row_access_error(c, reseller):
             raise ValueError("Revendedor inválido ou inativo.")
         available = _remaining_tokens_for_row(c, reseller)
         allocated = int(c.execute(
@@ -782,13 +789,20 @@ def validate_reseller_session(token: str) -> Optional[Dict[str, Any]]:
     if not token:
         return None
     with _db() as c:
-        r = c.execute("""SELECT rs.key_id,rs.expires_at,ak.active,ak.key_type
+        r = c.execute("""SELECT rs.key_id,rs.expires_at AS session_expires_at,ak.*
                          FROM reseller_sessions rs JOIN api_keys ak ON ak.id=rs.key_id
                          WHERE rs.token=?""", (token,)).fetchone()
-        if not r or r["expires_at"] < time.time() or not r["active"] or r["key_type"] != "reseller":
+        if not r or r["session_expires_at"] < time.time() or r["key_type"] != "reseller" or _row_access_error(c, r):
+            c.execute("DELETE FROM reseller_sessions WHERE token=?", (token,))
             return None
         keys = {k["id"]: k for k in list_api_keys()}
         return keys.get(r["key_id"])
+
+
+def delete_reseller_session(token: str) -> None:
+    if token:
+        with _db() as c:
+            c.execute("DELETE FROM reseller_sessions WHERE token=?", (token,))
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────

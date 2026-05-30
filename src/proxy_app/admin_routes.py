@@ -1,6 +1,7 @@
 """admin_routes.py — Painel admin profissional com SQLite."""
 from __future__ import annotations
 import hmac as _hmac, json, os, time, urllib.parse
+from html import escape as _e
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -50,6 +51,21 @@ def _flim(n: int) -> str:
 def _tokens(n) -> str:
     if n is None: return "∞"
     return _flim(int(n))
+
+def _secure_cookie(req: Request) -> bool:
+    return req.headers.get("x-forwarded-proto", req.url.scheme).split(",", 1)[0].strip() == "https"
+
+def _number(value, cast=int):
+    try:
+        return max(0, cast(value or 0))
+    except (TypeError, ValueError):
+        raise ValueError("Preencha os limites somente com números válidos.")
+
+def _with_error(path: str, message: str) -> RedirectResponse:
+    return RedirectResponse(path + "?" + urllib.parse.urlencode({"err": message}), 302)
+
+def _j(value: str) -> str:
+    return _e(json.dumps(str(value)), quote=True)
 
 def _svg_bars(data, color="#6366f1", height=60):
     if not data: return ""
@@ -183,7 +199,7 @@ def _page(title, body, logged=False, proxy_key=""):
       <span class="logo">&#9670; ProxyAdmin</span>
       {'<a class="nav-item active" href="/admin/dashboard">Dashboard</a>' if logged else ''}
       <span class="spacer"></span>
-      {'<span class="mono" style="font-size:11px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">'+proxy_key[:20]+'...</span>' if proxy_key and logged else ''}
+      {'<span class="mono" style="font-size:11px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">'+_e(proxy_key[:20])+'...</span>' if proxy_key and logged else ''}
       {'<form method="post" action="/admin/logout" style="margin:0"><button class="btn-ghost btn-sm">Sair</button></form>' if logged else ''}
     </nav>""" if logged else f'<nav><span class="logo">&#9670; ProxyAdmin</span></nav>'
     return HTMLResponse(f"""<!DOCTYPE html>
@@ -301,7 +317,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         admin_db.create_admin(u, p)
         tok = admin_db.create_session(u)
         r = RedirectResponse("/admin/dashboard", 302)
-        r.set_cookie(COOKIE, tok, httponly=True, samesite="lax", max_age=admin_db.SESSION_TTL)
+        r.set_cookie(COOKIE, tok, httponly=True, secure=_secure_cookie(req), samesite="lax", max_age=admin_db.SESSION_TTL)
         return r
 
     @app.get("/admin/login", response_class=HTMLResponse)
@@ -327,7 +343,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             return RedirectResponse("/admin/login?err=1", 302)
         tok = admin_db.create_session(u)
         r = RedirectResponse("/admin/dashboard", 302)
-        r.set_cookie(COOKIE, tok, httponly=True, samesite="lax", max_age=admin_db.SESSION_TTL)
+        r.set_cookie(COOKIE, tok, httponly=True, secure=_secure_cookie(req), samesite="lax", max_age=admin_db.SESSION_TTL)
         return r
 
     @app.post("/admin/logout")
@@ -340,7 +356,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
 
     # ── Dashboard ─────────────────────────────────────────────────────────────
     @app.get("/admin/dashboard", response_class=HTMLResponse)
-    async def dashboard(req: Request, reveal: str = ""):
+    async def dashboard(req: Request, reveal: str = "", err: str = ""):
         _need(req)
         stats = admin_db.get_stats()
         keys  = admin_db.list_api_keys()
@@ -360,14 +376,14 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             rev_html = f"""<div class="reveal-banner">
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
                 <span style="font-size:20px">🔑</span>
-                <b>Chave {action_label}: {rev_data['key_name']}</b>
+                <b>Chave {action_label}: {_e(rev_data['key_name'])}</b>
                 <span class="badge badge-yellow">Copie agora</span>
               </div>
               <p style="color:var(--muted);font-size:13px;margin-top:4px">
                 Esta é a única vez que a chave é exibida em texto completo.</p>
               <div class="copy-row mono">
                 <span id="rev-key">{rev_data['key_value']}</span>
-                <button class="btn btn-sm" onclick="cp('{rev_data['key_value']}',this)">Copiar chave</button>
+                <button class="btn btn-sm" onclick='cp({_j(rev_data["key_value"])},this)'>Copiar chave</button>
               </div>
               <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
                 <span class="timer" data-expires="{exp_ts}"></span>
@@ -413,27 +429,29 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         root_html = ""
         if pk:
             root_html = f"""<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Chave Root</div>
-              <div class="copy-row mono" style="padding:8px 12px"><span>{pk[:18]}...</span>
-              <button class="btn-ghost btn-sm" onclick="cp('{pk}',this)">Copiar</button></div></div>"""
+              <div class="copy-row mono" style="padding:8px 12px"><span>{_e(pk[:18])}...</span>
+              <button class="btn-ghost btn-sm" onclick='cp({_j(pk)},this)'>Copiar</button></div></div>"""
         conn_html = f"""<div class="card" style="margin-bottom:24px">
           <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
             <div style="flex:1;min-width:200px">
               <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Endpoint</div>
               <div class="copy-row mono" style="padding:8px 12px">
-                <span>{url}</span>
-                <button class="btn-ghost btn-sm" onclick="cp('{url}',this)">Copiar</button>
+                <span>{_e(url)}</span>
+                <button class="btn-ghost btn-sm" onclick='cp({_j(url)},this)'>Copiar</button>
               </div>
             </div>
             {root_html}
             <div>
-              <button id="test-btn" class="btn btn-sm" onclick="testConn('{pk}','{url}')">Testar</button>
+              <button id="test-btn" class="btn btn-sm" onclick='testConn({_j(pk)},{_j(url)})'>Testar</button>
               <div id="test-res" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>
             </div>
           </div>
         </div>"""
 
+        error_html = f'<div class="reveal-banner" style="border-color:rgba(239,68,68,.4);color:var(--red)">{_e(err)}</div>' if err else ""
         # Tabela de chaves
         rows = ""
+        modals = ""
         for k in keys:
             active_b = '<span class="badge badge-green">● Ativa</span>' if k["active"] else '<span class="badge badge-red">○ Inativa</span>'
             exp = _ft(k["expires_at"]) if k["expires_at"] else '<span class="badge badge-green">Sem expiração</span>'
@@ -453,7 +471,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             info_btn = f'<button class="btn-ghost btn-sm" onclick="openModal(\'m-info-{kid}\')">Detalhes</button>'
             rev_total = f'${k["revenue_total"]:.2f}' if k["price_per_1k"] > 0 else "—"
             rows += f"""<tr class="key-row">
-              <td><b>{k['name']}</b><br><span class="badge badge-blue">{'Revendedor' if k['key_type']=='reseller' else 'Cliente'}</span>{'<br><span style="color:var(--muted);font-size:11px">'+k['description']+'</span>' if k['description'] else ''}</td>
+              <td><b>{_e(k['name'])}</b><br><span class="badge badge-blue">{'Revendedor' if k['key_type']=='reseller' else 'Cliente'}</span>{'<br><span style="color:var(--muted);font-size:11px">'+_e(k['description'])+'</span>' if k['description'] else ''}</td>
               <td class="mono" style="color:var(--muted)">{k['key_preview']}</td>
               <td>{active_b}</td>
               <td>{usage_disp}</td>
@@ -465,11 +483,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             </tr>"""
 
             # Modal rotacionar
-            rows += f"""<div class="modal-bg" id="m-rotate-{kid}">
+            modals += f"""<div class="modal-bg" id="m-rotate-{kid}">
               <div class="modal">
                 <button class="x" onclick="closeModal('m-rotate-{kid}')">✕</button>
                 <h2>🔄 Rotacionar chave</h2>
-                <p>A chave atual de <b>{k['name']}</b> será invalidada.<br>
+                <p>A chave atual de <b>{_e(k['name'])}</b> será invalidada.<br>
                    A nova chave será exibida no dashboard para copiar.</p>
                 <form method="post" action="/admin/keys/{kid}/rotate">
                   <div style="display:flex;gap:10px">
@@ -480,10 +498,10 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
               </div>
             </div>"""
             # Modal recarregar
-            rows += f"""<div class="modal-bg" id="m-recharge-{kid}">
+            modals += f"""<div class="modal-bg" id="m-recharge-{kid}">
               <div class="modal">
                 <button class="x" onclick="closeModal('m-recharge-{kid}')">✕</button>
-                <h2>Recarregar {k['name']}</h2>
+                <h2>Recarregar {_e(k['name'])}</h2>
                 <p>Adicione franquia sem apagar o consumo já registrado.</p>
                 <form method="post" action="/admin/keys/{kid}/recharge">
                   <div class="field-row">
@@ -497,11 +515,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
               </div>
             </div>"""
             # Modal excluir
-            rows += f"""<div class="modal-bg" id="m-del-{kid}">
+            modals += f"""<div class="modal-bg" id="m-del-{kid}">
               <div class="modal">
                 <button class="x" onclick="closeModal('m-del-{kid}')">✕</button>
                 <h2>🗑️ Excluir chave</h2>
-                <p>Esta ação é permanente. Clientes usando <b>{k['name']}</b> receberão 401.</p>
+                <p>Esta ação é permanente. Clientes usando <b>{_e(k['name'])}</b> receberão 401.</p>
                 <form method="post" action="/admin/keys/{kid}/delete">
                   <div style="display:flex;gap:10px">
                     <button class="btn-red btn">Excluir permanentemente</button>
@@ -515,7 +533,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             hist_svg = _svg_line(hist, "#22c55e", 56)
             children = admin_db.list_reseller_clients(kid) if k["key_type"] == "reseller" else []
             child_rows = "".join(
-                f"""<tr><td><b>{child['name']}</b></td><td class="mono">{child['key_preview']}</td>
+                f"""<tr><td><b>{_e(child['name'])}</b></td><td class="mono">{_e(child['key_preview'])}</td>
                 <td>{child['tokens_today']:,}</td><td>{child['tokens_total']:,} / {_tokens(child['token_limit'])}</td>
                 <td>{_tokens(child['tokens_remaining'])}</td><td>{_ft(child['last_used_at'])}</td></tr>"""
                 for child in children
@@ -523,11 +541,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             children_html = f"""<div style="margin-top:18px"><div style="font-size:12px;color:var(--muted);margin-bottom:6px">CHAVES CRIADAS PELO REVENDEDOR ({len(children)})</div>
               <div style="overflow-x:auto"><table><thead><tr><th>Cliente</th><th>Preview</th><th>Hoje</th><th>Uso / saldo</th><th>Restante</th><th>Último uso</th></tr></thead>
               <tbody>{child_rows or '<tr><td colspan="6" class="empty">Nenhuma subchave criada.</td></tr>'}</tbody></table></div></div>""" if k["key_type"] == "reseller" else ""
-            rows += f"""<div class="modal-bg" id="m-info-{kid}">
+            modals += f"""<div class="modal-bg" id="m-info-{kid}">
               <div class="modal" style="max-width:960px;max-height:88vh;overflow:auto">
                 <button class="x" onclick="closeModal('m-info-{kid}')">✕</button>
-                <h2>{k['name']}</h2>
-                <p>{k['description'] or 'Sem descrição'}</p>
+                <h2>{_e(k['name'])}</h2>
+                <p>{_e(k['description'] or 'Sem descrição')}</p>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
                   <div style="background:rgba(0,0,0,.2);border-radius:10px;padding:14px">
                     <div style="font-size:11px;color:var(--muted);margin-bottom:4px">HOJE</div>
@@ -634,8 +652,8 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <label>Notas internas</label><textarea name="notes" rows="2"></textarea>
           <button class="btn" style="margin-top:18px">Gerar chave mestre</button></form></div></div>"""
         body = f"""<div class="container">
-          {rev_html}<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-sm" onclick="openModal('m-reseller')">+ Chave mestre revendedor</button></div>{stats_html}{chart_html}{conn_html}{keys_html}
-        </div>{create_modal}{js_extra}"""
+          {rev_html}{error_html}<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-sm" onclick="openModal('m-reseller')">+ Chave mestre revendedor</button></div>{stats_html}{chart_html}{conn_html}{keys_html}
+        </div>{modals}{create_modal}{js_extra}"""
         return _page("Dashboard", body + reseller_modal, logged=True, proxy_key=pk)
 
     # ── Key actions ───────────────────────────────────────────────────────────
@@ -645,12 +663,15 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         f = await _form(req)
         name     = f.get("name","").strip() or "unnamed"
         desc     = f.get("description","").strip()
-        dlim     = int(f.get("daily_limit",0) or 0)
-        mlim     = int(f.get("monthly_limit",0) or 0)
-        vdays    = int(f.get("validity_days",0) or 0)
-        price    = float(f.get("price_per_1k",0) or 0)
+        try:
+            dlim = _number(f.get("daily_limit"))
+            mlim = _number(f.get("monthly_limit"))
+            vdays = _number(f.get("validity_days"))
+            price = _number(f.get("price_per_1k"), float)
+            token_limit = _number(f.get("token_limit"))
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
         notes    = f.get("notes","").strip()
-        token_limit = int(f.get("token_limit",0) or 0)
         _, rev_tok = admin_db.create_api_key(name, desc, dlim, mlim, vdays, price, notes,
                                               token_limit=token_limit)
         return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
@@ -659,31 +680,39 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     async def create_reseller(req: Request):
         _need(req)
         f = await _form(req)
-        _, rev_tok = admin_db.create_reseller_key(
-            f.get("name", "").strip() or "revendedor",
-            int(f.get("token_limit", 0) or 0),
-            validity_days=int(f.get("validity_days", 0) or 0),
-            notes=f.get("notes", "").strip(),
-        )
+        try:
+            _, rev_tok = admin_db.create_reseller_key(
+                f.get("name", "").strip() or "revendedor",
+                _number(f.get("token_limit")),
+                validity_days=_number(f.get("validity_days")),
+                notes=f.get("notes", "").strip(),
+            )
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
         return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
 
     @app.post("/admin/keys/{kid}/rotate")
     async def rotate_key(req: Request, kid: str):
         _need(req)
-        _, rev_tok = admin_db.rotate_api_key(kid)
+        try:
+            _, rev_tok = admin_db.rotate_api_key(kid)
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
         return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
 
     @app.post("/admin/keys/{kid}/recharge")
     async def recharge_key(req: Request, kid: str):
         _need(req)
         f = await _form(req)
-        admin_db.recharge_api_key(
-            kid,
-            add_tokens=int(f.get("add_tokens", 0) or 0),
-            add_daily_tokens=int(f.get("add_daily_tokens", 0) or 0),
-            add_monthly_tokens=int(f.get("add_monthly_tokens", 0) or 0),
-            add_validity_days=int(f.get("add_validity_days", 0) or 0),
-        )
+        try:
+            admin_db.recharge_api_key(
+                kid, add_tokens=_number(f.get("add_tokens")),
+                add_daily_tokens=_number(f.get("add_daily_tokens")),
+                add_monthly_tokens=_number(f.get("add_monthly_tokens")),
+                add_validity_days=_number(f.get("add_validity_days")),
+            )
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
         return RedirectResponse("/admin/dashboard", 302)
 
     @app.post("/admin/keys/{kid}/toggle")
@@ -728,14 +757,15 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
               <input type="password" name="key" required autofocus>
               <button class="btn" style="width:100%;margin-top:18px">Entrar</button></form></div></div>""")
         clients = admin_db.list_reseller_clients(reseller["id"])
-        rows = "".join(f"""<tr><td><b>{k['name']}</b></td><td class="mono">{k['key_preview']}</td>
+        error_banner = f'<div class="reveal-banner" style="border-color:rgba(239,68,68,.4);color:var(--red)">{_e(err)}</div>' if err else ""
+        rows = "".join(f"""<tr><td><b>{_e(k['name'])}</b></td><td class="mono">{_e(k['key_preview'])}</td>
           <td>{k['tokens_total']:,} / {_tokens(k['token_limit'])}</td>
           <td>{_tokens(k['tokens_remaining'])}</td>
           <td>{'<span class="badge badge-green">Ativa</span>' if k['active'] else '<span class="badge badge-red">Inativa</span>'}</td>
-          <td><button class="btn-green btn-sm" onclick="openModal('m-client-recharge-{k['id']}')">Recarregar</button></td></tr>
-          <div class="modal-bg" id="m-client-recharge-{k['id']}"><div class="modal">
+          <td><button class="btn-green btn-sm" onclick="openModal('m-client-recharge-{k['id']}')">Recarregar</button></td></tr>""" for k in clients)
+        modals = "".join(f"""<div class="modal-bg" id="m-client-recharge-{k['id']}"><div class="modal">
           <button class="x" onclick="closeModal('m-client-recharge-{k['id']}')">✕</button>
-          <h2>Recarregar {k['name']}</h2><p>A recarga sai do saldo distribuível da chave mestre.</p>
+          <h2>Recarregar {_e(k['name'])}</h2><p>A recarga sai do saldo distribuível da chave mestre.</p>
           <form method="post" action="/reseller/keys/{k['id']}/recharge"><div class="field-row">
           <div><label>Adicionar saldo total</label><input type="number" name="add_tokens" min="0" value="0"></div>
           <div><label>Adicionar tokens/dia</label><input type="number" name="add_daily_tokens" min="0" value="0"></div>
@@ -745,9 +775,9 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         if not rows: rows = '<tr><td colspan="6" class="empty">Nenhuma chave de cliente criada.</td></tr>'
         rev = admin_db.get_reveal(reveal) if reveal else None
         banner = f"""<div class="reveal-banner"><b>Copie a nova chave agora</b>
-          <div class="copy-row mono"><span>{rev['key_value']}</span><button class="btn btn-sm" onclick="cp('{rev['key_value']}',this)">Copiar</button></div></div>""" if rev else ""
-        return _page("Revendedor", f"""<div class="container">{banner}
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><div><h1>{reseller['name']}</h1>
+          <div class="copy-row mono"><span>{rev['key_value']}</span><button class="btn btn-sm" onclick='cp({_j(rev["key_value"])},this)'>Copiar</button></div></div>""" if rev else ""
+        return _page("Revendedor", f"""<div class="container">{banner}{error_banner}
+	          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><div><h1>{_e(reseller['name'])}</h1>
           <p style="color:var(--muted)">Saldo mestre disponível: <b style="color:var(--green)">{_tokens(reseller['tokens_remaining'])}</b> tokens</p></div>
           <form method="post" action="/reseller/logout"><button class="btn-ghost">Sair</button></form></div>
           <div class="card" style="margin-bottom:18px"><h2 style="font-size:16px;margin-bottom:12px">Nova chave para cliente</h2>
@@ -760,7 +790,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <button class="btn" style="margin-top:16px">Gerar API</button></form></div>
           <div class="card"><h2 style="font-size:16px;margin-bottom:12px">APIs revendidas</h2><table>
           <thead><tr><th>Cliente</th><th>Preview</th><th>Tokens usados / saldo</th><th>Restante</th><th>Status</th><th>Ações</th></tr></thead>
-          <tbody>{rows}</tbody></table></div></div>""")
+          <tbody>{rows}</tbody></table></div></div>{modals}""")
 
     @app.post("/reseller/login")
     async def reseller_login(req: Request):
@@ -768,11 +798,12 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         token = admin_db.create_reseller_session(f.get("key", "").strip())
         if not token: return RedirectResponse("/reseller?err=1", 302)
         r = RedirectResponse("/reseller", 302)
-        r.set_cookie(RESELLER_COOKIE, token, httponly=True, samesite="lax", max_age=admin_db.SESSION_TTL)
+        r.set_cookie(RESELLER_COOKIE, token, httponly=True, secure=_secure_cookie(req), samesite="lax", max_age=admin_db.SESSION_TTL)
         return r
 
     @app.post("/reseller/logout")
     async def reseller_logout(req: Request):
+        admin_db.delete_reseller_session(req.cookies.get(RESELLER_COOKIE, ""))
         r = RedirectResponse("/reseller", 302)
         r.delete_cookie(RESELLER_COOKIE)
         return r
@@ -790,7 +821,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                 validity_days=int(f.get("validity_days", 0) or 0),
             )
         except ValueError as exc:
-            raise HTTPException(400, str(exc))
+            return _with_error("/reseller", str(exc))
         return RedirectResponse(f"/reseller?reveal={reveal_token}", 302)
 
     @app.post("/reseller/keys/{kid}/recharge")
@@ -807,7 +838,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                 owner_reseller_id=reseller["id"],
             )
         except ValueError as exc:
-            raise HTTPException(400, str(exc))
+            return _with_error("/reseller", str(exc))
         return RedirectResponse("/reseller", 302)
 
     # ── Rotas legadas (compatibilidade) ───────────────────────────────────────

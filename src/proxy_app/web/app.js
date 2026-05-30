@@ -7,13 +7,20 @@ let account = null;
 let workMode = "chat";
 let attachments = [];
 let conversation = [];
+let incognito = false;
+let reasoningMode = "auto";
+let webSearchMode = "auto";
+let activeModel = "claude-sonnet-4-5";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 }[char]));
-const readLocal = (key) => JSON.parse(localStorage.getItem(key) || "[]");
+const readLocal = (key) => {
+  try { return JSON.parse(localStorage.getItem(key) || "[]"); }
+  catch { return []; }
+};
 const writeLocal = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const formatNumber = (value) => value == null ? "ilimitado" : Number(value).toLocaleString("pt-BR");
 
@@ -24,6 +31,14 @@ const modePrompts = {
   report: "Crie um relatório profissional com título, resumo executivo, análise, conclusões e próximos passos.",
   research: "Faça uma pesquisa fundamentada usando as fontes fornecidas. Cite os links no texto e separe fatos de inferências.",
 };
+const reasoningPrompts = {
+  fast: "Seja direto e priorize velocidade.",
+  normal: "Use raciocínio equilibrado.",
+  medium: "Analise com mais profundidade antes de responder.",
+  strong: "Faça uma análise profunda, valide premissas e destaque riscos.",
+  xstrong: "Faça a análise mais completa possível, com validação cuidadosa e alternativas.",
+};
+const modeLabels = { chat: "Chat", document: "Documentos", spreadsheet: "Planilhas e gráficos", report: "Relatórios", research: "Pesquisa online" };
 
 async function request(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -57,7 +72,9 @@ function showAccount() {
   if ($("#clientLogout")) $("#clientLogout").textContent = logged ? accountInitial() : "";
   if ($("#accountMenuLogin")) $("#accountMenuLogin").textContent = logged ? account.email : "Entre para usar";
   if ($("#planBadge")) $("#planBadge").textContent = logged ? account.plan : "Entrar para usar";
-  if ($("#previewNotice")) $("#previewNotice").textContent = logged ? "Pronto para trabalhar com seus arquivos." : "Entre em uma conta ativa para usar o chat.";
+  if ($("#previewNotice")) $("#previewNotice").textContent = logged
+    ? (account.access_status === "active" ? `Modo ativo: ${modeLabels[workMode]}.` : "Sua conta está sem saldo, inativa ou expirada.")
+    : "Entre em uma conta ativa para usar o chat.";
   const limit = Number(account?.token_limit || 0);
   const used = Number(account?.tokens_total || 0);
   const percentage = limit ? Math.min(100, used / limit * 100) : 0;
@@ -133,8 +150,10 @@ async function loadModels() {
     const select = $(`#${id}`);
     if (!select) continue;
     select.innerHTML = models.map((model) => `<option value="${esc(model.id)}">${esc(model.id)}</option>`).join("");
+    select.value = models.some((model) => model.id === activeModel) ? activeModel : models[0].id;
   }
-  $$("[data-model-label]").forEach((label) => { label.textContent = models[0].id; });
+  activeModel = $("#heroModel")?.value || models[0].id;
+  syncModel(activeModel);
 }
 
 function showPanel(id) {
@@ -154,10 +173,22 @@ function toggleSidebar(open) {
   $("#clientApp")?.classList.toggle("sidebar-open", open);
 }
 
+function toggleFloatingMenu(menu, trigger) {
+  const opening = menu.classList.contains("hidden");
+  $$(".floating-menu").forEach((item) => { if (item !== menu) item.classList.add("hidden"); });
+  menu.classList.toggle("hidden", !opening);
+  if (!opening) return;
+  const rect = trigger.getBoundingClientRect();
+  menu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 12))}px`;
+  menu.style.top = `${Math.max(12, rect.top - menu.offsetHeight - 8)}px`;
+}
+
 function setWorkMode(mode) {
   workMode = mode;
   showPanel("chatPanel");
   const labels = { document: "documento", spreadsheet: "planilha", report: "relatório", research: "pesquisa online" };
+  $$("[data-work-mode]").forEach((button) => button.classList.toggle("active", button.dataset.workMode === mode));
+  if ($("#previewNotice")) $("#previewNotice").textContent = `Modo ativo: ${modeLabels[mode]}.`;
   if (mode === "document" || mode === "spreadsheet") $("#attachmentInput")?.click();
   const textarea = $("#heroComposer textarea");
   if (textarea) {
@@ -190,7 +221,7 @@ function newChat() {
 }
 
 function attachmentText() {
-  return attachments.filter((file) => file.content).map((file) => `ARQUIVO: ${file.name}\n${file.content}`).join("\n\n");
+  return attachments.filter((file) => file.content && !file.sent).map((file) => `ARQUIVO: ${file.name}\n${file.content}`).join("\n\n");
 }
 
 function bytesToBase64(bytes) {
@@ -249,9 +280,21 @@ function drawChart(file) {
 }
 
 async function onlineSources(query) {
-  if (workMode !== "research") return "";
+  if (webSearchMode === "off" || (workMode !== "research" && webSearchMode !== "required")) return [];
   const data = await request("/web/api/research", { method: "POST", body: JSON.stringify({ query }) });
-  return (data.sources || []).map((source, index) => `[${index + 1}] ${source.title}\n${source.url}\n${source.snippet}`).join("\n\n");
+  return data.sources || [];
+}
+
+function sourceMarkup(sources) {
+  if (!sources.length) return "";
+  const links = sources.map((source) => {
+    try {
+      const url = new URL(source.url);
+      if (!["http:", "https:"].includes(url.protocol)) return "";
+      return `<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(source.title || url.hostname)}</a>`;
+    } catch { return ""; }
+  }).filter(Boolean).join("");
+  return links ? `<div class="web-source-list"><strong>Fontes consultadas</strong>${links}</div>` : "";
 }
 
 async function sendPrompt(text) {
@@ -265,16 +308,19 @@ async function sendPrompt(text) {
   const assistant = addMessage("assistant", "Pensando...");
   try {
     const sources = await onlineSources(clean);
-    const prompt = [modePrompts[workMode], clean, attachmentText(), sources && `FONTES ONLINE:\n${sources}`].filter(Boolean).join("\n\n");
-    const content = [{ type: "text", text: prompt }, ...attachments.filter((file) => file.image).map((file) => file.image)];
+    const sourceText = sources.map((source, index) => `[${index + 1}] ${source.title}\n${source.url}\n${source.snippet}`).join("\n\n");
+    const prompt = [modePrompts[workMode], reasoningPrompts[reasoningMode], clean, attachmentText(), sourceText && `FONTES ONLINE:\n${sourceText}`].filter(Boolean).join("\n\n");
+    const content = [{ type: "text", text: prompt }, ...attachments.filter((file) => file.image && !file.sent).map((file) => file.image)];
+    attachments.forEach((file) => { file.sent = true; });
     conversation.push({ role: "user", content });
     const data = await request("/v1/messages", {
       method: "POST",
-      body: JSON.stringify({ model: $("#heroModel")?.value || $("#bottomModel")?.value || "claude-sonnet-4-5", max_tokens: 4096, messages: conversation }),
+      body: JSON.stringify({ model: activeModel, max_tokens: 4096, messages: conversation }),
     });
     const response = (data.content || []).map((part) => part.text || "").join("") || "Resposta recebida.";
     conversation.push({ role: "assistant", content: response });
     assistant.querySelector(".message-body").innerHTML = esc(response).replace(/\n/g, "<br>");
+    assistant.insertAdjacentHTML("beforeend", sourceMarkup(sources));
     saveHistory(clean, response);
     await refreshAccount();
   } catch (exception) {
@@ -283,6 +329,7 @@ async function sendPrompt(text) {
 }
 
 function saveHistory(prompt, answer) {
+  if (incognito) return;
   const history = readLocal(HISTORY_KEY);
   history.unshift({ id: Date.now(), title: prompt.slice(0, 54), prompt, answer, createdAt: new Date().toISOString() });
   writeLocal(HISTORY_KEY, history.slice(0, 50));
@@ -297,6 +344,22 @@ function renderRecentHistory() {
 function renderHistory() {
   if (!$("#historyList")) return;
   $("#historyList").innerHTML = readLocal(HISTORY_KEY).map((item) => `<div class="table-row"><strong>${esc(item.title)}</strong><small>${new Date(item.createdAt).toLocaleString("pt-BR")}</small></div>`).join("") || "<p>Nenhuma conversa salva.</p>";
+}
+
+function syncModel(model) {
+  activeModel = model;
+  for (const id of ["heroModel", "bottomModel", "apiModel"]) if ($(`#${id}`)?.querySelector(`option[value="${CSS.escape(model)}"]`)) $(`#${id}`).value = model;
+  $$("[data-model-label]").forEach((label) => { label.textContent = model; });
+}
+
+function renderSearch() {
+  const query = ($("#searchInput")?.value || "").trim().toLowerCase();
+  const items = [
+    ...readLocal(HISTORY_KEY).map((item) => ({ type: "Conversa", title: item.title })),
+    ...readLocal(PROJECTS_KEY).map((item) => ({ type: "Projeto", title: item.name })),
+    ...readLocal(ARTIFACTS_KEY).map((item) => ({ type: "Artefato", title: item.title })),
+  ].filter((item) => !query || item.title.toLowerCase().includes(query));
+  $("#searchResults").innerHTML = items.slice(0, 30).map((item) => `<div class="table-row"><small>${esc(item.type)}</small><strong>${esc(item.title)}</strong></div>`).join("") || "<p>Nenhum resultado encontrado.</p>";
 }
 
 function renderProjects() {
@@ -362,7 +425,7 @@ $("#sidebarClose").onclick = () => toggleSidebar(false);
 $$("[data-panel]").forEach((button) => button.onclick = () => showPanel(button.dataset.panel));
 $$("[data-sidebar-panel]").forEach((button) => button.onclick = () => showPanel(button.dataset.sidebarPanel));
 $$("[data-work-mode]").forEach((button) => button.onclick = () => setWorkMode(button.dataset.workMode));
-$$(".attach-button").forEach((button) => button.onclick = () => $("#attachMenu").classList.toggle("hidden"));
+$$(".attach-button").forEach((button) => button.onclick = () => toggleFloatingMenu($("#attachMenu"), button));
 $$("[data-attach-action='files']").forEach((button) => button.onclick = () => { $("#attachMenu").classList.add("hidden"); $("#attachmentInput").click(); });
 $("#attachmentInput").onchange = async (event) => { await addFiles(event.target.files); event.target.value = ""; };
 $$(".quick-actions [data-prompt]").forEach((button) => button.onclick = () => { $("#heroComposer textarea").value = button.dataset.prompt; $("#heroComposer textarea").focus(); });
@@ -390,6 +453,43 @@ $("#driveForm").onsubmit = async (event) => {
     loadAutomations();
   } catch (exception) { $("#driveError").textContent = exception.message; }
 };
+$$("[data-model-trigger]").forEach((button) => button.onclick = () => toggleFloatingMenu($("#modelMenu"), button));
+$$("[data-model-value]").forEach((button) => button.onclick = () => { syncModel(button.dataset.modelValue); $("#modelMenu").classList.add("hidden"); });
+$$("[data-reasoning-trigger]").forEach((button) => button.onclick = () => toggleFloatingMenu($("#reasoningMenu"), button));
+$$("[data-reasoning-mode]").forEach((button) => button.onclick = () => {
+  reasoningMode = button.dataset.reasoningMode;
+  $$("[data-reasoning-label]").forEach((label) => { label.textContent = button.querySelector("strong").textContent; });
+  $("#reasoningMenu").classList.add("hidden");
+});
+$$("[data-web-search-mode]").forEach((button) => button.onclick = () => {
+  webSearchMode = button.dataset.webSearchMode;
+  $$("[data-web-search-mode]").forEach((item) => item.classList.toggle("active", item === button));
+});
+$$(".voice-button").forEach((button) => button.onclick = () => {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    addMessage("assistant", "Seu navegador não oferece ditado por voz. Digite a mensagem normalmente.");
+    return;
+  }
+  const recognition = new Recognition();
+  recognition.lang = "pt-BR";
+  recognition.onresult = (event) => {
+    const textarea = $("#bottomComposer:not(.hidden) textarea") || $("#heroComposer textarea");
+    textarea.value = `${textarea.value} ${event.results[0][0].transcript}`.trim();
+    textarea.focus();
+  };
+  recognition.start();
+});
+$("#incognitoToggle").onclick = () => {
+  incognito = !incognito;
+  $("#incognitoToggle").classList.toggle("active", incognito);
+  $("#clientApp").classList.toggle("incognito-mode", incognito);
+  $("#incognitoNotice").classList.toggle("hidden", !incognito);
+};
+$("#searchClose").onclick = () => showPanel("chatPanel");
+$("#searchInput").oninput = renderSearch;
+$("[data-attach-action='project']").onclick = () => { $("#attachMenu").classList.add("hidden"); showPanel("projectsPanel"); };
+$("[data-attach-action='code-chat']").onclick = () => { $("#attachMenu").classList.add("hidden"); showPanel("codePanel"); };
 $("#projectForm").onsubmit = (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
@@ -413,8 +513,13 @@ $("#supportForm").onsubmit = (event) => {
   event.preventDefault();
   $("#supportStatus").textContent = "O suporte humano ainda não está conectado neste servidor.";
 };
-$("#apiForm").onsubmit = (event) => { event.preventDefault(); renderApiGuide(); };
+$("#apiForm").onsubmit = (event) => {
+  event.preventDefault();
+  localStorage.setItem("proxy_web_api_settings", JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))));
+  renderApiGuide();
+};
 $$("[data-code-chat-open]").forEach((button) => button.onclick = () => { $("#codeStatus").textContent = "O editor de código visual ainda não está conectado neste servidor."; showPanel("codePanel"); });
 renderRecentHistory();
 newChat();
+$$("[data-web-search-mode='auto']").forEach((button) => button.classList.add("active"));
 refreshAccount();
