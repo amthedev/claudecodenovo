@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 from dotenv import set_key, get_key
@@ -1104,9 +1105,9 @@ def ensure_env_defaults():
 
     # Check for PROXY_API_KEY, similar to setup_env.bat
     if get_key(str(_get_env_file()), "PROXY_API_KEY") is None:
-        default_key = "VerysecretKey"
+        default_key = "proxy_" + secrets.token_urlsafe(32)
         console.print(
-            f"Adding default [bold cyan]PROXY_API_KEY[/bold cyan] to [bold yellow]{_get_env_file().name}[/bold yellow]..."
+            f"Adding generated [bold cyan]PROXY_API_KEY[/bold cyan] to [bold yellow]{_get_env_file().name}[/bold yellow]..."
         )
         set_key(str(_get_env_file()), "PROXY_API_KEY", default_key)
 

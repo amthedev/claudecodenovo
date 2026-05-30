@@ -451,10 +451,10 @@ class LauncherTUI:
             f"   Raw I/O Logging:     {':white_check_mark: Enabled' if self.config.config.get('enable_raw_logging', False) else ':x: Disabled'}"
         )
 
-        # Show actual API key value
+        # Show whether authentication is configured without exposing the key.
         proxy_key = os.getenv("PROXY_API_KEY")
         if proxy_key:
-            self.console.print(f"   Proxy API Key:       {proxy_key}")
+            self.console.print("   Proxy API Key:       [green]Set[/green]")
         else:
             self.console.print("   Proxy API Key:       [red]Not Set (INSECURE!)[/red]")
 
@@ -684,10 +684,15 @@ class LauncherTUI:
                     continue
 
                 current = os.getenv("PROXY_API_KEY", "")
-                new_key = Prompt.ask(
-                    "Enter new Proxy API Key (leave empty to disable authentication)",
-                    default=current,
+                entered_key = Prompt.ask(
+                    "Enter new Proxy API Key (leave empty to keep current; type DISABLE to clear)",
+                    password=True,
+                    default="",
                 )
+                if not entered_key:
+                    self.console.print("\n[yellow]No changes made[/yellow]")
+                    continue
+                new_key = "" if entered_key.strip().upper() == "DISABLE" else entered_key
 
                 if new_key != current:
                     # If setting to empty, show additional warning
@@ -730,7 +735,6 @@ class LauncherTUI:
                 default_port = 8000
                 default_logging = False
                 default_raw_logging = False
-                default_api_key = "VerysecretKey"
 
                 # Get current values
                 current_host = self.config.config["host"]
@@ -739,8 +743,6 @@ class LauncherTUI:
                 current_raw_logging = self.config.config.get(
                     "enable_raw_logging", False
                 )
-                current_api_key = os.getenv("PROXY_API_KEY", "")
-
                 # Build comparison table
                 warning_lines = [
                     "This will reset ALL proxy settings to their defaults:",
@@ -755,7 +757,7 @@ class LauncherTUI:
                     f"   Raw I/O Logging      {'Enabled':20} →  Disabled"
                     if current_raw_logging
                     else f"   Raw I/O Logging      {'Disabled':20} →  Disabled",
-                    f"   Proxy API Key        {current_api_key[:20]:20} →  {default_api_key}",
+                    "   Proxy API Key        Preserved",
                     "",
                     "[bold red]:warning:  This may break applications configured with current settings![/bold red]",
                 ]
@@ -773,8 +775,6 @@ class LauncherTUI:
                     enable_request_logging=default_logging,
                     enable_raw_logging=default_raw_logging,
                 )
-                LauncherConfig.update_proxy_api_key(default_api_key)
-
                 self.console.print(
                     "\n[green]:white_check_mark: All settings have been reset to defaults![/green]"
                 )
@@ -782,7 +782,7 @@ class LauncherTUI:
                 self.console.print(f"   Port:               {default_port}")
                 self.console.print(f"   Transaction Logging: Disabled")
                 self.console.print(f"   Raw I/O Logging:    Disabled")
-                self.console.print(f"   Proxy API Key:      {default_api_key}")
+                self.console.print("   Proxy API Key:      Preserved")
             elif choice == "7":
                 break
 

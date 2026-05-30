@@ -68,8 +68,6 @@ def _j(value: str) -> str:
     return _e(json.dumps(str(value)), quote=True)
 
 def _root_test_key(proxy_api_key: str, root_is_rotated: bool, reveal_data: Optional[dict]) -> str:
-    if not root_is_rotated:
-        return proxy_api_key
     if reveal_data and reveal_data.get("key_id") == "root":
         return str(reveal_data.get("key_value") or "")
     return ""
@@ -206,7 +204,7 @@ def _page(title, body, logged=False, proxy_key=""):
       <span class="logo">&#9670; ProxyAdmin</span>
       {'<a class="nav-item active" href="/admin/dashboard">Dashboard</a>' if logged else ''}
       <span class="spacer"></span>
-      {'<span class="mono" style="font-size:11px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">'+_e(proxy_key[:20])+'...</span>' if proxy_key and logged else ''}
+      {'<span class="mono" style="font-size:11px;color:var(--muted)">Root auth configurada</span>' if proxy_key and logged else ''}
       {'<form method="post" action="/admin/logout" style="margin:0"><button class="btn-ghost btn-sm">Sair</button></form>' if logged else ''}
     </nav>""" if logged else f'<nav><span class="logo">&#9670; ProxyAdmin</span></nav>'
     return HTMLResponse(f"""<!DOCTYPE html>
@@ -276,7 +274,7 @@ function dismissReveal(token){{
 </body></html>""")
 
 # ── Registro ──────────────────────────────────────────────────────────────────
-def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> None:
+def initialize_admin_db() -> None:
     admin_db.init_db()
 
     # Migra JSON antigo
@@ -287,8 +285,17 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         if n:
             import logging; logging.info(f"[admin_db] Migradas {n} chaves do JSON.")
 
+
+def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> None:
+    if getattr(app.state, "admin_routes_registered", False):
+        return
+
+    def _current_proxy_api_key() -> str:
+        return os.getenv("PROXY_API_KEY") or proxy_api_key or ""
+
     def _check_key(raw):
-        if proxy_api_key and _hmac_eq(raw, proxy_api_key):
+        current_proxy_api_key = _current_proxy_api_key()
+        if current_proxy_api_key and _hmac_eq(raw, current_proxy_api_key):
             return "root"
         r = admin_db.verify_api_key_db(raw)
         return (r or {}).get("app_name") if r and "error" not in r else None
@@ -372,7 +379,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         proto = req.headers.get("x-forwarded-proto", "https")
         host  = req.headers.get("host", str(req.base_url.hostname))
         url   = f"{proto}://{host}"
-        pk    = proxy_api_key or ""
+        pk    = _current_proxy_api_key()
 
         # Banner de reveal (chave recém criada/rotacionada)
         rev_html = ""
@@ -436,7 +443,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         root_html = ""
         root_override_preview = admin_db.get_root_key_preview()
         root_is_rotated = bool(root_override_preview)
-        root_preview = root_override_preview if root_is_rotated else (pk[:18] + "..." if pk else "")
+        root_preview = "Configurada"
         root_test_key = _root_test_key(pk, root_is_rotated, rev_data)
         if root_test_key:
             test_button = f"""<button id="test-btn" class="btn btn-sm"
@@ -444,13 +451,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             test_result = ""
         else:
             test_button = '<button id="test-btn" class="btn btn-sm" disabled>Testar</button>'
-            test_result = "Rotacione novamente para copiar e testar a chave root atual."
+            test_result = "Rotacione a chave root para revelar e testar o novo valor."
         if pk or root_is_rotated:
             rotated_badge = '<span class="badge badge-blue" style="margin-left:6px">rotacionada</span>' if root_is_rotated else ''
-            copy_btn = '' if root_is_rotated else f'<button class="btn-ghost btn-sm" onclick=\'cp({_j(pk)},this)\'>Copiar</button>'
             root_html = f"""<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Chave Root{rotated_badge}</div>
               <div class="copy-row mono" style="padding:8px 12px"><span>{_e(root_preview)}</span>
-              {copy_btn}
               <button class="btn btn-sm" onclick="openModal('m-rotate-root')">Rotacionar</button></div></div>"""
         conn_html = f"""<div class="card" style="margin-bottom:24px">
           <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
@@ -899,3 +904,5 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     async def legacy_list(req: Request):
         _need(req)
         return JSONResponse({"apps": admin_db.list_api_keys(), "day": time.strftime("%Y-%m-%d", time.gmtime())})
+
+    app.state.admin_routes_registered = True

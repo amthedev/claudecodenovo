@@ -43,7 +43,7 @@ args, _ = parser.parse_known_args()
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Check if we should launch TUI (no arguments = TUI mode)
-if len(sys.argv) == 1:
+if __name__ == "__main__" and len(sys.argv) == 1:
     # TUI MODE - Load ONLY what's needed for the launcher (fast path!)
     from proxy_app.launcher_tui import run_launcher_tui
 
@@ -54,7 +54,7 @@ if len(sys.argv) == 1:
     args = parser.parse_args()
 
 # Check if credential tool mode (also doesn't need heavy proxy imports)
-if args.add_credential:
+if __name__ == "__main__" and args.add_credential:
     from rotator_library.credential_tool import run_credential_tool
 
     run_credential_tool()
@@ -91,7 +91,7 @@ if _env_files_found:
 # Get proxy API key for display
 proxy_api_key = os.getenv("PROXY_API_KEY")
 if proxy_api_key:
-    key_display = f"✓ {proxy_api_key}"
+    key_display = "✓ Set"
 else:
     key_display = "✗ Not Set (INSECURE - anyone can access!)"
 project_github_url = os.getenv(
@@ -637,19 +637,10 @@ async def lifespan(app: FastAPI):
     app.state.model_info_service = model_info_service
     logging.info("Model info service started (fetching pricing data in background).")
 
-    # Inicializa SQLite admin e registra rotas (carregamento seguro)
-    try:
-        from proxy_app.admin_db import init_db as _adb_init
-        from proxy_app.admin_routes import register_admin_routes as _areg
-        from proxy_app.web_routes import register_web_routes as _wreg
-        _adb_init()
-        _areg(app, proxy_api_key=proxy_api_key)
-        _wreg(app)
-        logging.info("[admin_db] SQLite admin carregado com sucesso.")
-    except ImportError:
-        logging.warning("[admin_db] Modulos admin_db/admin_routes nao encontrados — usando admin legado.")
-    except Exception as _e:
-        logging.warning(f"[admin_db] Falha ao inicializar admin SQLite: {_e}")
+    from proxy_app.admin_routes import initialize_admin_db
+
+    initialize_admin_db()
+    logging.info("[admin_db] SQLite admin carregado com sucesso.")
 
     yield
 
@@ -683,6 +674,13 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
+
+from proxy_app.admin_routes import register_admin_routes
+from proxy_app.web_routes import register_web_routes
+
+register_admin_routes(app, proxy_api_key=proxy_api_key)
+register_web_routes(app)
+
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 ADMIN_DATA_FILE = _root_dir / os.getenv("ADMIN_DATA_FILE", "admin_data.json")
 ADMIN_SESSION_COOKIE = "proxy_admin_session"

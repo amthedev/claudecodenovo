@@ -7,8 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from proxy_app.admin_routes import _root_test_key
 
 
-def test_original_root_key_can_be_tested():
-    assert _root_test_key("env-root", False, None) == "env-root"
+def test_original_root_key_is_not_embedded_for_testing():
+    assert _root_test_key("env-root", False, None) == ""
 
 
 def test_rotated_root_key_uses_current_reveal():

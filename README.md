@@ -73,10 +73,12 @@ docker compose up -d
 
 ### From Source
 
+Requires Python 3.12 or newer.
+
 ```bash
 git clone https://github.com/Mirrowel/LLM-API-Key-Proxy.git
 cd LLM-API-Key-Proxy
-python3 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python src/proxy_app/main.py

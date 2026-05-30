@@ -189,6 +189,9 @@ def _limited(value: Any, name: str, limit: int = 180) -> str:
 
 
 def register_web_routes(app: FastAPI) -> None:
+    if getattr(app.state, "web_routes_registered", False):
+        return
+
     app.mount("/web/assets", StaticFiles(directory=str(WEB_DIR)), name="web-assets")
 
     @app.get("/web")
@@ -345,3 +348,5 @@ def register_web_routes(app: FastAPI) -> None:
         if not admin_db.delete_drive_automation(_account_id(request), automation_id):
             raise HTTPException(404, "Automação não encontrada.")
         return JSONResponse({"ok": True})
+
+    app.state.web_routes_registered = True
