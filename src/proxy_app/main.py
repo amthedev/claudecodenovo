@@ -1708,23 +1708,26 @@ async def list_models(
     try:
         model_ids = await client.get_all_available_models(grouped=False)
     except Exception as e:
-        logging.error(f"list_models error: {e}")
+        logging.error(f"list_models get_all_available_models error: {e}")
         model_ids = []
     if not model_ids:
         model_ids = _static_env_models()
 
-    # Adiciona modelos Claude-branded virtuais ao inicio da lista
-    virtual = _virtual_claude_models()
-    model_ids = list(dict.fromkeys(virtual + model_ids))
+    try:
+        virtual = _virtual_claude_models()
+        model_ids = list(dict.fromkeys(virtual + model_ids))
+    except Exception as e:
+        logging.error(f"list_models virtual models error: {e}")
 
-    if enriched and hasattr(request.app.state, "model_info_service"):
-        model_info_service = request.app.state.model_info_service
-        if model_info_service.is_ready:
-            # Return enriched model data
-            enriched_data = model_info_service.enrich_model_list(model_ids)
-            return {"object": "list", "data": enriched_data}
+    try:
+        if enriched and hasattr(request.app.state, "model_info_service"):
+            model_info_service = request.app.state.model_info_service
+            if model_info_service.is_ready:
+                enriched_data = model_info_service.enrich_model_list(model_ids)
+                return {"object": "list", "data": enriched_data}
+    except Exception as e:
+        logging.error(f"list_models enrich error: {e}")
 
-    # Fallback to basic model cards
     model_cards = [
         {
             "id": model_id,
