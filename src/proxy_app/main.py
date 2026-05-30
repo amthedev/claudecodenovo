@@ -791,6 +791,29 @@ def _extract_bearer_token(auth: Optional[str]) -> Optional[str]:
     return auth.strip()
 
 
+def _candidate_api_keys_from_request(request: Request) -> List[str]:
+    """Collect API key candidates from common OpenAI/Anthropic header styles."""
+    candidates: List[str] = []
+
+    for header_name in (
+        "x-api-key",
+        "api-key",
+        "anthropic-api-key",
+        "authorization",
+    ):
+        value = request.headers.get(header_name)
+        if not value:
+            continue
+
+        stripped = value.strip()
+        bearer = _extract_bearer_token(stripped)
+        for candidate in (bearer, stripped):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+    return candidates
+
+
 def _static_env_models() -> list:
     """Retorna lista de modelos configurados via variáveis de ambiente (fallback estático)."""
     models = []
@@ -1028,16 +1051,16 @@ def _verify_proxy_api_key_value(raw_key: Optional[str]) -> Optional[Dict[str, An
     return _verify_managed_api_key(raw_key)
 
 
-async def verify_api_key(auth: str = Depends(api_key_header)):
+async def verify_api_key(request: Request):
     """Dependency to verify the proxy API key."""
-    raw_key = _extract_bearer_token(auth)
-    verified = _verify_proxy_api_key_value(raw_key)
-    if verified:
-        return verified
+    for raw_key in _candidate_api_keys_from_request(request):
+        verified = _verify_proxy_api_key_value(raw_key)
+        if verified:
+            return verified
 
     # If no root key and no managed apps exist, keep the original open-access behavior.
     if not PROXY_API_KEY and not _load_admin_data().get("apps"):
-        return auth
+        return {"type": "open", "app_name": "open"}
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
@@ -1046,20 +1069,19 @@ anthropic_api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
 async def verify_anthropic_api_key(
-    x_api_key: str = Depends(anthropic_api_key_header),
-    auth: str = Depends(api_key_header),
+    request: Request,
 ):
     """
     Dependency to verify API key for Anthropic endpoints.
-    Accepts either x-api-key header (Anthropic style) or Authorization Bearer (OpenAI style).
+    Accepts x-api-key, api-key, anthropic-api-key, Authorization Bearer, or raw Authorization.
     """
-    raw_key = x_api_key or _extract_bearer_token(auth)
-    verified = _verify_proxy_api_key_value(raw_key)
-    if verified:
-        return verified
+    for raw_key in _candidate_api_keys_from_request(request):
+        verified = _verify_proxy_api_key_value(raw_key)
+        if verified:
+            return verified
 
     if not PROXY_API_KEY and not _load_admin_data().get("apps"):
-        return raw_key
+        return {"type": "open", "app_name": "open"}
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
