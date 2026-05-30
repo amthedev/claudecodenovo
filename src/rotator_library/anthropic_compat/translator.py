@@ -11,6 +11,7 @@ This enables any OpenAI-compatible provider to work with Anthropic clients.
 
 import json
 import os
+import re
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
@@ -36,6 +37,65 @@ THINKING_BUDGET_THRESHOLDS = {
 # Providers that support granular reasoning effort levels (low_medium, medium_high, etc.)
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
+
+
+_TEXTUAL_TOOL_CALL_RE = re.compile(
+    r"(?:<tool_call>\s*)?<function=([A-Za-z0-9_.:-]+)>(.*?</function>)(?:\s*</tool_call>)?",
+    re.DOTALL,
+)
+_TEXTUAL_TOOL_PARAM_RE = re.compile(
+    r"<parameter=([A-Za-z0-9_.:-]+)>\s*(.*?)(?=(?:</parameter>\s*)?<parameter=|</function>)",
+    re.DOTALL,
+)
+
+
+def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
+    """
+    Convert common text-emitted tool call markup into Anthropic tool_use blocks.
+
+    Some OpenAI-compatible coding models emit Claude-style tool calls as text,
+    for example:
+        <tool_call><function=Bash><parameter=command>ls</parameter></function></tool_call>
+    Claude Code only executes real Anthropic tool_use blocks, so normalize here.
+    """
+    if not text or "<function=" not in text:
+        return text, []
+
+    tool_blocks: List[dict] = []
+
+    def replace_tool_call(match: re.Match) -> str:
+        tool_name = match.group(1).strip()
+        body = match.group(2)
+        tool_input: Dict[str, Any] = {}
+
+        for param_match in _TEXTUAL_TOOL_PARAM_RE.finditer(body):
+            key = param_match.group(1).strip()
+            value = param_match.group(2)
+            value = re.sub(r"</parameter>\s*$", "", value, flags=re.DOTALL).strip()
+            if (
+                (value.startswith("{") and value.endswith("}"))
+                or (value.startswith("[") and value.endswith("]"))
+            ):
+                try:
+                    tool_input[key] = json.loads(value)
+                    continue
+                except json.JSONDecodeError:
+                    pass
+            tool_input[key] = value
+
+        if tool_name and tool_input:
+            tool_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": f"toolu_{uuid.uuid4().hex[:12]}",
+                    "name": tool_name,
+                    "input": tool_input,
+                }
+            )
+        return ""
+
+    cleaned_text = _TEXTUAL_TOOL_CALL_RE.sub(replace_tool_call, text).strip()
+    return cleaned_text, tool_blocks
 
 
 def _budget_to_reasoning_effort(budget_tokens: int, model: str) -> str:
@@ -554,8 +614,11 @@ def openai_to_anthropic_response(openai_response: dict, original_model: str) -> 
 
     # Add text content if present
     text_content = message.get("content")
+    textual_tool_blocks = []
     if text_content:
-        content_blocks.append({"type": "text", "text": text_content})
+        text_content, textual_tool_blocks = _parse_textual_tool_calls(text_content)
+        if text_content:
+            content_blocks.append({"type": "text", "text": text_content})
 
     # Add tool use blocks if present
     tool_calls = message.get("tool_calls") or []
@@ -575,6 +638,9 @@ def openai_to_anthropic_response(openai_response: dict, original_model: str) -> 
             }
         )
 
+    if textual_tool_blocks:
+        content_blocks.extend(textual_tool_blocks)
+
     # Map finish_reason to stop_reason
     finish_reason = choice.get("finish_reason", "end_turn")
     stop_reason_map = {
@@ -585,6 +651,8 @@ def openai_to_anthropic_response(openai_response: dict, original_model: str) -> 
         "function_call": "tool_use",
     }
     stop_reason = stop_reason_map.get(finish_reason, "end_turn")
+    if textual_tool_blocks:
+        stop_reason = "tool_use"
 
     # Build usage
     # Note: Google's promptTokenCount INCLUDES cached tokens, but Anthropic's
