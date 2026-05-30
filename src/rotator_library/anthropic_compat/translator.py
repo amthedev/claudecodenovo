@@ -567,7 +567,7 @@ def _vllm_max_input_chars() -> int:
             return max(1000, int(value))
         except ValueError:
             continue
-    return 60000
+    return 30000
 
 
 def _message_char_size(message: Dict[str, Any]) -> int:
@@ -577,12 +577,27 @@ def _message_char_size(message: Dict[str, Any]) -> int:
         return len(str(message))
 
 
+def _trim_message_content(message: Dict[str, Any], max_chars: int) -> Dict[str, Any]:
+    trimmed = dict(message)
+    content = trimmed.get("content")
+    if isinstance(content, str) and len(content) > max_chars:
+        trimmed["content"] = content[-max_chars:]
+    elif isinstance(content, list) and _message_char_size(trimmed) > max_chars:
+        trimmed["content"] = content[-6:]
+    return trimmed
+
+
 def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     max_chars = _vllm_max_input_chars()
     if sum(_message_char_size(message) for message in messages) <= max_chars:
         return messages
 
-    system_messages = [m for m in messages if m.get("role") == "system"]
+    system_budget = max(2000, max_chars // 4)
+    system_messages = [
+        _trim_message_content(m, system_budget)
+        for m in messages
+        if m.get("role") == "system"
+    ]
     conversation = [m for m in messages if m.get("role") != "system"]
 
     kept_reversed: List[Dict[str, Any]] = []
@@ -620,6 +635,57 @@ def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str
     return [*system_messages, *kept]
 
 
+def _vllm_max_tools() -> int:
+    for env_name in (
+        "HOSTED_VLLM_MAX_TOOLS",
+        "ANTHROPIC_VLLM_MAX_TOOLS",
+        "PROXY_MAX_TOOLS",
+    ):
+        value = os.getenv(env_name)
+        if not value:
+            continue
+        try:
+            return max(0, int(value))
+        except ValueError:
+            continue
+    return 16
+
+
+def _compact_schema_for_vllm(value: Any, max_description_chars: int = 160) -> Any:
+    if isinstance(value, list):
+        return [_compact_schema_for_vllm(item, max_description_chars) for item in value]
+    if isinstance(value, dict):
+        compacted = {}
+        for key, child in value.items():
+            if key in {"examples", "default", "$defs", "definitions"}:
+                continue
+            if key == "description" and isinstance(child, str):
+                compacted[key] = child[:max_description_chars]
+                continue
+            compacted[key] = _compact_schema_for_vllm(child, max_description_chars)
+        return compacted
+    return value
+
+
+def _compact_tools_for_vllm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    max_tools = _vllm_max_tools()
+    if max_tools == 0:
+        return []
+
+    compacted_tools = []
+    for tool in tools[:max_tools]:
+        tool_copy = dict(tool)
+        function = dict(tool_copy.get("function") or {})
+        description = function.get("description")
+        if isinstance(description, str):
+            function["description"] = description[:512]
+        if "parameters" in function:
+            function["parameters"] = _compact_schema_for_vllm(function["parameters"])
+        tool_copy["function"] = function
+        compacted_tools.append(tool_copy)
+    return compacted_tools
+
+
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
@@ -639,6 +705,11 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     )
     if openai_request.get("tools"):
         openai_request["tools"] = _strip_vllm_rejected_fields(openai_request["tools"])
+        openai_request["tools"] = _compact_tools_for_vllm(openai_request["tools"])
+        if not openai_request["tools"]:
+            openai_request.pop("tools", None)
+            openai_request.pop("tool_choice", None)
+            return
         if openai_request.get("tool_choice") not in (None, "auto"):
             # vLLM's OpenAI server is picky about forced/required tool choice,
             # while Claude Code still works with auto tool selection.
