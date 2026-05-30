@@ -1055,6 +1055,34 @@ def _latest_user_text(messages: List[Dict[str, Any]]) -> str:
     return ""
 
 
+def _is_tool_result_message(message: Dict[str, Any]) -> bool:
+    """True se a mensagem 'user' é na verdade um resultado de ferramenta."""
+    content = message.get("content")
+    if isinstance(content, list):
+        return any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in content
+        )
+    return False
+
+
+def _resolve_persistent_user_text(messages: List[Dict[str, Any]]) -> str:
+    """
+    Retorna o texto da última mensagem HUMANA REAL, pulando tool_results.
+
+    Isso permite que a intenção (inspect/create/run) persista entre turnos:
+    depois que uma ferramenta roda e o resultado volta, a 'última mensagem'
+    é o tool_result — mas a intenção original do humano ainda vale.
+    """
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        if _is_tool_result_message(message):
+            continue  # pula tool results, continua procurando o pedido humano
+        return _content_to_vllm_text(message.get("content", ""))
+    return ""
+
+
 def _contains_any_marker(text: str, markers: tuple[str, ...]) -> bool:
     lowered = text.lower()
     return any(marker in lowered for marker in markers)
@@ -1095,7 +1123,7 @@ def _inject_vllm_mandatory_tool_instruction(
         return
 
     intent = _classify_tool_intent(
-        _latest_user_text(openai_request.get("messages", []))
+        _resolve_persistent_user_text(openai_request.get("messages", []))
     )
     if intent is None:
         return
@@ -1126,7 +1154,7 @@ def _attach_mandatory_tool_fallback(
         return
 
     intent = _classify_tool_intent(
-        _latest_user_text(openai_request.get("messages", []))
+        _resolve_persistent_user_text(openai_request.get("messages", []))
     )
     if intent is None:
         return
@@ -1232,7 +1260,8 @@ def _build_vllm_forced_tool_call(
     openai_request: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     previous_count = int(openai_request.get("_vllm_previous_tool_count") or 0)
-    user_text = _latest_user_text(openai_request.get("messages", []))
+    # Usa o pedido humano original (persistente), não o último tool_result
+    user_text = _resolve_persistent_user_text(openai_request.get("messages", []))
     lowered = user_text.lower()
 
     bash = _available_tool_name(tools, ("Bash", "bash"))
@@ -1278,19 +1307,37 @@ def _build_vllm_forced_tool_call(
             return _tool_call(ls_tool, {"path": "."})
 
     if intent == "inspect":
-        if previous_count == 0 and ls_tool:
-            return _tool_call(ls_tool, {"path": "."})
-        if previous_count <= 1 and bash:
+        # Lê TODO o projeto em UM comando: árvore + conteúdo de todos os
+        # arquivos de código. Assim o modelo recebe tudo de uma vez e só
+        # precisa escrever a análise — sem stall multi-turno.
+        if previous_count == 0 and bash:
             return _tool_call(
                 bash,
                 {
                     "command": (
-                        "pwd && find . -maxdepth 3 -type f | sort | head -120 && "
-                        "test -f README.md && sed -n '1,220p' README.md || true"
+                        "pwd; echo '===== ESTRUTURA ====='; "
+                        "find . -maxdepth 4 -type f "
+                        "-not -path '*/.*' -not -path '*/node_modules/*' "
+                        "-not -path '*/__pycache__/*' -not -path '*/venv/*' "
+                        "-not -path '*/.git/*' | sort | head -200; "
+                        "echo '===== CONTEUDO ====='; "
+                        "for f in $(find . -maxdepth 4 -type f "
+                        "\\( -name '*.py' -o -name '*.js' -o -name '*.ts' "
+                        "-o -name '*.tsx' -o -name '*.jsx' -o -name '*.md' "
+                        "-o -name '*.json' -o -name '*.txt' -o -name '*.html' "
+                        "-o -name '*.css' -o -name '*.go' -o -name '*.rs' "
+                        "-o -name '*.java' -o -name '*.sh' \\) "
+                        "-not -path '*/.*' -not -path '*/node_modules/*' "
+                        "-not -path '*/__pycache__/*' -not -path '*/venv/*' "
+                        "| head -40); do echo \"===== $f =====\"; "
+                        "sed -n '1,400p' \"$f\"; echo; done"
                     ),
-                    "description": "Inspect project structure and README",
+                    "description": "Read entire project for analysis",
                 },
             )
+        # Fallback se não houver Bash: lista o diretório
+        if previous_count == 0 and ls_tool:
+            return _tool_call(ls_tool, {"path": "."})
 
     if intent == "run" and bash:
         if "calculadora" in lowered or "calculator" in lowered:
