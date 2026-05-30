@@ -1124,6 +1124,28 @@ def _inject_vllm_mandatory_tool_instruction(
         openai_request["_vllm_forced_tool_call"] = fallback
 
 
+def _attach_mandatory_tool_fallback(
+    openai_request: Dict[str, Any],
+    tools: Optional[List[Dict[str, Any]]],
+) -> None:
+    if not tools or openai_request.get("_vllm_forced_tool_call"):
+        return
+
+    intent = _classify_tool_intent(
+        _latest_user_text(openai_request.get("messages", []))
+    )
+    if intent is None:
+        return
+
+    openai_request["_vllm_tool_intent"] = intent
+    openai_request["_vllm_previous_tool_count"] = _count_prior_tool_calls(
+        openai_request.get("messages", [])
+    )
+    fallback = _build_vllm_forced_tool_call(intent, tools, openai_request)
+    if fallback:
+        openai_request["_vllm_forced_tool_call"] = fallback
+
+
 def _count_prior_tool_calls(messages: List[Dict[str, Any]]) -> int:
     count = 0
     for message in messages:
@@ -1392,6 +1414,9 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     openai_request.pop("top_k", None)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
+    # Desabilitar thinking mode Qwen3 para evitar <think> visível e melhorar tool use
+    extra_body = openai_request.setdefault("extra_body", {})
+    extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
     openai_request.setdefault("frequency_penalty", 0.2)
     max_output_tokens = _vllm_max_output_tokens()
     requested_max_tokens = openai_request.get("max_tokens")
@@ -1612,6 +1637,9 @@ def translate_anthropic_request(request: AnthropicMessagesRequest) -> Dict[str, 
             # Let the provider decide the default
         elif request.thinking.type == "disabled":
             openai_request["reasoning_effort"] = "disable"
+
+    if openai_tools:
+        _attach_mandatory_tool_fallback(openai_request, openai_tools)
 
     provider = request.model.split("/", 1)[0].lower() if "/" in request.model else ""
     if provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}:
