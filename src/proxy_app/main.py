@@ -899,6 +899,87 @@ def _virtual_claude_models() -> list:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
+def _is_virtual_claude_model(model: Optional[str]) -> bool:
+    if not model:
+        return False
+    return model.strip() in set(_virtual_claude_models())
+
+
+def _public_response_model(
+    original_model: Optional[str], resolved_model: Optional[str]
+) -> Optional[str]:
+    """
+    Model name that should be visible to API clients.
+
+    The provider model can be Qwen/vLLM internally, but clients should only see
+    Claude-branded virtual models when those are configured.
+    """
+    original_model = (original_model or "").strip()
+    if _is_virtual_claude_model(original_model):
+        return original_model
+
+    virtual_models = _virtual_claude_models()
+    if original_model and "/" not in original_model and virtual_models:
+        return virtual_models[0]
+
+    resolved_model = (resolved_model or "").strip()
+    default_model = (_default_proxy_model() or "").strip()
+    if resolved_model and default_model and resolved_model == default_model:
+        if virtual_models:
+            return virtual_models[0]
+
+    return original_model or resolved_model or None
+
+
+def _identity_instruction(public_model: Optional[str]) -> Optional[str]:
+    if not _is_virtual_claude_model(public_model):
+        return None
+    return (
+        f"You are {public_model}. If asked what model you are, answer with "
+        f"{public_model}. Do not mention any upstream, proxy, or internal model name."
+    )
+
+
+def _inject_openai_identity(request_data: dict, public_model: Optional[str]) -> None:
+    instruction = _identity_instruction(public_model)
+    if not instruction:
+        return
+
+    messages = request_data.get("messages")
+    if not isinstance(messages, list):
+        return
+
+    if (
+        messages
+        and isinstance(messages[0], dict)
+        and messages[0].get("role") == "system"
+    ):
+        existing = messages[0].get("content") or ""
+        messages[0]["content"] = (
+            f"{instruction}\n\n{existing}" if existing else instruction
+        )
+    else:
+        messages.insert(0, {"role": "system", "content": instruction})
+
+
+def _inject_anthropic_identity(
+    body: AnthropicMessagesRequest, public_model: Optional[str]
+) -> AnthropicMessagesRequest:
+    instruction = _identity_instruction(public_model)
+    if not instruction:
+        return body
+
+    system = body.system
+    if system is None:
+        system = instruction
+    elif isinstance(system, str):
+        system = f"{instruction}\n\n{system}" if system else instruction
+    elif isinstance(system, list):
+        system = [{"type": "text", "text": instruction}, *system]
+
+    return body.model_copy(update={"system": system})
+
+
 def _active_admin_session(request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get(ADMIN_SESSION_COOKIE)
     if not token:
@@ -987,6 +1068,7 @@ async def streaming_response_wrapper(
     request_data: dict,
     response_stream: AsyncGenerator[str, None],
     logger: Optional[RawIOLogger] = None,
+    public_model: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Wraps a streaming response to log the full response after completion
@@ -1000,17 +1082,20 @@ async def streaming_response_wrapper(
             if await request.is_disconnected():
                 logging.warning("Client disconnected, stopping stream.")
                 break
-            yield chunk_str
             if chunk_str.strip() and chunk_str.startswith("data:"):
                 content = chunk_str[len("data:") :].strip()
                 if content != "[DONE]":
                     try:
                         chunk_data = json.loads(content)
+                        if public_model and "model" in chunk_data:
+                            chunk_data["model"] = public_model
+                            chunk_str = f"data: {json.dumps(chunk_data)}\n\n"
                         response_chunks.append(chunk_data)
                         if logger:
                             logger.log_stream_chunk(chunk_data)
                     except json.JSONDecodeError:
                         pass
+            yield chunk_str
     except Exception as e:
         logging.error(f"An error occurred during the response stream: {e}")
         # Yield a final error message to the client to ensure they are not left hanging.
@@ -1141,7 +1226,7 @@ async def streaming_response_wrapper(
                 "id": first_chunk.get("id"),
                 "object": "chat.completion",
                 "created": first_chunk.get("created"),
-                "model": first_chunk.get("model"),
+                "model": public_model or first_chunk.get("model"),
                 "choices": [final_choice],
                 "usage": usage_data,
             }
@@ -1152,6 +1237,31 @@ async def streaming_response_wrapper(
                 headers=None,  # Headers are not available at this stage
                 body=full_response,
             )
+
+
+async def anthropic_public_model_wrapper(
+    response_stream: AsyncGenerator[str, None],
+    public_model: Optional[str],
+) -> AsyncGenerator[str, None]:
+    """Rewrite Anthropic SSE model fields so clients only see virtual names."""
+    async for event_str in response_stream:
+        if not public_model or not event_str.strip().startswith("data:"):
+            yield event_str
+            continue
+
+        content = event_str[len("data:") :].strip()
+        try:
+            event_data = json.loads(content)
+        except json.JSONDecodeError:
+            yield event_str
+            continue
+
+        message = event_data.get("message")
+        if isinstance(message, dict) and "model" in message:
+            message["model"] = public_model
+            event_str = f"data: {json.dumps(event_data)}\n\n"
+
+        yield event_str
 
 
 @app.post("/v1/chat/completions")
@@ -1203,6 +1313,8 @@ async def chat_completions(
 
         _orig_model = request_data.get("model", "")
         request_data["model"] = _resolve_model_alias(_orig_model)
+        _public_model = _public_response_model(_orig_model, request_data["model"])
+        _inject_openai_identity(request_data, _public_model)
         _apply_thinking_mode_openai(request_data, _orig_model)
 
         # Extract and log specific reasoning parameters for monitoring.
@@ -1235,7 +1347,11 @@ async def chat_completions(
             )
             return StreamingResponse(
                 streaming_response_wrapper(
-                    request, request_data, response_generator, raw_logger
+                    request,
+                    request_data,
+                    response_generator,
+                    raw_logger,
+                    public_model=_public_model,
                 ),
                 media_type="text/event-stream",
             )
@@ -1262,6 +1378,13 @@ async def chat_completions(
                     headers=response_headers,
                     body=response.model_dump(),
                 )
+            if _public_model and hasattr(response, "model_dump"):
+                response_data = response.model_dump()
+                response_data["model"] = _public_model
+                return JSONResponse(content=response_data)
+            if _public_model and isinstance(response, dict):
+                response["model"] = _public_model
+                return JSONResponse(content=response)
             return response
 
     except (
@@ -1324,6 +1447,8 @@ async def anthropic_messages(
     try:
         _orig_model_anthr = body.model or ""
         _resolved_anthr = _resolve_model_alias(_orig_model_anthr)
+        _public_model_anthr = _public_response_model(_orig_model_anthr, _resolved_anthr)
+        body = _inject_anthropic_identity(body, _public_model_anthr)
         _anthr_update = {"model": _resolved_anthr}
         # Thinking mode desativado: vLLM local nao suporta reasoning_effort via /v1/messages
         body = body.model_copy(update=_anthr_update)
@@ -1345,7 +1470,7 @@ async def anthropic_messages(
         if body.stream:
             # Streaming response
             return StreamingResponse(
-                result,
+                anthropic_public_model_wrapper(result, _public_model_anthr),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1361,6 +1486,8 @@ async def anthropic_messages(
                     headers=None,
                     body=result,
                 )
+            if _public_model_anthr and isinstance(result, dict):
+                result["model"] = _public_model_anthr
             return JSONResponse(content=result)
 
     except (

@@ -326,6 +326,81 @@ class RotatingClient:
                 if limit <= 0:
                     mode_values[mode] = -1
 
+    def _provider_has_static_model(self, provider: str, model: str) -> bool:
+        """Return True when a provider's configured model definitions mention model."""
+        provider_models = self.model_definitions.get_provider_models(provider)
+        if model in provider_models:
+            return True
+
+        for configured_name, definition in provider_models.items():
+            if (
+                isinstance(configured_name, str)
+                and configured_name.split("/")[-1] == model
+            ):
+                return True
+            if not isinstance(definition, dict):
+                continue
+            configured_id = definition.get("id")
+            if configured_id == model:
+                return True
+            if (
+                isinstance(configured_id, str)
+                and configured_id.split("/")[-1] == model
+            ):
+                return True
+
+        return False
+
+    def _infer_providerless_model(self, model: str) -> str:
+        """
+        Best-effort compatibility for clients that send bare model IDs.
+
+        The proxy normally expects provider/model. Some clients cache or expose
+        upstream IDs like qwen25-coder-32b directly, so map those back onto the
+        configured provider when doing so is unambiguous.
+        """
+        if not model or "/" in model:
+            return model
+
+        configured_providers = list(self.all_credentials.keys())
+        if not configured_providers:
+            return model
+
+        default_provider = os.getenv("PROXY_DEFAULT_PROVIDER", "").strip().lower()
+        if default_provider in self.all_credentials:
+            resolved = f"{default_provider}/{model}"
+            lib_logger.info(
+                "Mapping providerless model '%s' to '%s' via PROXY_DEFAULT_PROVIDER",
+                model,
+                resolved,
+            )
+            return resolved
+
+        static_matches = [
+            provider
+            for provider in configured_providers
+            if self._provider_has_static_model(provider, model)
+        ]
+        if len(static_matches) == 1:
+            resolved = f"{static_matches[0]}/{model}"
+            lib_logger.info(
+                "Mapping providerless model '%s' to configured model '%s'",
+                model,
+                resolved,
+            )
+            return resolved
+
+        if len(configured_providers) == 1:
+            resolved = f"{configured_providers[0]}/{model}"
+            lib_logger.info(
+                "Mapping providerless model '%s' to only configured provider '%s'",
+                model,
+                resolved,
+            )
+            return resolved
+
+        return model
+
     async def __aenter__(self):
         await self.initialize_usage_managers()
         return self
@@ -382,7 +457,8 @@ class RotatingClient:
         Returns:
             Response object or async generator for streaming
         """
-        model = kwargs.get("model", "")
+        model = self._infer_providerless_model(kwargs.get("model", ""))
+        kwargs["model"] = model
         provider = model.split("/")[0] if "/" in model else ""
 
         if not provider or provider not in self.all_credentials:
@@ -435,7 +511,8 @@ class RotatingClient:
         """
         Execute an embedding request with retry logic.
         """
-        model = kwargs.get("model", "")
+        model = self._infer_providerless_model(kwargs.get("model", ""))
+        kwargs["model"] = model
         provider = model.split("/")[0] if "/" in model else ""
 
         if not provider or provider not in self.all_credentials:
