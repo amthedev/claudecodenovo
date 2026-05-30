@@ -791,6 +791,30 @@ def _extract_bearer_token(auth: Optional[str]) -> Optional[str]:
     return auth.strip()
 
 
+def _static_env_models() -> list:
+    """Retorna lista de modelos configurados via variáveis de ambiente (fallback estático)."""
+    models = []
+    for env_name in (
+        "PROXY_MODELS",
+        "STATIC_MODELS",
+        "HOSTED_VLLM_MODELS",
+        "OPENAI_MODELS",
+    ):
+        raw = os.getenv(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                models.extend(str(m) for m in parsed if m)
+            elif isinstance(parsed, dict):
+                models.extend(str(k) for k in parsed.keys() if k)
+        except json.JSONDecodeError:
+            # Trata como lista separada por vírgula
+            models.extend(m.strip() for m in raw.split(",") if m.strip())
+    return list(dict.fromkeys(models))
+
+
 def _default_proxy_model() -> Optional[str]:
     for env_name in (
         "PROXY_DEFAULT_MODEL",
