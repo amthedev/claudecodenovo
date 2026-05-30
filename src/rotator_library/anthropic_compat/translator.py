@@ -795,8 +795,8 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
     openai_request.pop("top_k", None)
-    if openai_request.get("reasoning_effort") in {"disable", "disabled", "none"}:
-        openai_request.pop("reasoning_effort", None)
+    # vLLM não suporta reasoning_effort — remover sempre independente do valor
+    openai_request.pop("reasoning_effort", None)
     openai_request.setdefault("frequency_penalty", 0.2)
     max_output_tokens = _vllm_max_output_tokens()
     requested_max_tokens = openai_request.get("max_tokens")
