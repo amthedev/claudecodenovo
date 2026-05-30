@@ -17,9 +17,11 @@ anthropic_package.__path__ = [str(PACKAGE_ROOT / "anthropic_compat")]
 sys.modules.setdefault("rotator_library.anthropic_compat", anthropic_package)
 
 from rotator_library.anthropic_compat.streaming import anthropic_streaming_wrapper
+from rotator_library.anthropic_compat.models import AnthropicMessagesRequest
 from rotator_library.anthropic_compat.translator import (
     _build_vllm_forced_tool_call,
     _parse_textual_tool_calls,
+    translate_anthropic_request,
 )
 
 
@@ -43,6 +45,37 @@ async def _collect_events(chunks, forced_tool_call=None):
 
 
 class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
+    def test_providerless_model_gets_mandatory_create_fallback(self):
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            stream=True,
+            messages=[
+                {"role": "user", "content": "crie o jogo da cobrinha em python"}
+            ],
+            tools=[
+                {
+                    "name": "Write",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["file_path", "content"],
+                    },
+                }
+            ],
+        )
+
+        openai_request = translate_anthropic_request(request)
+        fallback = openai_request.get("_vllm_forced_tool_call")
+
+        self.assertIsNotNone(fallback)
+        self.assertEqual(fallback["name"], "Write")
+        self.assertEqual(fallback["_proxy_strategy"], "write_from_model_text")
+        self.assertEqual(fallback["input"]["file_path"], "snake_game.py")
+
     def test_generic_create_intent_uses_write_from_model_text_fallback(self):
         fallback = _build_vllm_forced_tool_call(
             "create",
