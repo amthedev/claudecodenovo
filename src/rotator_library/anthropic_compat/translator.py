@@ -46,19 +46,22 @@ VLLM_MAX_TOOLS = 16
 VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "You are running inside Claude Code. When the user asks to create, edit, "
     "inspect, or run project files or commands, call the available tools "
-    "(especially Write, Edit, MultiEdit, Read, Bash, LS, Glob, and Grep) instead "
-    "of only explaining or pasting code. Do not tell the user to copy code when "
-    "a file operation is needed."
+    "instead of only explaining or pasting code. For file creation or edits, "
+    "prefer Write, Edit, or MultiEdit over shell heredocs like `cat > file`. "
+    "Use Bash for running commands after files are written. Never run programs "
+    "that wait for interactive input unless you pipe input, pass arguments, or "
+    "use a short timeout; avoid commands that can print endlessly. Do not tell "
+    "the user to copy code when a file operation is needed."
 )
 VLLM_TOOL_PRIORITY = {
-    "bash": 0,
-    "read": 1,
-    "write": 2,
-    "edit": 3,
-    "multiedit": 4,
-    "ls": 5,
-    "glob": 6,
-    "grep": 7,
+    "write": 0,
+    "edit": 1,
+    "multiedit": 2,
+    "read": 3,
+    "ls": 4,
+    "glob": 5,
+    "grep": 6,
+    "bash": 7,
     "todowrite": 8,
     "task": 9,
 }
