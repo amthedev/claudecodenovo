@@ -346,6 +346,47 @@ def update_api_key(kid: str, **kwargs) -> bool:
         return cur.rowcount > 0
 
 
+def recharge_api_key(kid: str, add_tokens: int = 0, add_daily_tokens: int = 0,
+                     add_monthly_tokens: int = 0, add_validity_days: int = 0,
+                     owner_reseller_id: Optional[str] = None) -> Dict[str, Any]:
+    """Adiciona franquia a uma chave sem apagar o historico de consumo."""
+    add_tokens = max(0, int(add_tokens or 0))
+    add_daily_tokens = max(0, int(add_daily_tokens or 0))
+    add_monthly_tokens = max(0, int(add_monthly_tokens or 0))
+    add_validity_days = max(0, int(add_validity_days or 0))
+    with _db() as c:
+        row = c.execute("SELECT * FROM api_keys WHERE id=?", (kid,)).fetchone()
+        if not row:
+            raise ValueError("Chave não encontrada.")
+        if owner_reseller_id and row["parent_key_id"] != owner_reseller_id:
+            raise ValueError("Esta chave não pertence ao revendedor.")
+        if row["parent_key_id"] and add_tokens:
+            parent = c.execute(
+                "SELECT * FROM api_keys WHERE id=?", (row["parent_key_id"],)
+            ).fetchone()
+            if not parent or not parent["active"]:
+                raise ValueError("Chave mestre inválida ou inativa.")
+            pool = int(parent["token_limit"] or 0)
+            allocated = int(c.execute(
+                "SELECT COALESCE(SUM(token_limit),0) FROM api_keys WHERE parent_key_id=?",
+                (parent["id"],),
+            ).fetchone()[0])
+            if pool > 0 and allocated + add_tokens > pool:
+                raise ValueError("A recarga ultrapassa o saldo distribuível da chave mestre.")
+        current_expiry = float(row["expires_at"] or 0)
+        expires_at = current_expiry
+        if add_validity_days:
+            expires_at = max(time.time(), current_expiry) + add_validity_days * 86400
+        c.execute(
+            """UPDATE api_keys SET token_limit=token_limit+?,
+               daily_limit=daily_limit+?, monthly_limit=monthly_limit+?,
+               expires_at=?, updated_at=? WHERE id=?""",
+            (add_tokens, add_daily_tokens, add_monthly_tokens,
+             expires_at or None, time.time(), kid),
+        )
+    return get_api_key(kid) or {}
+
+
 def rotate_api_key(kid: str) -> tuple[str, str]:
     """Gera nova chave. Retorna (key_value, reveal_token)."""
     new_key = generate_sk_key()
@@ -576,6 +617,24 @@ def get_key_usage_history(kid: str, days: int = 14) -> List[Dict[str, Any]]:
                            (kid, d)).fetchone()
         result.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)),
                        "count": r["total_tokens"] if r else 0})
+    return result
+
+
+def get_reseller_usage_history(kid: str, days: int = 14) -> List[Dict[str, Any]]:
+    """Uso agregado da chave mestre e de todas as subchaves."""
+    result = []
+    for i in range(days - 1, -1, -1):
+        ts = time.time() - i * 86400
+        d = time.strftime("%Y-%m-%d", time.gmtime(ts))
+        with _db() as c:
+            total = c.execute(
+                """SELECT COALESCE(SUM(ku.total_tokens),0)
+                   FROM key_usage ku JOIN api_keys ak ON ak.id=ku.key_id
+                   WHERE ku.date=? AND (ak.id=? OR ak.parent_key_id=?)""",
+                (d, kid, kid),
+            ).fetchone()[0]
+        result.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)),
+                       "count": total})
     return result
 
 
