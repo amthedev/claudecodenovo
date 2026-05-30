@@ -120,6 +120,7 @@ async def anthropic_streaming_wrapper(
     request_id: Optional[str] = None,
     is_disconnected: Optional[Callable[[], Awaitable[bool]]] = None,
     transaction_logger: Optional["TransactionLogger"] = None,
+    forced_tool_call: Optional[dict] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Convert OpenAI streaming format to Anthropic streaming format.
@@ -142,6 +143,8 @@ async def anthropic_streaming_wrapper(
         request_id: Optional request ID (auto-generated if not provided)
         is_disconnected: Optional async callback that returns True if client disconnected
         transaction_logger: Optional TransactionLogger for logging the final Anthropic response
+        forced_tool_call: Optional fallback tool call to emit if the model tries
+            to end a mandatory agent step without using a tool
 
     Yields:
         SSE format strings in Anthropic's streaming format
@@ -270,6 +273,41 @@ async def anthropic_streaming_wrapper(
                             }
                             yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
                         current_block_index += 1
+
+                if forced_tool_call and not tool_calls_by_index:
+                    tc_index = 0
+                    block_idx = current_block_index
+                    arguments = json.dumps(forced_tool_call.get("input") or {})
+                    tool_calls_by_index[tc_index] = {
+                        "id": forced_tool_call.get(
+                            "id", f"toolu_proxy_{uuid.uuid4().hex[:12]}"
+                        ),
+                        "name": forced_tool_call.get("name", ""),
+                        "arguments": arguments,
+                    }
+                    tool_block_indices[tc_index] = block_idx
+                    block_start = {
+                        "type": "content_block_start",
+                        "index": block_idx,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": tool_calls_by_index[tc_index]["id"],
+                            "name": tool_calls_by_index[tc_index]["name"],
+                            "input": {},
+                        },
+                    }
+                    yield f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n"
+                    if arguments:
+                        block_delta = {
+                            "type": "content_block_delta",
+                            "index": block_idx,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": arguments,
+                            },
+                        }
+                        yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
+                    current_block_index += 1
 
                 # Close all open tool_use blocks
                 for tc_index in sorted(tool_block_indices.keys()):

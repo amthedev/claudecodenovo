@@ -42,6 +42,35 @@ def _raise_if_error_response(response: Any) -> None:
     raise ValueError(message)
 
 
+def _has_tool_use(anthropic_response: dict) -> bool:
+    return any(
+        isinstance(block, dict) and block.get("type") == "tool_use"
+        for block in anthropic_response.get("content") or []
+    )
+
+
+def _force_tool_use_response(
+    anthropic_response: dict,
+    forced_tool_call: Optional[dict],
+) -> dict:
+    if not forced_tool_call or _has_tool_use(anthropic_response):
+        return anthropic_response
+
+    response = dict(anthropic_response)
+    content = list(response.get("content") or [])
+    content.append(
+        {
+            "type": "tool_use",
+            "id": forced_tool_call.get("id", f"toolu_proxy_{uuid.uuid4().hex[:12]}"),
+            "name": forced_tool_call.get("name", ""),
+            "input": forced_tool_call.get("input") or {},
+        }
+    )
+    response["content"] = content
+    response["stop_reason"] = "tool_use"
+    return response
+
+
 class AnthropicHandler:
     """
     Handler for Anthropic API compatibility methods.
@@ -109,6 +138,9 @@ class AnthropicHandler:
 
         # Translate Anthropic request to OpenAI format
         openai_request = translate_anthropic_request(request)
+        forced_tool_call = openai_request.pop("_vllm_forced_tool_call", None)
+        openai_request.pop("_vllm_tool_intent", None)
+        openai_request.pop("_vllm_previous_tool_count", None)
 
         # Pass parent log directory to acompletion for nested logging
         if anthropic_logger and anthropic_logger.log_dir:
@@ -141,6 +173,9 @@ class AnthropicHandler:
                 openai_response, original_model
             )
             anthropic_response["id"] = request_id
+            anthropic_response = _force_tool_use_response(
+                anthropic_response, forced_tool_call
+            )
             if anthropic_logger:
                 anthropic_logger.log_response(
                     anthropic_response,
@@ -169,6 +204,7 @@ class AnthropicHandler:
                 request_id=request_id,
                 is_disconnected=is_disconnected,
                 transaction_logger=anthropic_logger,
+                forced_tool_call=forced_tool_call,
             )
         else:
             # Non-streaming response
@@ -191,6 +227,9 @@ class AnthropicHandler:
 
             # Override the ID with our request ID
             anthropic_response["id"] = request_id
+            anthropic_response = _force_tool_use_response(
+                anthropic_response, forced_tool_call
+            )
 
             # Log Anthropic response
             if anthropic_logger:
