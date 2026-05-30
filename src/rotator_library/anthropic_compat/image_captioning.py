@@ -18,6 +18,7 @@ continues — the agent never hard-stops because of an image.
 import asyncio
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from .models import (
@@ -31,11 +32,88 @@ if TYPE_CHECKING:
 
 _FAILURE_PLACEHOLDER = "[Imagem recebida mas não pôde ser processada]"
 
+# Defesa conservadora contra vazamento de identidade do VLM. A prevenção principal
+# é o _VISION_IDENTITY_GUARD no prompt; aqui só limpamos vazamentos óbvios sem
+# arriscar destruir a descrição real.
+_THINK_TAG_RE = re.compile(r"(?is)<think>.*?</think>\s*")
+# Nomes de provider/modelo de visão que não devem aparecer. Substituição neutra,
+# sem repetir artigo (evita "pelo o sistema").
+_PROVIDER_NAME_RE = re.compile(r"(?i)\bqwen[\w.\-]*\b|\bopenrouter\b")
+# Uma LINHA inteira que é só auto-apresentação ("Como modelo X, ...") é descartada,
+# mas só quando há mais conteúdo depois — nunca apagamos a única linha de descrição.
+_IDENTITY_LINE_RE = re.compile(
+    r"(?i)^\s*(?:as|sou|como|enquanto|i am|i'm)\b[^\n]*"
+    r"\b(?:qwen|openrouter|model[oa]?|assistant|ia|ai)\b[^\n]*$"
+)
+
+
+def _sanitize_description(text: str) -> str:
+    """Remove reasoning leaks and model/provider self-identification from a caption."""
+    text = _THINK_TAG_RE.sub("", text).strip()
+    lines = text.split("\n")
+    # Drop pure self-identification lines, but keep at least the substantive content.
+    kept = [ln for ln in lines if not _IDENTITY_LINE_RE.match(ln.strip())]
+    if kept and any(ln.strip() for ln in kept):
+        text = "\n".join(kept)
+    # Neutralize stray provider/model names anywhere in the text.
+    text = _PROVIDER_NAME_RE.sub("o analisador de imagem", text)
+    return text.strip()
+
 
 def _block_type(block: Any) -> Optional[str]:
     if isinstance(block, dict):
         return block.get("type")
     return getattr(block, "type", None)
+
+
+def _block_source(block: Any) -> Optional[dict]:
+    source = block.get("source") if isinstance(block, dict) else getattr(block, "source", None)
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        return source
+    return source.model_dump() if hasattr(source, "model_dump") else dict(source)
+
+
+def _is_pdf_document(block: Any) -> bool:
+    if _block_type(block) != "document":
+        return False
+    source = _block_source(block) or {}
+    media_type = (source.get("media_type") or "").lower()
+    return "pdf" in media_type or (not media_type and bool(source.get("data")))
+
+
+def _extract_pdf_text(b64_data: str, max_chars: int, log: logging.Logger) -> Optional[str]:
+    """Extract text from a base64-encoded PDF. Returns None if not extractable."""
+    import base64
+
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        log.warning("pypdf não instalado — não é possível extrair texto de PDF.")
+        return None
+    try:
+        from io import BytesIO
+
+        raw = base64.b64decode(b64_data)
+        reader = PdfReader(BytesIO(raw))
+        parts = []
+        total = 0
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            if not page_text.strip():
+                continue
+            parts.append(page_text)
+            total += len(page_text)
+            if total >= max_chars:
+                break
+        text = "\n\n".join(parts).strip()
+        if not text:
+            return None  # scanned/image-only PDF — no extractable text
+        return text[:max_chars]
+    except Exception as e:
+        log.warning("Falha ao extrair texto do PDF: %s", e)
+        return None
 
 
 def _image_data_uri(block: Any) -> Optional[str]:
@@ -69,6 +147,16 @@ def _user_context_from_content(content: List[Any]) -> str:
     return "\n".join(parts).strip()
 
 
+# Instrução anti-identidade: o VLM (ex: Qwen-VL no OpenRouter) não pode revelar o
+# que é nem narrar raciocínio — a descrição vira contexto do modelo principal e
+# não deve vazar o provider/modelo de visão para o cliente.
+_VISION_IDENTITY_GUARD = (
+    "Responda APENAS com a descrição da imagem. Não se apresente, não diga qual "
+    "modelo ou IA você é, não mencione provedor, OpenRouter, Qwen ou qualquer nome "
+    "de modelo, e não inclua raciocínio, preâmbulo ou tags <think>. "
+)
+
+
 def _build_vision_prompt(user_context: str) -> str:
     if user_context:
         return (
@@ -78,12 +166,13 @@ def _build_vision_prompt(user_context: str) -> str:
             "Se houver texto, código ou mensagens de erro, transcreva-os com fidelidade. "
             "Se for uma tela, site ou interface, descreva o layout, os elementos e os textos "
             "visíveis. Seja completo e objetivo — sua descrição será a única informação que o "
-            "assistente principal terá sobre a imagem."
+            "assistente principal terá sobre a imagem.\n\n" + _VISION_IDENTITY_GUARD
         )
     return (
         "Descreva esta imagem de forma completa e fiel. Se houver texto, código ou erros, "
         "transcreva-os. Se for uma interface ou site, descreva o layout e os elementos. "
-        "Sua descrição será a única informação que o assistente principal terá sobre a imagem."
+        "Sua descrição será a única informação que o assistente principal terá sobre a imagem.\n\n"
+        + _VISION_IDENTITY_GUARD
     )
 
 
@@ -121,7 +210,7 @@ async def _describe_image(
         )
         message = choices[0]["message"] if isinstance(choices[0], dict) else choices[0].message
         text = (message.get("content") if isinstance(message, dict) else message.content) or ""
-        text = text.strip()
+        text = _sanitize_description(text)
         if not text:
             return _FAILURE_PLACEHOLDER
         return f"[Imagem analisada: {text}]"
@@ -153,37 +242,62 @@ async def caption_images_in_request(
         except ValueError:
             max_tokens = 1024
 
+    try:
+        pdf_max_chars = int(os.getenv("PDF_MAX_CHARS", "20000"))
+    except ValueError:
+        pdf_max_chars = 20000
+
     messages = request.messages or []
 
-    # Collect every image occurrence with enough info to caption and replace it.
-    # job = (message_index, block_index, data_uri, user_context)
-    jobs = []
+    # Map of (message_index, block_index) -> replacement text.
+    replacement_by_pos: dict = {}
+    # Image jobs go to the VLM (async); PDFs are extracted locally (sync).
+    image_jobs = []  # (m_idx, b_idx, data_uri, user_context)
+
     for m_idx, message in enumerate(messages):
         content = getattr(message, "content", None)
         if not isinstance(content, list):
             continue
         user_context = _user_context_from_content(content)
         for b_idx, block in enumerate(content):
-            if _block_type(block) != "image":
-                continue
-            data_uri = _image_data_uri(block)
-            if data_uri:
-                jobs.append((m_idx, b_idx, data_uri, user_context))
+            btype = _block_type(block)
+            if btype == "image":
+                data_uri = _image_data_uri(block)
+                if data_uri:
+                    image_jobs.append((m_idx, b_idx, data_uri, user_context))
+            elif _is_pdf_document(block):
+                source = _block_source(block) or {}
+                pdf_text = None
+                if source.get("type") == "base64" or source.get("data"):
+                    pdf_text = _extract_pdf_text(
+                        source.get("data", ""), pdf_max_chars, log
+                    )
+                if pdf_text:
+                    replacement_by_pos[(m_idx, b_idx)] = (
+                        f"[Conteúdo do PDF anexado]\n{pdf_text}"
+                    )
+                else:
+                    replacement_by_pos[(m_idx, b_idx)] = (
+                        "[PDF anexado, mas não foi possível extrair texto "
+                        "(pode ser um PDF digitalizado/sem texto).]"
+                    )
 
-    if not jobs:
-        return request  # no images — common path, zero cost
-
-    log.info("Captioning %d image(s) via %s", len(jobs), vision_model)
-    descriptions = await asyncio.gather(
-        *(
-            _describe_image(uri, ctx, client, vision_model, max_tokens, log)
-            for (_, _, uri, ctx) in jobs
+    if image_jobs:
+        log.info("Captioning %d image(s) via %s", len(image_jobs), vision_model)
+        descriptions = await asyncio.gather(
+            *(
+                _describe_image(uri, ctx, client, vision_model, max_tokens, log)
+                for (_, _, uri, ctx) in image_jobs
+            )
         )
-    )
+        for (m_idx, b_idx, _, _), desc in zip(image_jobs, descriptions):
+            replacement_by_pos[(m_idx, b_idx)] = desc
 
-    # Rebuild messages with image blocks swapped for text blocks.
+    if not replacement_by_pos:
+        return request  # no images/PDFs — common path, zero cost
+
+    # Rebuild messages with image/PDF blocks swapped for text blocks.
     new_messages = list(messages)
-    replacement_by_pos = {(j[0], j[1]): desc for j, desc in zip(jobs, descriptions)}
     for m_idx, message in enumerate(new_messages):
         content = getattr(message, "content", None)
         if not isinstance(content, list):

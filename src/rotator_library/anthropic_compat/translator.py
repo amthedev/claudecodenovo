@@ -996,6 +996,33 @@ def _strip_vllm_rejected_fields(value: Any) -> Any:
     return value
 
 
+def _neutralize_unsupported_media_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Safety net: text-only vLLM rejects image_url blocks (images/PDFs). The proxy
+    normally replaces those with text before this point (image_captioning), but if
+    that didn't run (e.g. pypdf missing, captioning disabled), an image_url block
+    here would 400 the request. Replace any residual image_url block with a short
+    text note so the request still succeeds instead of failing with "Load failed".
+    """
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        new_blocks = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "image_url":
+                new_blocks.append(
+                    {
+                        "type": "text",
+                        "text": "[Anexo de imagem/PDF não processável por este modelo]",
+                    }
+                )
+            else:
+                new_blocks.append(block)
+        message["content"] = new_blocks
+    return messages
+
+
 def _env_int(names: List[str], default: int, minimum: int = 0) -> int:
     for name in names:
         value = os.getenv(name)
@@ -1771,6 +1798,9 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         openai_request["max_tokens"] = max_output_tokens
 
     openai_request["messages"] = _strip_vllm_rejected_fields(
+        openai_request.get("messages", [])
+    )
+    openai_request["messages"] = _neutralize_unsupported_media_for_vllm(
         openai_request.get("messages", [])
     )
 
