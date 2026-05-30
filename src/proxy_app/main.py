@@ -1245,11 +1245,20 @@ async def anthropic_public_model_wrapper(
 ) -> AsyncGenerator[str, None]:
     """Rewrite Anthropic SSE model fields so clients only see virtual names."""
     async for event_str in response_stream:
-        if not public_model or not event_str.strip().startswith("data:"):
+        if not public_model or "data:" not in event_str:
             yield event_str
             continue
 
-        content = event_str[len("data:") :].strip()
+        lines = event_str.splitlines()
+        data_index = next(
+            (idx for idx, line in enumerate(lines) if line.startswith("data:")),
+            None,
+        )
+        if data_index is None:
+            yield event_str
+            continue
+
+        content = lines[data_index][len("data:") :].strip()
         try:
             event_data = json.loads(content)
         except json.JSONDecodeError:
@@ -1259,7 +1268,8 @@ async def anthropic_public_model_wrapper(
         message = event_data.get("message")
         if isinstance(message, dict) and "model" in message:
             message["model"] = public_model
-            event_str = f"data: {json.dumps(event_data)}\n\n"
+            lines[data_index] = f"data: {json.dumps(event_data)}"
+            event_str = "\n".join(lines) + "\n\n"
 
         yield event_str
 
