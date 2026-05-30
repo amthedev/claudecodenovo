@@ -923,11 +923,11 @@ def _virtual_claude_models() -> list:
 
 
 def _virtual_model_context_window() -> int:
-    return 16384
+    return 32768
 
 
 def _virtual_model_max_output_tokens() -> int:
-    return 2048
+    return 4096
 
 
 def _apply_virtual_model_limits(model_cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

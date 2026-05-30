@@ -40,8 +40,10 @@ GRANULAR_REASONING_PROVIDERS = set()
 # Hosted vLLM defaults are intentionally conservative because Claude Desktop
 # and Claude Code assume much larger Claude-native limits than local/vLLM
 # deployments usually have.
-VLLM_MAX_OUTPUT_TOKENS = 2048
-VLLM_MAX_INPUT_CHARS = 18000
+VLLM_MAX_OUTPUT_TOKENS = 4096
+VLLM_MAX_INPUT_CHARS = 36000
+VLLM_MAX_MESSAGE_CHARS = 12000
+VLLM_MAX_TOOL_RESULT_CHARS = 6000
 VLLM_MAX_TOOLS = 16
 VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "You are running inside Claude Code. When the user asks to create, edit, "
@@ -588,22 +590,77 @@ def _message_char_size(message: Dict[str, Any]) -> int:
         return len(str(message))
 
 
+def _compact_text_middle(text: str, max_chars: int, label: str) -> str:
+    if len(text) <= max_chars:
+        return text
+    head_chars = max(1, max_chars // 2)
+    tail_chars = max(1, max_chars - head_chars)
+    omitted = len(text) - head_chars - tail_chars
+    return (
+        f"{text[:head_chars]}\n\n"
+        f"[... {omitted} characters omitted from {label} to fit hosted vLLM context ...]\n\n"
+        f"{text[-tail_chars:]}"
+    )
+
+
+def _compact_content_for_vllm(content: Any, max_chars: int, label: str) -> Any:
+    if isinstance(content, str):
+        return _compact_text_middle(content, max_chars, label)
+    if isinstance(content, list):
+        compacted = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                block_copy = dict(block)
+                block_copy["text"] = _compact_text_middle(
+                    str(block_copy.get("text") or ""), max_chars, label
+                )
+                compacted.append(block_copy)
+            else:
+                compacted.append(block)
+        return compacted
+    return content
+
+
+def _compact_large_messages_for_vllm(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    compacted = []
+    for message in messages:
+        message_copy = dict(message)
+        role = message_copy.get("role")
+        if role == "tool":
+            message_copy["content"] = _compact_content_for_vllm(
+                message_copy.get("content", ""),
+                VLLM_MAX_TOOL_RESULT_CHARS,
+                "tool output",
+            )
+        elif _message_char_size(message_copy) > VLLM_MAX_MESSAGE_CHARS:
+            message_copy["content"] = _compact_content_for_vllm(
+                message_copy.get("content", ""),
+                VLLM_MAX_MESSAGE_CHARS,
+                f"{role or 'message'} content",
+            )
+        compacted.append(message_copy)
+    return compacted
+
+
 def _trim_message_content(message: Dict[str, Any], max_chars: int) -> Dict[str, Any]:
     trimmed = dict(message)
     content = trimmed.get("content")
     if isinstance(content, str) and len(content) > max_chars:
-        trimmed["content"] = content[-max_chars:]
+        trimmed["content"] = _compact_text_middle(content, max_chars, "message")
     elif isinstance(content, list) and _message_char_size(trimmed) > max_chars:
-        trimmed["content"] = content[-6:]
+        trimmed["content"] = _compact_content_for_vllm(content[-8:], max_chars, "message")
     return trimmed
 
 
 def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    messages = _compact_large_messages_for_vllm(messages)
     max_chars = _vllm_max_input_chars()
     if sum(_message_char_size(message) for message in messages) <= max_chars:
         return messages
 
-    system_budget = max(2000, max_chars // 4)
+    system_budget = max(4000, max_chars // 3)
     system_messages = [
         _trim_message_content(m, system_budget)
         for m in messages
@@ -624,9 +681,11 @@ def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str
             trimmed = dict(message)
             content = trimmed.get("content")
             if isinstance(content, str):
-                trimmed["content"] = content[-max_chars:]
+                trimmed["content"] = _compact_text_middle(content, max_chars, "message")
             elif isinstance(content, list):
-                trimmed["content"] = content[-8:]
+                trimmed["content"] = _compact_content_for_vllm(
+                    content[-8:], max_chars, "message"
+                )
             message = trimmed
             message_size = _message_char_size(message)
         kept_reversed.append(message)
