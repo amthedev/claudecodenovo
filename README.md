@@ -201,6 +201,25 @@ For hosted vLLM backends, the Anthropic compatibility layer strips Anthropic-onl
 
 By default, hosted vLLM streams Anthropic responses immediately. Set `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=true` only for vLLM deployments that reject streaming requests. The proxy also avoids native OpenAI `tools` payloads for hosted vLLM unless `HOSTED_VLLM_NATIVE_TOOLS=true`, which prevents 400 responses from vLLM servers started without a tool-call parser. To make smaller local models behave more like Claude Code, hosted vLLM responses default to pt-BR and strip obvious leaked reasoning preambles; set `PROXY_RESPONSE_LANGUAGE` or `HOSTED_VLLM_STRIP_REASONING_PREAMBLE=false` to change that.
 
+For reliable Claude Code behavior, native tool calling is strongly recommended. Claude Code only runs file and shell actions when the response contains Anthropic `tool_use` blocks and finishes with `stop_reason: "tool_use"`. If a vLLM model only answers with prose like "I will save this file" plus a code block, Claude Code treats that as a normal final answer and no file is edited. The proxy includes a best-effort textual fallback for servers without tool parsers, but production Claude Code use should start vLLM with tool calling enabled and set `HOSTED_VLLM_NATIVE_TOOLS=true`.
+
+For Qwen2.5 hosted on vLLM, start the server with Hermes tool parsing, for example:
+
+```bash
+vllm serve Qwen/Qwen2.5-Coder-32B-Instruct \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes
+```
+
+For Qwen3 coder-style models, use the Qwen3 parser recommended by vLLM for coding agents, for example:
+
+```bash
+vllm serve Qwen/Qwen3.6-27B \
+  --reasoning-parser qwen3 \
+  --enable-auto-tool-choice \
+  --tool-call-parser qwen3_coder
+```
+
 Claude Code may request very large outputs, such as `max_tokens=32000`. For hosted vLLM, the proxy caps output tokens to `HOSTED_VLLM_MAX_TOKENS` or `4096` by default so requests fit deployments with smaller `max_model_len` values.
 
 Now you can use Claude Code with Gemini, OpenAI, or any other configured provider.
@@ -787,7 +806,7 @@ This repository includes `squarecloud.config` for Square Cloud deploys.
    - `WHITELIST_MODELS_HOSTED_VLLM=hosted_vllm/qwen25-coder-32b`
    - optional: `PROXY_DEFAULT_MODEL=hosted_vllm/qwen25-coder-32b`
    - optional: `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=true`
-   - optional: `HOSTED_VLLM_NATIVE_TOOLS=true` only if your vLLM server was started with native tool-calling support
+   - recommended for Claude Code: `HOSTED_VLLM_NATIVE_TOOLS=true` when your vLLM server was started with `--enable-auto-tool-choice` and the correct `--tool-call-parser`
    - optional: `PROXY_RESPONSE_LANGUAGE=pt-BR`
    - optional: `HOSTED_VLLM_STRIP_REASONING_PREAMBLE=true`
    - optional: `HOSTED_VLLM_MAX_TOKENS=4096`

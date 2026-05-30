@@ -1,0 +1,165 @@
+import json
+import sys
+import types
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_ROOT = ROOT / "src" / "rotator_library"
+
+rotator_package = types.ModuleType("rotator_library")
+rotator_package.__path__ = [str(PACKAGE_ROOT)]
+sys.modules.setdefault("rotator_library", rotator_package)
+
+anthropic_package = types.ModuleType("rotator_library.anthropic_compat")
+anthropic_package.__path__ = [str(PACKAGE_ROOT / "anthropic_compat")]
+sys.modules.setdefault("rotator_library.anthropic_compat", anthropic_package)
+
+from rotator_library.anthropic_compat.streaming import anthropic_streaming_wrapper
+
+
+async def _stream(chunks):
+    for chunk in chunks:
+        yield f"data: {json.dumps(chunk)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+async def _collect_events(chunks):
+    events = []
+    async for event in anthropic_streaming_wrapper(_stream(chunks), "claude-test"):
+        if not event.startswith("event: "):
+            continue
+        event_type = event.split("\n", 1)[0].removeprefix("event: ")
+        data_line = next(line for line in event.splitlines() if line.startswith("data: "))
+        events.append((event_type, json.loads(data_line.removeprefix("data: "))))
+    return events
+
+
+class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_delays_tool_block_until_name_is_known(self):
+        events = await _collect_events(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "type": "function",
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {
+                                            "name": "Write",
+                                            "arguments": '{"file_path":"calculadora.py"',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {
+                                            "arguments": ',"content":"print(1)"}',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ]
+        )
+
+        starts = [
+            data
+            for event_type, data in events
+            if event_type == "content_block_start"
+            and data["content_block"]["type"] == "tool_use"
+        ]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["content_block"]["id"], "call_123")
+        self.assertEqual(starts[0]["content_block"]["name"], "Write")
+
+        partial_json = "".join(
+            data["delta"]["partial_json"]
+            for event_type, data in events
+            if event_type == "content_block_delta"
+            and data["delta"]["type"] == "input_json_delta"
+        )
+        self.assertEqual(
+            json.loads(partial_json),
+            {"file_path": "calculadora.py", "content": "print(1)"},
+        )
+
+        message_delta = next(
+            data for event_type, data in events if event_type == "message_delta"
+        )
+        self.assertEqual(message_delta["delta"]["stop_reason"], "tool_use")
+
+    async def test_buffers_arguments_that_arrive_before_name(self):
+        events = await _collect_events(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "function": {"arguments": '{"command":"pwd"}'},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {"name": "Bash"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ]
+        )
+
+        partial_json = "".join(
+            data["delta"]["partial_json"]
+            for event_type, data in events
+            if event_type == "content_block_delta"
+            and data["delta"]["type"] == "input_json_delta"
+        )
+        self.assertEqual(json.loads(partial_json), {"command": "pwd"})
+
+
+if __name__ == "__main__":
+    unittest.main()

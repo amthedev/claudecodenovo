@@ -315,7 +315,7 @@ async def anthropic_streaming_wrapper(
                     yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {block_idx}}}\n\n'
 
                 # Determine stop_reason based on whether we had tool calls
-                stop_reason = "tool_use" if tool_calls_by_index else "end_turn"
+                stop_reason = "tool_use" if tool_block_indices else "end_turn"
                 stop_reason_final = stop_reason
 
                 # Build final usage dict with cached tokens
@@ -349,7 +349,7 @@ async def anthropic_streaming_wrapper(
                             }
                         )
                     # Add tool use blocks
-                    for tc_index in sorted(tool_calls_by_index.keys()):
+                    for tc_index in sorted(tool_block_indices.keys()):
                         tc = tool_calls_by_index[tc_index]
                         # Parse arguments JSON string to dict
                         try:
@@ -523,26 +523,42 @@ async def anthropic_streaming_wrapper(
                 tc_index = tc.get("index", 0)
 
                 if tc_index not in tool_calls_by_index:
-                    # Close previous thinking block if open
+                    tool_calls_by_index[tc_index] = {
+                        "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
+                        "name": tc.get("function", {}).get("name", ""),
+                        "arguments": "",
+                        "emitted_arguments_length": 0,
+                        "started": False,
+                    }
+                elif tc.get("id"):
+                    tool_calls_by_index[tc_index]["id"] = tc["id"]
+
+                # Accumulate arguments
+                func = tc.get("function", {})
+                if func.get("name"):
+                    tool_calls_by_index[tc_index]["name"] = func["name"]
+                if func.get("arguments"):
+                    tool_calls_by_index[tc_index]["arguments"] += func["arguments"]
+
+                if (
+                    tool_calls_by_index[tc_index]["name"]
+                    and not tool_calls_by_index[tc_index]["started"]
+                ):
+                    # Anthropic requires the tool name in content_block_start.
+                    # Some OpenAI-compatible streams send id/type first and name
+                    # in a later delta, so wait until the reducer has a name.
                     if thinking_block_started:
                         yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_block_index}}}\n\n'
                         current_block_index += 1
                         thinking_block_started = False
 
-                    # Close previous text block if open
                     if content_block_started:
                         yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_block_index}}}\n\n'
                         current_block_index += 1
                         content_block_started = False
 
-                    # Start new tool use block
-                    tool_calls_by_index[tc_index] = {
-                        "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
-                        "name": tc.get("function", {}).get("name", ""),
-                        "arguments": "",
-                    }
-                    # Track which block index this tool call uses
                     tool_block_indices[tc_index] = current_block_index
+                    tool_calls_by_index[tc_index]["started"] = True
 
                     block_start = {
                         "type": "content_block_start",
@@ -555,23 +571,29 @@ async def anthropic_streaming_wrapper(
                         },
                     }
                     yield f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n"
-                    # Increment for the next block
                     current_block_index += 1
 
-                # Accumulate arguments
-                func = tc.get("function", {})
-                if func.get("name"):
-                    tool_calls_by_index[tc_index]["name"] = func["name"]
-                if func.get("arguments"):
-                    tool_calls_by_index[tc_index]["arguments"] += func["arguments"]
-
+                if (
+                    tool_calls_by_index[tc_index]["started"]
+                    and len(tool_calls_by_index[tc_index]["arguments"])
+                    > tool_calls_by_index[tc_index]["emitted_arguments_length"]
+                ):
+                    emitted_length = tool_calls_by_index[tc_index][
+                        "emitted_arguments_length"
+                    ]
+                    partial_json = tool_calls_by_index[tc_index]["arguments"][
+                        emitted_length:
+                    ]
+                    tool_calls_by_index[tc_index]["emitted_arguments_length"] = len(
+                        tool_calls_by_index[tc_index]["arguments"]
+                    )
                     # Send partial JSON delta using the correct block index for this tool
                     block_delta = {
                         "type": "content_block_delta",
                         "index": tool_block_indices[tc_index],
                         "delta": {
                             "type": "input_json_delta",
-                            "partial_json": func["arguments"],
+                            "partial_json": partial_json,
                         },
                     }
                     yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"

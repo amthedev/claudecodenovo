@@ -105,6 +105,8 @@ VLLM_CREATE_FILE_TOOL_PROMPT = (
     "This is a create/edit request. Use a file editing tool such as Write, "
     "Create, Edit, Update, or MultiEdit. If the user asks for a Python "
     "calculator and no path is specified, create or update calculadora.py. "
+    "If the user asks for a Python stopwatch/cronometro and no path is "
+    "specified, create or update cronometro.py. "
     "Then run it or compile it before finalizing."
 )
 VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
@@ -1155,6 +1157,62 @@ def _calculator_source() -> str:
     )
 
 
+def _stopwatch_source() -> str:
+    return (
+        "#!/usr/bin/env python3\n"
+        "\"\"\"Cronometro simples de terminal.\"\"\"\n\n"
+        "import time\n\n"
+        "class Cronometro:\n"
+        "    def __init__(self):\n"
+        "        self._inicio = None\n"
+        "        self._acumulado = 0.0\n"
+        "        self._rodando = False\n\n"
+        "    def iniciar(self):\n"
+        "        if self._rodando:\n"
+        "            return 'Cronometro ja esta rodando.'\n"
+        "        self._inicio = time.monotonic()\n"
+        "        self._rodando = True\n"
+        "        return 'Cronometro iniciado.'\n\n"
+        "    def pausar(self):\n"
+        "        if not self._rodando:\n"
+        "            return 'Cronometro nao esta rodando.'\n"
+        "        self._acumulado += time.monotonic() - self._inicio\n"
+        "        self._inicio = None\n"
+        "        self._rodando = False\n"
+        "        return f'Cronometro pausado em {self.tempo():.2f}s.'\n\n"
+        "    def zerar(self):\n"
+        "        self._inicio = time.monotonic() if self._rodando else None\n"
+        "        self._acumulado = 0.0\n"
+        "        return 'Cronometro zerado.'\n\n"
+        "    def tempo(self):\n"
+        "        if self._rodando:\n"
+        "            return self._acumulado + (time.monotonic() - self._inicio)\n"
+        "        return self._acumulado\n\n"
+        "    def status(self):\n"
+        "        estado = 'rodando' if self._rodando else 'pausado'\n"
+        "        return f'{estado}: {self.tempo():.2f}s'\n\n"
+        "def main():\n"
+        "    cronometro = Cronometro()\n"
+        "    print('Comandos: iniciar, pausar, zerar, status, sair')\n"
+        "    while True:\n"
+        "        comando = input('> ').strip().lower()\n"
+        "        if comando in {'sair', 'exit', 'quit'}:\n"
+        "            break\n"
+        "        if comando == 'iniciar':\n"
+        "            print(cronometro.iniciar())\n"
+        "        elif comando == 'pausar':\n"
+        "            print(cronometro.pausar())\n"
+        "        elif comando == 'zerar':\n"
+        "            print(cronometro.zerar())\n"
+        "        elif comando == 'status':\n"
+        "            print(cronometro.status())\n"
+        "        else:\n"
+        "            print('Comando invalido.')\n\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+
 def _build_vllm_forced_tool_call(
     intent: str,
     tools: List[Dict[str, Any]],
@@ -1170,6 +1228,12 @@ def _build_vllm_forced_tool_call(
 
     if intent == "create":
         is_calculator = "calculadora" in lowered or "calculator" in lowered
+        is_stopwatch = (
+            "cronometro" in lowered
+            or "cronômetro" in lowered
+            or "stopwatch" in lowered
+            or "timer" in lowered
+        )
         if is_calculator and previous_count == 0:
             if write:
                 return _tool_call(
@@ -1185,6 +1249,24 @@ def _build_vllm_forced_tool_call(
                         "printf '10 + 5\\n' | python3 calculadora.py"
                     ),
                     "description": "Verify the Python calculator",
+                },
+            )
+        if is_stopwatch and previous_count == 0:
+            if write:
+                return _tool_call(
+                    write,
+                    {"file_path": "cronometro.py", "content": _stopwatch_source()},
+                )
+        if is_stopwatch and 0 < previous_count <= 1 and bash:
+            return _tool_call(
+                bash,
+                {
+                    "command": (
+                        "python3 -m py_compile cronometro.py && "
+                        "printf 'iniciar\\nstatus\\npausar\\nzerar\\nsair\\n' | "
+                        "python3 cronometro.py"
+                    ),
+                    "description": "Verify the Python stopwatch",
                 },
             )
         if previous_count == 0 and ls_tool:
@@ -1212,6 +1294,22 @@ def _build_vllm_forced_tool_call(
                 {
                     "command": "printf '10 + 5\\n' | python3 calculadora.py",
                     "description": "Run the calculator",
+                },
+            )
+        if (
+            "cronometro" in lowered
+            or "cronômetro" in lowered
+            or "stopwatch" in lowered
+            or "timer" in lowered
+        ):
+            return _tool_call(
+                bash,
+                {
+                    "command": (
+                        "printf 'iniciar\\nstatus\\npausar\\nsair\\n' | "
+                        "python3 cronometro.py"
+                    ),
+                    "description": "Run the stopwatch",
                 },
             )
         return _tool_call(
