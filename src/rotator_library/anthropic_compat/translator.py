@@ -10,7 +10,6 @@ This enables any OpenAI-compatible provider to work with Anthropic clients.
 """
 
 import json
-import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Union
@@ -37,6 +36,13 @@ THINKING_BUDGET_THRESHOLDS = {
 # Providers that support granular reasoning effort levels (low_medium, medium_high, etc.)
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
+
+# Hosted vLLM defaults are intentionally conservative because Claude Desktop
+# and Claude Code assume much larger Claude-native limits than local/vLLM
+# deployments usually have.
+VLLM_MAX_OUTPUT_TOKENS = 2048
+VLLM_MAX_INPUT_CHARS = 18000
+VLLM_MAX_TOOLS = 8
 
 
 _TEXTUAL_TOOL_CALL_RE = re.compile(
@@ -539,35 +545,11 @@ def _strip_vllm_rejected_fields(value: Any) -> Any:
 
 
 def _vllm_max_output_tokens() -> int:
-    for env_name in (
-        "HOSTED_VLLM_MAX_TOKENS",
-        "ANTHROPIC_VLLM_MAX_TOKENS",
-        "PROXY_MAX_OUTPUT_TOKENS",
-    ):
-        value = os.getenv(env_name)
-        if not value:
-            continue
-        try:
-            return max(1, int(value))
-        except ValueError:
-            continue
-    return 2048
+    return VLLM_MAX_OUTPUT_TOKENS
 
 
 def _vllm_max_input_chars() -> int:
-    for env_name in (
-        "HOSTED_VLLM_MAX_INPUT_CHARS",
-        "ANTHROPIC_VLLM_MAX_INPUT_CHARS",
-        "PROXY_MAX_INPUT_CHARS",
-    ):
-        value = os.getenv(env_name)
-        if not value:
-            continue
-        try:
-            return max(1000, int(value))
-        except ValueError:
-            continue
-    return 30000
+    return VLLM_MAX_INPUT_CHARS
 
 
 def _message_char_size(message: Dict[str, Any]) -> int:
@@ -636,19 +618,7 @@ def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str
 
 
 def _vllm_max_tools() -> int:
-    for env_name in (
-        "HOSTED_VLLM_MAX_TOOLS",
-        "ANTHROPIC_VLLM_MAX_TOOLS",
-        "PROXY_MAX_TOOLS",
-    ):
-        value = os.getenv(env_name)
-        if not value:
-            continue
-        try:
-            return max(0, int(value))
-        except ValueError:
-            continue
-    return 16
+    return VLLM_MAX_TOOLS
 
 
 def _compact_schema_for_vllm(value: Any, max_description_chars: int = 160) -> Any:

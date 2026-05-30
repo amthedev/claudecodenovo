@@ -78,8 +78,24 @@ class ModelDefinitions:
                         lib_logger.warning(
                             f"{env_var} must be a JSON object or array, got {type(models_json).__name__}"
                         )
-                except (json.JSONDecodeError, TypeError) as e:
-                    lib_logger.warning(f"Invalid JSON in {env_var}: {e}")
+                except (json.JSONDecodeError, TypeError):
+                    # Be tolerant for hosted dashboards where env vars are often
+                    # entered as qwen25-coder-32b instead of JSON.
+                    model_names = [
+                        item.strip()
+                        for item in env_value.split(",")
+                        if item.strip()
+                    ]
+                    if model_names:
+                        self.definitions[provider_name] = {
+                            model_name: {} for model_name in model_names
+                        }
+                        lib_logger.info(
+                            f"Loaded {len(model_names)} models for provider: "
+                            f"{provider_name} (plain string format)"
+                        )
+                    else:
+                        lib_logger.warning(f"Invalid JSON in {env_var}")
 
     def get_provider_models(self, provider_name: str) -> Dict[str, Any]:
         """Get all models for a provider."""

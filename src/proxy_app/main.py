@@ -922,41 +922,12 @@ def _virtual_claude_models() -> list:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
-def _env_int(names: tuple[str, ...], default: int) -> int:
-    for env_name in names:
-        value = os.getenv(env_name)
-        if not value:
-            continue
-        try:
-            return max(1, int(value))
-        except ValueError:
-            continue
-    return default
-
-
 def _virtual_model_context_window() -> int:
-    return _env_int(
-        (
-            "VIRTUAL_MODEL_CONTEXT_WINDOW",
-            "HOSTED_VLLM_CONTEXT_WINDOW",
-            "ANTHROPIC_VLLM_CONTEXT_WINDOW",
-            "PROXY_CONTEXT_WINDOW",
-            "MAX_CONTEXT_TOKENS",
-        ),
-        32768,
-    )
+    return 16384
 
 
 def _virtual_model_max_output_tokens() -> int:
-    return _env_int(
-        (
-            "VIRTUAL_MODEL_MAX_OUTPUT_TOKENS",
-            "HOSTED_VLLM_MAX_TOKENS",
-            "ANTHROPIC_VLLM_MAX_TOKENS",
-            "PROXY_MAX_OUTPUT_TOKENS",
-        ),
-        2048,
-    )
+    return 2048
 
 
 def _apply_virtual_model_limits(model_cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
