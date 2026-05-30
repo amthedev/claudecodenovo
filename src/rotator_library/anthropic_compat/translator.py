@@ -50,7 +50,9 @@ VLLM_MAX_TOOLS = 16
 VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "You are running inside Claude Code. When the user asks to create, edit, "
     "inspect, or run project files or commands, call the available tools "
-    "instead of only explaining or pasting code. For file creation or edits, "
+    "instead of only explaining or pasting code. If the request is in Portuguese, "
+    "such as 'faca uma calculadora em python', create or edit the file directly. "
+    "For file creation or edits, "
     "prefer Create, Update, Write, Edit, or MultiEdit over shell heredocs like "
     "`cat > file` or `touch file`. If Create/Update requires reading the file "
     "first, read it and then retry the file edit tool. Do not abandon the edit "

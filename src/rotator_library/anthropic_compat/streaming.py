@@ -13,6 +13,8 @@ import logging
 import uuid
 from typing import AsyncGenerator, Callable, Optional, Awaitable, Any, TYPE_CHECKING
 
+from .translator import _parse_textual_tool_calls
+
 if TYPE_CHECKING:
     from ..transaction_logger import TransactionLogger
 
@@ -158,6 +160,7 @@ async def anthropic_streaming_wrapper(
     cached_tokens = 0  # Track cached tokens for proper Anthropic format
     accumulated_text = ""  # Track accumulated text for logging
     accumulated_thinking = ""  # Track accumulated thinking for logging
+    textual_tool_buffer = ""  # Buffer text-emitted tool calls until complete
     stop_reason_final = "end_turn"  # Track final stop reason for logging
 
     try:
@@ -210,6 +213,63 @@ async def anthropic_streaming_wrapper(
                     yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_block_index}}}\n\n'
                     current_block_index += 1
                     content_block_started = False
+
+                if textual_tool_buffer:
+                    cleaned_text, textual_tool_blocks = _parse_textual_tool_calls(
+                        textual_tool_buffer
+                    )
+                    textual_tool_buffer = ""
+
+                    if cleaned_text:
+                        block_start = {
+                            "type": "content_block_start",
+                            "index": current_block_index,
+                            "content_block": {"type": "text", "text": ""},
+                        }
+                        yield f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n"
+                        block_delta = {
+                            "type": "content_block_delta",
+                            "index": current_block_index,
+                            "delta": {"type": "text_delta", "text": cleaned_text},
+                        }
+                        yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
+                        yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_block_index}}}\n\n'
+                        accumulated_text += cleaned_text
+                        current_block_index += 1
+
+                    for block in textual_tool_blocks:
+                        tc_index = len(tool_calls_by_index)
+                        block_idx = current_block_index
+                        arguments = json.dumps(block.get("input") or {})
+                        tool_calls_by_index[tc_index] = {
+                            "id": block.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
+                            "name": block.get("name", ""),
+                            "arguments": arguments,
+                        }
+                        tool_block_indices[tc_index] = block_idx
+
+                        block_start = {
+                            "type": "content_block_start",
+                            "index": block_idx,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": tool_calls_by_index[tc_index]["id"],
+                                "name": tool_calls_by_index[tc_index]["name"],
+                                "input": {},
+                            },
+                        }
+                        yield f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n"
+                        if arguments:
+                            block_delta = {
+                                "type": "content_block_delta",
+                                "index": block_idx,
+                                "delta": {
+                                    "type": "input_json_delta",
+                                    "partial_json": arguments,
+                                },
+                            }
+                            yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
+                        current_block_index += 1
 
                 # Close all open tool_use blocks
                 for tc_index in sorted(tool_block_indices.keys()):
@@ -370,6 +430,28 @@ async def anthropic_streaming_wrapper(
             # Handle text content
             content = delta.get("content")
             if content:
+                if textual_tool_buffer:
+                    candidate = textual_tool_buffer + content
+                    stripped = candidate.lstrip()
+                    if (
+                        "<tool_call" in stripped
+                        or "<function=" in stripped
+                        or (stripped.startswith("<") and len(candidate) < 128)
+                    ):
+                        textual_tool_buffer = candidate
+                        continue
+                    content = candidate
+                    textual_tool_buffer = ""
+                elif not content_block_started:
+                    stripped = content.lstrip()
+                    if (
+                        "<tool_call" in stripped
+                        or "<function=" in stripped
+                        or stripped.startswith("<")
+                    ):
+                        textual_tool_buffer = content
+                        continue
+
                 # If we were in a thinking block, close it first
                 if thinking_block_started and not content_block_started:
                     yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_block_index}}}\n\n'

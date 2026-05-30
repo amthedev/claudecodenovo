@@ -199,7 +199,7 @@ If Claude Code sends a providerless model such as `claude-code-pro`, the proxy m
 
 For hosted vLLM backends, the Anthropic compatibility layer strips Anthropic-only fields that vLLM rejects, such as `top_k` and disabled thinking flags.
 
-By default, hosted vLLM also uses a non-stream fallback for Anthropic streaming requests because some vLLM deployments reject streaming tool-call payloads while accepting the same request without streaming. The proxy also avoids native OpenAI `tools` payloads for hosted vLLM unless `HOSTED_VLLM_NATIVE_TOOLS=true`, which prevents 400 responses from vLLM servers started without a tool-call parser. To make smaller local models behave more like Claude Code, hosted vLLM responses default to pt-BR and strip obvious leaked reasoning preambles; set `PROXY_RESPONSE_LANGUAGE` or `HOSTED_VLLM_STRIP_REASONING_PREAMBLE=false` to change that.
+By default, hosted vLLM streams Anthropic responses immediately. Set `ANTHROPIC_STREAM_FALLBACK_NONSTREAM=true` only for vLLM deployments that reject streaming requests. The proxy also avoids native OpenAI `tools` payloads for hosted vLLM unless `HOSTED_VLLM_NATIVE_TOOLS=true`, which prevents 400 responses from vLLM servers started without a tool-call parser. To make smaller local models behave more like Claude Code, hosted vLLM responses default to pt-BR and strip obvious leaked reasoning preambles; set `PROXY_RESPONSE_LANGUAGE` or `HOSTED_VLLM_STRIP_REASONING_PREAMBLE=false` to change that.
 
 Claude Code may request very large outputs, such as `max_tokens=32000`. For hosted vLLM, the proxy caps output tokens to `HOSTED_VLLM_MAX_TOKENS` or `4096` by default so requests fit deployments with smaller `max_model_len` values.
 

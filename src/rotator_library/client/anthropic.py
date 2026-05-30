@@ -116,7 +116,7 @@ class AnthropicHandler:
 
         force_nonstream_for_stream = (
             provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}
-            and os.getenv("ANTHROPIC_STREAM_FALLBACK_NONSTREAM", "true").lower()
+            and os.getenv("ANTHROPIC_STREAM_FALLBACK_NONSTREAM", "false").lower()
             not in {"false", "0", "no"}
         )
         if request.stream and force_nonstream_for_stream:
