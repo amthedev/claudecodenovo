@@ -42,7 +42,26 @@ GRANULAR_REASONING_PROVIDERS = set()
 # deployments usually have.
 VLLM_MAX_OUTPUT_TOKENS = 2048
 VLLM_MAX_INPUT_CHARS = 18000
-VLLM_MAX_TOOLS = 8
+VLLM_MAX_TOOLS = 16
+VLLM_TOOL_USE_SYSTEM_PROMPT = (
+    "You are running inside Claude Code. When the user asks to create, edit, "
+    "inspect, or run project files or commands, call the available tools "
+    "(especially Write, Edit, MultiEdit, Read, Bash, LS, Glob, and Grep) instead "
+    "of only explaining or pasting code. Do not tell the user to copy code when "
+    "a file operation is needed."
+)
+VLLM_TOOL_PRIORITY = {
+    "bash": 0,
+    "read": 1,
+    "write": 2,
+    "edit": 3,
+    "multiedit": 4,
+    "ls": 5,
+    "glob": 6,
+    "grep": 7,
+    "todowrite": 8,
+    "task": 9,
+}
 
 
 _TEXTUAL_TOOL_CALL_RE = re.compile(
@@ -621,6 +640,22 @@ def _vllm_max_tools() -> int:
     return VLLM_MAX_TOOLS
 
 
+def _tool_name(tool: Dict[str, Any]) -> str:
+    function = tool.get("function") or {}
+    return str(function.get("name") or "").lower()
+
+
+def _prioritize_tools_for_vllm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    indexed_tools = list(enumerate(tools))
+    indexed_tools.sort(
+        key=lambda item: (
+            VLLM_TOOL_PRIORITY.get(_tool_name(item[1]), 100),
+            item[0],
+        )
+    )
+    return [tool for _, tool in indexed_tools]
+
+
 def _compact_schema_for_vllm(value: Any, max_description_chars: int = 160) -> Any:
     if isinstance(value, list):
         return [_compact_schema_for_vllm(item, max_description_chars) for item in value]
@@ -643,7 +678,7 @@ def _compact_tools_for_vllm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         return []
 
     compacted_tools = []
-    for tool in tools[:max_tools]:
+    for tool in _prioritize_tools_for_vllm(tools)[:max_tools]:
         tool_copy = dict(tool)
         function = dict(tool_copy.get("function") or {})
         description = function.get("description")
@@ -654,6 +689,18 @@ def _compact_tools_for_vllm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         tool_copy["function"] = function
         compacted_tools.append(tool_copy)
     return compacted_tools
+
+
+def _inject_vllm_tool_use_prompt(openai_request: Dict[str, Any]) -> None:
+    if not openai_request.get("tools"):
+        return
+    messages = openai_request.setdefault("messages", [])
+    if messages and messages[0].get("role") == "system":
+        existing = messages[0].get("content") or ""
+        if VLLM_TOOL_USE_SYSTEM_PROMPT not in existing:
+            messages[0]["content"] = f"{existing}\n\n{VLLM_TOOL_USE_SYSTEM_PROMPT}".strip()
+        return
+    messages.insert(0, {"role": "system", "content": VLLM_TOOL_USE_SYSTEM_PROMPT})
 
 
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
@@ -670,6 +717,7 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     openai_request["messages"] = _strip_vllm_rejected_fields(
         openai_request.get("messages", [])
     )
+    _inject_vllm_tool_use_prompt(openai_request)
     openai_request["messages"] = _truncate_messages_for_vllm(
         openai_request.get("messages", [])
     )
