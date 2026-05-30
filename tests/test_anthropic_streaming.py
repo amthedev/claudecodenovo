@@ -48,6 +48,32 @@ async def _collect_events(chunks, forced_tool_call=None):
 
 
 class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
+    def test_server_side_tools_without_input_schema_are_ignored(self):
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "oi"}],
+            tools=[
+                {
+                    "type": "advisor_20260301",
+                    "name": "advisor",
+                    "model": "claude-sonnet-4-6",
+                },
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    },
+                },
+            ],
+        )
+
+        openai_request = translate_anthropic_request(request)
+
+        self.assertEqual(len(openai_request["tools"]), 1)
+        self.assertEqual(openai_request["tools"][0]["function"]["name"], "Bash")
+
     def test_providerless_model_uses_native_tool_contract_by_default(self):
         request = AnthropicMessagesRequest(
             model="claude-sonnet-4-5",

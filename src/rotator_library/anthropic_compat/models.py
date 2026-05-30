@@ -9,7 +9,7 @@ enabling compatibility with Claude Code and other Anthropic API clients.
 """
 
 from typing import Any, List, Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # --- Content Blocks ---
@@ -77,7 +77,9 @@ class AnthropicTool(BaseModel):
 
     name: str
     description: Optional[str] = None
-    input_schema: dict
+    input_schema: Optional[dict] = None
+
+    model_config = ConfigDict(extra="allow")
 
 
 class AnthropicThinkingConfig(BaseModel):

@@ -827,6 +827,9 @@ def anthropic_to_openai_tools(
 
     openai_tools = []
     for index, tool in enumerate(anthropic_tools):
+        input_schema = tool.get("input_schema")
+        if not isinstance(input_schema, dict):
+            continue
         raw_name = str(tool.get("name") or "").strip()
         if not raw_name:
             raw_name = f"proxy_unnamed_tool_{index}"
@@ -837,7 +840,7 @@ def anthropic_to_openai_tools(
                 "function": {
                     "name": name,
                     "description": tool.get("description", ""),
-                    "parameters": tool.get("input_schema", {}),
+                    "parameters": input_schema,
                 },
             }
         )
