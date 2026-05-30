@@ -844,6 +844,20 @@ def _resolve_model_alias(model: Optional[str]) -> Optional[str]:
     if not default_model:
         return model
 
+    # Se o default_model não tem prefixo de provider, tenta descobrir o provider
+    # a partir das credenciais configuradas para evitar o erro
+    # "Invalid model format or no credentials for provider".
+    if "/" not in default_model:
+        provider_prefix = os.getenv("PROXY_DEFAULT_PROVIDER", "")
+        if not provider_prefix:
+            # Infere o provider pela env var de base URL mais comum
+            if os.getenv("HOSTED_VLLM_API_BASE") or os.getenv("VLLM_API_BASE"):
+                provider_prefix = "hosted_vllm"
+            elif os.getenv("OPENAI_API_KEY"):
+                provider_prefix = "openai"
+        if provider_prefix:
+            default_model = f"{provider_prefix}/{default_model}"
+
     alias_env = os.getenv("PROXY_MODEL_ALIASES", "")
     aliases = {
         "claude-code-pro",
@@ -1730,18 +1744,25 @@ async def list_models(
                   If False, returns minimal OpenAI-compatible response.
     """
     try:
-        model_ids = await client.get_all_available_models(grouped=False)
-    except Exception as e:
-        logging.error(f"list_models get_all_available_models error: {e}")
-        model_ids = []
-    if not model_ids:
-        model_ids = _static_env_models()
-
-    try:
         virtual = _virtual_claude_models()
-        model_ids = list(dict.fromkeys(virtual + model_ids))
     except Exception as e:
         logging.error(f"list_models virtual models error: {e}")
+        virtual = []
+
+    # Se há modelos virtuais Claude configurados, exibe APENAS eles.
+    # Isso evita que modelos internos do provider (ex: qwen25-coder-32b)
+    # apareçam na lista e causem erros quando o cliente tenta usá-los diretamente.
+    if virtual:
+        model_ids = virtual
+    else:
+        try:
+            model_ids = await client.get_all_available_models(grouped=False)
+        except Exception as e:
+            logging.error(f"list_models get_all_available_models error: {e}")
+            model_ids = []
+        if not model_ids:
+            model_ids = _static_env_models()
+        model_ids = list(dict.fromkeys(model_ids))
 
     try:
         if enriched and hasattr(request.app.state, "model_info_service"):
