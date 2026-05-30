@@ -61,8 +61,10 @@ VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "input(), test with piped input such as `printf '1\\n2\\n3\\n' | python3 "
     "file.py`, not plain `python3 file.py`. Do not tell the user to copy code "
     "when a file operation is needed. Answer concisely. Do not repeat the same "
-    "question, instruction, status, or conclusion in different words. Once the "
-    "answer is complete, stop generating."
+    "question, instruction, status, or conclusion in different words. Never "
+    "reveal hidden reasoning, chain-of-thought, policy checks, or planning "
+    "notes. Return only the final answer or tool call. Once the answer is "
+    "complete, stop generating."
 )
 VLLM_TEXTUAL_TOOL_PROMPT = (
     "The upstream vLLM server may not support native OpenAI tool calling. "
@@ -94,6 +96,23 @@ _TEXTUAL_TOOL_CALL_RE = re.compile(
 _TEXTUAL_TOOL_PARAM_RE = re.compile(
     r"<parameter=([A-Za-z0-9_.:-]+)>\s*(.*?)(?=(?:</parameter>\s*)?<parameter=|</function>)",
     re.DOTALL,
+)
+_THINK_TAG_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+_REASONING_PREAMBLE_MARKERS = (
+    "i need to ",
+    "i should ",
+    "i'll ",
+    "i will ",
+    "let me ",
+    "since the user ",
+    "since they ",
+    "the user ",
+    "system reminders",
+    "simple response",
+    "that should ",
+    "allowed scope",
+    "no need for that",
+    "straightforward language switch",
 )
 
 
@@ -144,6 +163,16 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
 
     cleaned_text = _TEXTUAL_TOOL_CALL_RE.sub(replace_tool_call, text).strip()
     return cleaned_text, tool_blocks
+
+
+def _vllm_response_language_instruction() -> str:
+    language = os.getenv("PROXY_RESPONSE_LANGUAGE", "pt-BR").strip()
+    if not language:
+        return ""
+    return (
+        f"Write normal user-facing responses in {language} unless the user "
+        "explicitly requests another language."
+    )
 
 
 def _budget_to_reasoning_effort(budget_tokens: int, model: str) -> str:
@@ -641,6 +670,7 @@ def _sanitize_vllm_response_text(text: str) -> str:
     Local models can occasionally loop through paraphrases until max_tokens.
     The client only needs the useful prefix, not thousands of repeated lines.
     """
+    text = _strip_vllm_reasoning_preamble(text)
     if len(text) <= VLLM_MAX_RESPONSE_TEXT_CHARS:
         return text
     return (
@@ -648,6 +678,29 @@ def _sanitize_vllm_response_text(text: str) -> str:
         + "\n\n[Resposta interrompida pelo proxy porque o modelo começou a gerar "
         "texto excessivamente longo ou repetitivo.]"
     )
+
+
+def _looks_like_reasoning_preamble(paragraph: str) -> bool:
+    lowered = paragraph.strip().lower()
+    return any(marker in lowered for marker in _REASONING_PREAMBLE_MARKERS)
+
+
+def _strip_vllm_reasoning_preamble(text: str) -> str:
+    if not text:
+        return text
+
+    text = _THINK_TAG_RE.sub("", text).strip()
+    if os.getenv("HOSTED_VLLM_STRIP_REASONING_PREAMBLE", "true").lower() in {
+        "false",
+        "0",
+        "no",
+    }:
+        return text
+
+    paragraphs = re.split(r"\n\s*\n", text)
+    while len(paragraphs) > 1 and _looks_like_reasoning_preamble(paragraphs[0]):
+        paragraphs.pop(0)
+    return "\n\n".join(paragraphs).strip()
 
 
 def _compact_content_for_vllm(content: Any, max_chars: int, label: str) -> Any:
@@ -825,10 +878,15 @@ def _vllm_native_tools_enabled() -> bool:
 
 def _format_vllm_textual_tool_prompt(tools: Optional[List[Dict[str, Any]]]) -> str:
     if not tools:
-        return VLLM_TOOL_USE_SYSTEM_PROMPT
+        return "\n".join(
+            part
+            for part in [VLLM_TOOL_USE_SYSTEM_PROMPT, _vllm_response_language_instruction()]
+            if part
+        )
 
     lines = [
         VLLM_TOOL_USE_SYSTEM_PROMPT,
+        _vllm_response_language_instruction(),
         "",
         VLLM_TEXTUAL_TOOL_PROMPT,
         "",
