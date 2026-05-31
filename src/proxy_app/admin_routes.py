@@ -8,7 +8,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from . import admin_db
 
 COOKIE = "proxy_admin_v2"
-RESELLER_COOKIE = "proxy_reseller_v1"
+RESELLER_COOKIE = "proxy_reseller_v1"          # legacy: login por chave mestre
+RESELLER_ACCT_COOKIE = "proxy_reseller_acct_v1"  # novo: login email/senha
 
 async def _form(req) -> dict:
     """Parse URL-encoded form sem precisar de python-multipart."""
@@ -27,7 +28,24 @@ def _need(req: Request) -> str:
     return u
 
 def _reseller(req: Request):
-    return admin_db.validate_reseller_session(req.cookies.get(RESELLER_COOKIE, ""))
+    """Resolve the current reseller via the new email/password account session
+    first, then fall back to the legacy master-key session (during migration).
+    Returns a dict with at least 'id' (the reseller master key id) and 'name'."""
+    acct = admin_db.reseller_session_account(req.cookies.get(RESELLER_ACCT_COOKIE, ""))
+    if acct:
+        # Normalize to the shape the reseller views expect: 'id' = master key id.
+        return {
+            "id": acct["key_id"], "name": acct["name"], "email": acct["email"],
+            "account_id": acct["id"],
+            "token_limit": acct["token_limit"], "tokens_remaining": acct["tokens_remaining"],
+            "via": "account",
+        }
+    legacy = admin_db.validate_reseller_session(req.cookies.get(RESELLER_COOKIE, ""))
+    if legacy:
+        legacy = dict(legacy)
+        legacy["via"] = "key"
+        return legacy
+    return None
 
 def _need_reseller(req: Request):
     reseller = _reseller(req)
@@ -692,9 +710,57 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <label>Validade em dias (0=∞)</label><input type="number" name="validity_days" min="0" value="0">
           <label>Notas internas</label><textarea name="notes" rows="2"></textarea>
           <button class="btn" style="margin-top:18px">Gerar chave mestre</button></form></div></div>"""
+
+        # ── Seção de revendedores (contas email/senha) ──
+        accounts = admin_db.list_reseller_accounts()
+        acct_modals = ""
+        acct_rows = ""
+        for a in accounts:
+            aid = a["id"]
+            badge = {
+                "pending":  '<span class="badge badge-yellow">Pendente</span>',
+                "active":   '<span class="badge badge-green">Ativo</span>',
+                "suspended":'<span class="badge badge-red">Suspenso</span>',
+            }.get(a["status"], a["status"])
+            if a["status"] == "pending":
+                actions = f"""<button class="btn-green btn-sm" onclick="openModal('m-appr-{aid}')">Aprovar</button>
+                  <button class="btn-red btn-sm" onclick="if(confirm('Apagar revendedor {_e(a['name'])}?'))document.getElementById('del-{aid}').submit()">Apagar</button>"""
+                acct_modals += f"""<div class="modal-bg" id="m-appr-{aid}"><div class="modal">
+                  <button class="x" onclick="closeModal('m-appr-{aid}')">✕</button>
+                  <h2>Aprovar {_e(a['name'])}</h2><p>Defina o saldo de tokens que ele poderá revender.</p>
+                  <form method="post" action="/admin/resellers/{aid}/approve">
+                  <label>Saldo de tokens</label><input type="number" name="token_limit" min="1" required>
+                  <label>Validade em dias (0=∞)</label><input type="number" name="validity_days" min="0" value="0">
+                  <button class="btn" style="margin-top:18px">Aprovar e liberar</button></form></div></div>"""
+            else:
+                toggle = "suspend" if a["status"] == "active" else "activate"
+                toggle_label = "Suspender" if a["status"] == "active" else "Reativar"
+                toggle_cls = "btn-red" if a["status"] == "active" else "btn-green"
+                actions = f"""<button class="btn-green btn-sm" onclick="openModal('m-rev-{aid}')">+ Tokens</button>
+                  <button class="{toggle_cls} btn-sm" onclick="document.getElementById('tog-{aid}').submit()">{toggle_label}</button>
+                  <button class="btn-red btn-sm" onclick="if(confirm('Apagar {_e(a['name'])} e TODOS os clientes dele?'))document.getElementById('del-{aid}').submit()">Apagar</button>"""
+                acct_modals += f"""<div class="modal-bg" id="m-rev-{aid}"><div class="modal">
+                  <button class="x" onclick="closeModal('m-rev-{aid}')">✕</button>
+                  <h2>Recarregar {_e(a['name'])}</h2><p>Adicione (ou remova, com valor negativo) tokens ao saldo do revendedor.</p>
+                  <form method="post" action="/admin/resellers/{aid}/recharge">
+                  <label>Tokens a adicionar</label><input type="number" name="add_tokens" value="0" required>
+                  <button class="btn" style="margin-top:18px">Aplicar</button></form></div></div>
+                  <form id="tog-{aid}" method="post" action="/admin/resellers/{aid}/{toggle}" style="display:none"></form>"""
+            acct_modals += f'<form id="del-{aid}" method="post" action="/admin/resellers/{aid}/delete" style="display:none"></form>'
+            acct_rows += f"""<tr><td><b>{_e(a['name'])}</b><br><span style="color:var(--muted);font-size:12px">{_e(a['email'])}</span></td>
+              <td>{badge}</td>
+              <td>{_tokens(a['tokens_remaining'])} / {_tokens(a['token_limit'])}</td>
+              <td>{a['clients_count']} cliente(s)<br><span style="color:var(--muted);font-size:12px">{a['clients_usage']:,} tokens usados</span></td>
+              <td style="white-space:nowrap">{actions}</td></tr>"""
+        if not acct_rows:
+            acct_rows = '<tr><td colspan="5" class="empty">Nenhum revendedor cadastrado ainda.</td></tr>'
+        resellers_html = f"""<div class="card" style="margin-top:18px"><h2 style="font-size:16px;margin-bottom:12px">Revendedores</h2>
+          <table><thead><tr><th>Revendedor</th><th>Status</th><th>Saldo restante / total</th><th>Clientes</th><th>Ações</th></tr></thead>
+          <tbody>{acct_rows}</tbody></table></div>"""
+
         body = f"""<div class="container">
-          {rev_html}{error_html}<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-sm" onclick="openModal('m-reseller')">+ Chave mestre revendedor</button></div>{stats_html}{chart_html}{conn_html}{keys_html}
-        </div>{modals}{create_modal}{js_extra}"""
+          {rev_html}{error_html}<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-sm" onclick="openModal('m-reseller')">+ Chave mestre revendedor</button></div>{stats_html}{chart_html}{conn_html}{keys_html}{resellers_html}
+        </div>{modals}{create_modal}{js_extra}{acct_modals}"""
         return _page("Dashboard", body + reseller_modal, logged=True, proxy_key=pk)
 
     # ── Key actions ───────────────────────────────────────────────────────────
@@ -731,6 +797,54 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         except ValueError as exc:
             return _with_error("/admin/dashboard", str(exc))
         return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
+
+    # ── Gestão de contas de revendedor (signup → aprovação → controle) ──
+    @app.post("/admin/resellers/{aid}/approve")
+    async def admin_approve_reseller(req: Request, aid: str):
+        _need(req)
+        f = await _form(req)
+        try:
+            admin_db.approve_reseller(
+                aid, token_limit=_number(f.get("token_limit")),
+                validity_days=_number(f.get("validity_days")),
+            )
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
+        return RedirectResponse("/admin/dashboard", 302)
+
+    @app.post("/admin/resellers/{aid}/recharge")
+    async def admin_recharge_reseller(req: Request, aid: str):
+        _need(req)
+        f = await _form(req)
+        try:
+            admin_db.recharge_reseller(aid, int(f.get("add_tokens", 0) or 0))
+        except (ValueError, TypeError) as exc:
+            return _with_error("/admin/dashboard", str(exc))
+        return RedirectResponse("/admin/dashboard", 302)
+
+    @app.post("/admin/resellers/{aid}/suspend")
+    async def admin_suspend_reseller(req: Request, aid: str):
+        _need(req)
+        try:
+            admin_db.set_reseller_status(aid, "suspended")
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
+        return RedirectResponse("/admin/dashboard", 302)
+
+    @app.post("/admin/resellers/{aid}/activate")
+    async def admin_activate_reseller(req: Request, aid: str):
+        _need(req)
+        try:
+            admin_db.set_reseller_status(aid, "active")
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
+        return RedirectResponse("/admin/dashboard", 302)
+
+    @app.post("/admin/resellers/{aid}/delete")
+    async def admin_delete_reseller(req: Request, aid: str):
+        _need(req)
+        admin_db.delete_reseller_account(aid)
+        return RedirectResponse("/admin/dashboard", 302)
 
     @app.post("/admin/keys/{kid}/rotate")
     async def rotate_key(req: Request, kid: str):
@@ -798,12 +912,17 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     async def reseller_index(req: Request, err: str = "", reveal: str = ""):
         reseller = _reseller(req)
         if not reseller:
-            error = '<div style="color:var(--red);margin-bottom:12px">Chave mestre inválida ou inativa.</div>' if err else ""
-            return _page("Revendedor", f"""<div class="container" style="max-width:460px;padding-top:80px">
-              <div class="card"><h1>Painel do revendedor</h1><p style="color:var(--muted);margin:8px 0 20px">Entre com sua chave mestre.</p>{error}
-              <form method="post" action="/reseller/login"><label>Chave mestre</label>
-              <input type="password" name="key" required autofocus>
-              <button class="btn" style="width:100%;margin-top:18px">Entrar</button></form></div></div>""")
+            error = f'<div style="color:var(--red);margin-bottom:12px">{_e(err)}</div>' if err else ""
+            return _page("Revendedor", f"""<div class="container" style="max-width:440px;padding-top:70px">
+              <div class="card"><h1>Painel do revendedor</h1>
+              <p style="color:var(--muted);margin:8px 0 20px">Entre com seu e-mail e senha.</p>{error}
+              <form method="post" action="/reseller/login">
+              <label>E-mail</label><input type="email" name="email" required autofocus>
+              <label style="margin-top:12px">Senha</label><input type="password" name="password" required>
+              <button class="btn" style="width:100%;margin-top:18px">Entrar</button></form>
+              <p style="color:var(--muted);margin-top:16px;text-align:center;font-size:13px">
+              Ainda não tem conta? <a href="/reseller/signup" style="color:var(--green)">Cadastre-se</a></p>
+              </div></div>""")
         clients = admin_db.list_reseller_clients(reseller["id"])
         error_banner = f'<div class="reveal-banner" style="border-color:rgba(239,68,68,.4);color:var(--red)">{_e(err)}</div>' if err else ""
         rows = "".join(f"""<tr><td><b>{_e(k['name'])}</b></td><td class="mono">{_e(k['key_preview'])}</td>
@@ -840,19 +959,66 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <thead><tr><th>Cliente</th><th>Preview</th><th>Tokens usados / saldo</th><th>Restante</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>{rows}</tbody></table></div></div>{modals}""")
 
+    @app.get("/reseller/signup", response_class=HTMLResponse)
+    async def reseller_signup_page(req: Request, err: str = "", ok: str = ""):
+        if _reseller(req):
+            return RedirectResponse("/reseller", 302)
+        error = f'<div style="color:var(--red);margin-bottom:12px">{_e(err)}</div>' if err else ""
+        success = ('<div style="color:var(--green);margin-bottom:12px">Cadastro enviado! '
+                   'Aguarde a aprovação do administrador para acessar.</div>') if ok else ""
+        return _page("Cadastro de revendedor", f"""<div class="container" style="max-width:440px;padding-top:70px">
+          <div class="card"><h1>Criar conta de revendedor</h1>
+          <p style="color:var(--muted);margin:8px 0 20px">Sua conta passa por aprovação antes de liberar saldo.</p>{error}{success}
+          <form method="post" action="/reseller/signup">
+          <label>Nome</label><input name="name" required autofocus>
+          <label style="margin-top:12px">E-mail</label><input type="email" name="email" required>
+          <label style="margin-top:12px">Senha (mín. 8)</label><input type="password" name="password" required>
+          <button class="btn" style="width:100%;margin-top:18px">Cadastrar</button></form>
+          <p style="color:var(--muted);margin-top:16px;text-align:center;font-size:13px">
+          Já tem conta? <a href="/reseller" style="color:var(--green)">Entrar</a></p>
+          </div></div>""")
+
+    @app.post("/reseller/signup")
+    async def reseller_signup(req: Request):
+        f = await _form(req)
+        try:
+            admin_db.create_reseller_account(
+                f.get("name", ""), f.get("email", ""), f.get("password", "")
+            )
+        except ValueError as exc:
+            return _with_error("/reseller/signup", str(exc))
+        return RedirectResponse("/reseller/signup?ok=1", 302)
+
     @app.post("/reseller/login")
     async def reseller_login(req: Request):
         f = await _form(req)
+        # New email/password login.
+        email = f.get("email", "").strip()
+        password = f.get("password", "")
+        if email:
+            try:
+                acc = admin_db.authenticate_reseller(email, password)
+            except ValueError as exc:
+                return _with_error("/reseller", str(exc))
+            token = admin_db._create_web_session(acc["id"], acc["key_id"])
+            r = RedirectResponse("/reseller", 302)
+            r.set_cookie(RESELLER_ACCT_COOKIE, token, httponly=True,
+                         secure=_secure_cookie(req), samesite="lax", max_age=admin_db.SESSION_TTL)
+            return r
+        # Legacy master-key login (kept during migration).
         token = admin_db.create_reseller_session(f.get("key", "").strip())
-        if not token: return RedirectResponse("/reseller?err=1", 302)
+        if not token:
+            return _with_error("/reseller", "E-mail ou senha incorretos.")
         r = RedirectResponse("/reseller", 302)
         r.set_cookie(RESELLER_COOKIE, token, httponly=True, secure=_secure_cookie(req), samesite="lax", max_age=admin_db.SESSION_TTL)
         return r
 
     @app.post("/reseller/logout")
     async def reseller_logout(req: Request):
+        admin_db.delete_web_session(req.cookies.get(RESELLER_ACCT_COOKIE, ""))
         admin_db.delete_reseller_session(req.cookies.get(RESELLER_COOKIE, ""))
         r = RedirectResponse("/reseller", 302)
+        r.delete_cookie(RESELLER_ACCT_COOKIE)
         r.delete_cookie(RESELLER_COOKIE)
         return r
 

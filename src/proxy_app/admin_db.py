@@ -147,6 +147,10 @@ def init_db() -> None:
             ("key_usage", "input_tokens",   "INTEGER NOT NULL DEFAULT 0"),
             ("key_usage", "output_tokens",  "INTEGER NOT NULL DEFAULT 0"),
             ("key_usage", "total_tokens",   "INTEGER NOT NULL DEFAULT 0"),
+            # Reseller accounts: web_accounts gains a role + approval status so the
+            # owner can run a signup→approve→suspend flow with email/password login.
+            ("web_accounts", "role",        "TEXT NOT NULL DEFAULT 'client'"),
+            ("web_accounts", "status",      "TEXT NOT NULL DEFAULT 'active'"),
         ]
         for table, col, typedef in new_cols:
             try:
@@ -857,6 +861,206 @@ def delete_reseller_session(token: str) -> None:
     if token:
         with _db() as c:
             c.execute("DELETE FROM reseller_sessions WHERE token=?", (token,))
+
+
+# ── Reseller accounts (email/password login + admin approval) ───────────────────
+# A reseller account is a web_account with role='reseller'. It has no api_key while
+# pending; on approval the admin creates a reseller master key and links it. The
+# reseller logs in with email/password and never sees that key. Existing resellers
+# (a reseller-type api_key without an account) keep working via the legacy master-key
+# login until migrated; the admin can attach an account to such a key on approval.
+
+def create_reseller_account(name: str, email: str, password: str) -> Dict[str, Any]:
+    """Open signup: creates a PENDING reseller account.
+
+    A reseller master key is created immediately but with balance=0 and INACTIVE,
+    so web_accounts.key_id (FK, NOT NULL) is always valid. Approval just sets the
+    balance and activates the key — until then the reseller can't distribute tokens.
+    """
+    name = (name or "").strip()
+    email = (email or "").strip().lower()
+    if not name:
+        raise ValueError("Informe seu nome.")
+    if "@" not in email:
+        raise ValueError("Informe um e-mail válido.")
+    if len(password or "") < 8:
+        raise ValueError("A senha precisa ter pelo menos 8 caracteres.")
+    # Reject duplicate email up front (clearer than catching the FK/Integrity error).
+    with _db() as c:
+        if c.execute("SELECT 1 FROM web_accounts WHERE email=?", (email,)).fetchone():
+            raise ValueError("Este e-mail já possui uma conta.")
+    # Create the master key first (inactive, zero balance) to satisfy the FK.
+    key_val, _reveal = create_reseller_key(
+        name, token_limit=0, description=f"Revendedor (pendente): {email}"
+    )
+    v = verify_api_key_db(key_val)
+    key_id = v["app_id"] if v else None
+    if not key_id:
+        raise ValueError("Falha ao criar a chave do revendedor.")
+    account_id = str(uuid.uuid4()).replace("-", "")
+    ph = _hash_pw(password)
+    try:
+        with _db() as c:
+            # Deactivate the master key while pending.
+            c.execute("UPDATE api_keys SET active=0 WHERE id=?", (key_id,))
+            c.execute(
+                """INSERT INTO web_accounts
+                   (id,key_id,name,email,password_hash,password_salt,created_at,role,status)
+                   VALUES(?,?,?,?,?,?,?,'reseller','pending')""",
+                (account_id, key_id, name, email, ph["hash"], ph["salt"], time.time()),
+            )
+    except sqlite3.IntegrityError as exc:
+        # Roll back the orphan key if the account insert failed.
+        with _db() as c:
+            c.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
+        if "email" in str(exc).lower():
+            raise ValueError("Este e-mail já possui uma conta.") from exc
+        raise ValueError("Não foi possível criar a conta.") from exc
+    return {"account_id": account_id, "key_id": key_id, "status": "pending"}
+
+
+def approve_reseller(account_id: str, token_limit: int,
+                     validity_days: int = 0) -> Dict[str, Any]:
+    """Admin approves a pending reseller: sets the balance and activates the key."""
+    with _db() as c:
+        acc = c.execute(
+            "SELECT * FROM web_accounts WHERE id=? AND role='reseller'", (account_id,)
+        ).fetchone()
+        if not acc:
+            raise ValueError("Conta de revendedor não encontrada.")
+        key_id = acc["key_id"]
+        expires = (time.time() + validity_days * 86400) if validity_days > 0 else None
+        c.execute(
+            "UPDATE api_keys SET token_limit=?, active=1, expires_at=?, updated_at=? WHERE id=?",
+            (max(0, int(token_limit or 0)), expires, time.time(), key_id),
+        )
+        c.execute("UPDATE web_accounts SET status='active' WHERE id=?", (account_id,))
+    return {"account_id": account_id, "key_id": key_id, "status": "active"}
+
+
+def authenticate_reseller(email: str, password: str) -> Optional[Dict[str, Any]]:
+    """Login for reseller accounts. Returns account dict (with key_id) or raises."""
+    email = (email or "").strip().lower()
+    with _db() as c:
+        acc = c.execute(
+            "SELECT * FROM web_accounts WHERE email=? AND role='reseller'", (email,)
+        ).fetchone()
+    if not acc or not _verify_pw(password, acc["password_hash"], acc["password_salt"]):
+        raise ValueError("E-mail ou senha incorretos.")
+    if acc["status"] == "pending":
+        raise ValueError("Sua conta ainda não foi aprovada pelo administrador.")
+    if acc["status"] == "suspended":
+        raise ValueError("Sua conta está suspensa. Contate o administrador.")
+    return {"id": acc["id"], "key_id": acc["key_id"], "name": acc["name"],
+            "email": acc["email"], "status": acc["status"]}
+
+
+def get_reseller_account_by_id(account_id: str) -> Optional[Dict[str, Any]]:
+    with _db() as c:
+        acc = c.execute(
+            "SELECT id,key_id,name,email,status,created_at FROM web_accounts WHERE id=? AND role='reseller'",
+            (account_id,),
+        ).fetchone()
+        return dict(acc) if acc else None
+
+
+def reseller_session_account(raw_token: str) -> Optional[Dict[str, Any]]:
+    """Resolve a web-session token to an ACTIVE reseller account (with balance)."""
+    account_id = get_web_account_id_by_session(raw_token)
+    if not account_id:
+        return None
+    with _db() as c:
+        acc = c.execute(
+            "SELECT id,key_id,name,email,status FROM web_accounts WHERE id=? AND role='reseller'",
+            (account_id,),
+        ).fetchone()
+    if not acc or acc["status"] != "active":
+        return None
+    key = next((k for k in list_api_keys() if k["id"] == acc["key_id"]), None)
+    return {
+        "id": acc["id"], "key_id": acc["key_id"], "name": acc["name"],
+        "email": acc["email"], "status": acc["status"],
+        "token_limit": int(key["token_limit"]) if key and key.get("token_limit") else 0,
+        "tokens_remaining": key.get("tokens_remaining") if key else None,
+    }
+
+
+def set_reseller_status(account_id: str, status: str) -> None:
+    if status not in ("active", "suspended", "pending"):
+        raise ValueError("Status inválido.")
+    with _db() as c:
+        acc = c.execute("SELECT key_id FROM web_accounts WHERE id=? AND role='reseller'",
+                        (account_id,)).fetchone()
+        if not acc:
+            raise ValueError("Conta não encontrada.")
+        c.execute("UPDATE web_accounts SET status=? WHERE id=?", (status, account_id))
+        # Suspending the reseller also deactivates its master key (and thus blocks
+        # all its client keys via the balance/parent checks). Reactivating only
+        # restores the key when leaving suspension (a pending account stays inactive).
+        if acc["key_id"]:
+            new_active = 0 if status in ("suspended", "pending") else 1
+            c.execute("UPDATE api_keys SET active=? WHERE id=?", (new_active, acc["key_id"]))
+
+
+def recharge_reseller(account_id: str, add_tokens: int) -> None:
+    """Admin adds (or removes, if negative) tokens to the reseller's master balance."""
+    with _db() as c:
+        acc = c.execute("SELECT key_id FROM web_accounts WHERE id=? AND role='reseller'",
+                        (account_id,)).fetchone()
+        if not acc:
+            raise ValueError("Revendedor não encontrado.")
+        row = c.execute("SELECT token_limit FROM api_keys WHERE id=?", (acc["key_id"],)).fetchone()
+        new_total = max(0, int(row["token_limit"] or 0) + int(add_tokens))
+        c.execute("UPDATE api_keys SET token_limit=?, updated_at=? WHERE id=?",
+                  (new_total, time.time(), acc["key_id"]))
+
+
+def delete_reseller_account(account_id: str) -> None:
+    """Delete a reseller account and its master key (clients cascade via FK)."""
+    with _db() as c:
+        acc = c.execute("SELECT key_id FROM web_accounts WHERE id=? AND role='reseller'",
+                        (account_id,)).fetchone()
+        if not acc:
+            return
+        c.execute("DELETE FROM web_accounts WHERE id=?", (account_id,))
+        if acc["key_id"]:
+            # Deleting the master key cascades to client keys (parent_key_id FK).
+            c.execute("DELETE FROM api_keys WHERE id=? OR parent_key_id=?",
+                      (acc["key_id"], acc["key_id"]))
+
+
+def list_reseller_accounts() -> List[Dict[str, Any]]:
+    """List all reseller accounts with balance, status and client/usage summary."""
+    keys = {k["id"]: k for k in list_api_keys()}
+    out = []
+    with _db() as c:
+        rows = c.execute(
+            "SELECT id,key_id,name,email,status,created_at FROM web_accounts WHERE role='reseller' ORDER BY created_at DESC"
+        ).fetchall()
+    for acc in rows:
+        key = keys.get(acc["key_id"])
+        clients = [k for k in keys.values() if k.get("parent_key_id") == acc["key_id"]]
+        client_usage = sum(int(k.get("tokens_total") or 0) for k in clients)
+        out.append({
+            "id": acc["id"], "name": acc["name"], "email": acc["email"],
+            "status": acc["status"], "created_at": acc["created_at"],
+            "key_id": acc["key_id"] if key else None,
+            "token_limit": int(key["token_limit"]) if key and key.get("token_limit") else 0,
+            "tokens_remaining": key.get("tokens_remaining") if key else None,
+            "clients_count": len(clients),
+            "clients_usage": client_usage,
+        })
+    return out
+
+
+def list_unlinked_reseller_keys() -> List[Dict[str, Any]]:
+    """Legacy reseller master keys that have no web_account yet (for migration)."""
+    linked = set()
+    with _db() as c:
+        for r in c.execute("SELECT key_id FROM web_accounts WHERE role='reseller'").fetchall():
+            linked.add(r["key_id"])
+    return [k for k in list_api_keys()
+            if (k.get("key_type") == "reseller") and k["id"] not in linked]
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
