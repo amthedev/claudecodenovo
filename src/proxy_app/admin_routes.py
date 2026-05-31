@@ -206,7 +206,9 @@ td{padding:13px 14px;border-bottom:1px solid rgba(255,255,255,.03);vertical-alig
 label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;
   margin-top:14px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
 label:first-of-type{margin-top:0}
-.field-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+/* auto-fit acomoda 3, 4 ou 5 campos sem quebrar o layout (antes era fixo em 3,
+   o que deixava o form de 5 campos do revendedor torto). */
+.field-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
 @media(max-width:600px){.field-row{grid-template-columns:1fr}}
 .tabs{display:flex;gap:2px;background:rgba(0,0,0,.2);border-radius:10px;padding:4px;margin-bottom:20px}
 .tab{flex:1;padding:8px;border-radius:8px;font-size:13px;font-weight:500;
@@ -248,10 +250,14 @@ label:first-of-type{margin-top:0}
 .rank-row .rsub{font-size:11px;color:var(--muted)}
 @media(max-width:600px){
   .kpi-grid{grid-template-columns:repeat(2,1fr)}
-  table thead{display:none}
-  table tr{display:block;background:var(--s2);border-radius:10px;margin-bottom:10px;padding:8px}
-  table td{display:flex;justify-content:space-between;gap:12px;border:none;padding:6px 8px;text-align:right}
-  table td::before{content:attr(data-l);color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;text-align:left}
+  /* "table-cards" = tabelas que viram cards empilhados no mobile (precisam de
+     data-l nos td). Escopado para NÃO afetar a tabela de chaves pré-existente,
+     que mantém rolagem horizontal. */
+  .table-cards thead{display:none}
+  .table-cards tr{display:block;background:var(--s2);border-radius:10px;margin-bottom:10px;padding:8px}
+  .table-cards td{display:flex;justify-content:space-between;gap:12px;border:none;padding:6px 8px;text-align:right}
+  .table-cards td::before{content:attr(data-l);color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;text-align:left}
+  .card{overflow-x:auto}
 }
 """
 
@@ -876,15 +882,15 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                   <button class="btn" style="margin-top:18px">Aplicar</button></form></div></div>
                   <form id="tog-{aid}" method="post" action="/admin/resellers/{aid}/{toggle}" style="display:none"></form>"""
             acct_modals += f'<form id="del-{aid}" method="post" action="/admin/resellers/{aid}/delete" style="display:none"></form>'
-            acct_rows += f"""<tr><td><b>{_e(a['name'])}</b><br><span style="color:var(--muted);font-size:12px">{_e(a['email'])}</span></td>
-              <td>{badge}</td>
-              <td>{_tokens(a['tokens_remaining'])} / {_tokens(a['token_limit'])}</td>
-              <td>{a['clients_count']} cliente(s)<br><span style="color:var(--muted);font-size:12px">{a['clients_usage']:,} tokens usados</span></td>
-              <td style="white-space:nowrap">{actions}</td></tr>"""
+            acct_rows += f"""<tr><td data-l="Revendedor"><b>{_e(a['name'])}</b><br><span style="color:var(--muted);font-size:12px">{_e(a['email'])}</span></td>
+              <td data-l="Status">{badge}</td>
+              <td data-l="Saldo">{_tokens(a['tokens_remaining'])} / {_tokens(a['token_limit'])}</td>
+              <td data-l="Clientes">{a['clients_count']} cliente(s)<br><span style="color:var(--muted);font-size:12px">{a['clients_usage']:,} tokens usados</span></td>
+              <td data-l="Ações" style="white-space:nowrap">{actions}</td></tr>"""
         if not acct_rows:
             acct_rows = '<tr><td colspan="5" class="empty">Nenhum revendedor cadastrado ainda.</td></tr>'
         resellers_html = f"""<div class="card" style="margin-top:18px"><h2 style="font-size:16px;margin-bottom:12px">Revendedores</h2>
-          <table><thead><tr><th>Revendedor</th><th>Status</th><th>Saldo restante / total</th><th>Clientes</th><th>Ações</th></tr></thead>
+          <table class="table-cards"><thead><tr><th>Revendedor</th><th>Status</th><th>Saldo restante / total</th><th>Clientes</th><th>Ações</th></tr></thead>
           <tbody>{acct_rows}</tbody></table></div>"""
 
         # ── Chaves mestre legadas sem conta (migração para login email/senha) ──
@@ -908,7 +914,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             legacy_html = f"""<div class="card" style="margin-top:18px;border-color:rgba(245,158,11,.4)">
               <h2 style="font-size:16px;margin-bottom:6px">⚠️ Revendedores legados (chave mestre)</h2>
               <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Estes ainda entram com chave mestre. Crie um acesso email/senha para migrá-los; o login por chave continua funcionando até a migração completa.</p>
-              <table><thead><tr><th>Chave mestre</th><th>Saldo</th><th>Migração</th></tr></thead>
+              <table class="table-cards"><thead><tr><th>Chave mestre</th><th>Saldo</th><th>Migração</th></tr></thead>
               <tbody>{legacy_rows}</tbody></table></div>"""
         else:
             legacy_html = ""
@@ -1098,11 +1104,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
               </div></div>""")
         clients = admin_db.list_reseller_clients(reseller["id"])
         error_banner = f'<div class="reveal-banner" style="border-color:rgba(239,68,68,.4);color:var(--red)">{_e(err)}</div>' if err else ""
-        rows = "".join(f"""<tr><td><b>{_e(k['name'])}</b></td><td class="mono">{_e(k['key_preview'])}</td>
-          <td>{k['tokens_total']:,} / {_tokens(k['token_limit'])}</td>
-          <td>{_tokens(k['tokens_remaining'])}</td>
-          <td>{'<span class="badge badge-green">Ativa</span>' if k['active'] else '<span class="badge badge-red">Inativa</span>'}</td>
-          <td><button class="btn-green btn-sm" onclick="openModal('m-client-recharge-{k['id']}')">Recarregar</button></td></tr>""" for k in clients)
+        rows = "".join(f"""<tr><td data-l="Cliente"><b>{_e(k['name'])}</b></td><td data-l="Preview" class="mono">{_e(k['key_preview'])}</td>
+          <td data-l="Usados / saldo">{k['tokens_total']:,} / {_tokens(k['token_limit'])}</td>
+          <td data-l="Restante">{_tokens(k['tokens_remaining'])}</td>
+          <td data-l="Status">{'<span class="badge badge-green">Ativa</span>' if k['active'] else '<span class="badge badge-red">Inativa</span>'}</td>
+          <td data-l="Ações"><button class="btn-green btn-sm" onclick="openModal('m-client-recharge-{k['id']}')">Recarregar</button></td></tr>""" for k in clients)
         modals = "".join(f"""<div class="modal-bg" id="m-client-recharge-{k['id']}"><div class="modal">
           <button class="x" onclick="closeModal('m-client-recharge-{k['id']}')">✕</button>
           <h2>Recarregar {_e(k['name'])}</h2><p>A recarga sai do saldo distribuível da chave mestre.</p>
@@ -1129,7 +1135,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <div><label>Tokens por dia (0=∞)</label><input type="number" name="daily_limit" min="0" value="0"></div>
           <div><label>Tokens por mês (0=∞)</label><input type="number" name="monthly_limit" min="0" value="0"></div></div>
           <button class="btn" style="margin-top:16px">Gerar API</button></form></div>
-          <div class="card"><h2 style="font-size:16px;margin-bottom:12px">APIs revendidas</h2><table>
+          <div class="card"><h2 style="font-size:16px;margin-bottom:12px">APIs revendidas</h2><table class="table-cards">
           <thead><tr><th>Cliente</th><th>Preview</th><th>Tokens usados / saldo</th><th>Restante</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>{rows}</tbody></table></div></div>{modals}""")
 
