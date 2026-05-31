@@ -528,7 +528,9 @@ def _restore_tool_name(
 
 
 def _vllm_response_language_instruction() -> str:
-    language = os.getenv("PROXY_RESPONSE_LANGUAGE", "pt-BR").strip()
+    # Default is empty: let the model follow the user's language naturally.
+    # Set PROXY_RESPONSE_LANGUAGE=pt-BR (or any locale) in env to force a language.
+    language = os.getenv("PROXY_RESPONSE_LANGUAGE", "").strip()
     if not language:
         return ""
     return (
@@ -1773,7 +1775,15 @@ def _inject_vllm_tool_use_prompt(
     if messages and messages[0].get("role") == "system":
         existing = messages[0].get("content") or ""
         if VLLM_TOOL_USE_SYSTEM_PROMPT not in existing:
-            messages[0]["content"] = f"{existing}\n\n{prompt}".strip()
+            # Only append when the existing system is proxy-injected content only
+            # (the boundary marker). If the user supplied a real system prompt
+            # (no boundary marker = came from the original request), appending
+            # more proxy instructions causes conflicts and makes the model ignore
+            # the user's actual instructions.
+            proxy_only = "Sensitive workspace boundary:" in existing and len(existing) < 600
+            user_supplied = "Sensitive workspace boundary:" not in existing and len(existing) > 50
+            if not user_supplied:
+                messages[0]["content"] = f"{existing}\n\n{prompt}".strip()
         return
     messages.insert(0, {"role": "system", "content": prompt})
 
@@ -1812,7 +1822,16 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     _enable_think = (_mode == "on") or (_mode == "auto" and _is_opus)
     extra_body = openai_request.setdefault("extra_body", {})
     extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = _enable_think
-    openai_request.setdefault("frequency_penalty", 0.2)
+    # frequency_penalty=0.2 was previously hardcoded here but hurts code quality:
+    # variable names and keywords must repeat, and the penalty caused the model to
+    # invent alternatives, hallucinate, and produce inconsistent output. Removed.
+    # Set VLLM_FREQUENCY_PENALTY in env if you need a non-zero value.
+    _fp = os.getenv("VLLM_FREQUENCY_PENALTY")
+    if _fp is not None:
+        try:
+            openai_request.setdefault("frequency_penalty", float(_fp))
+        except ValueError:
+            pass
     max_output_tokens = _vllm_max_output_tokens()
     requested_max_tokens = openai_request.get("max_tokens")
     if requested_max_tokens and requested_max_tokens > max_output_tokens:
