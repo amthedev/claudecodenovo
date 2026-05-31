@@ -1853,18 +1853,26 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             openai_request.pop("tools", None)
             openai_request.pop("tool_choice", None)
         elif native_tools_enabled:
+            # NATIVE mode: the vLLM server already emits real OpenAI tool_calls
+            # (started with --enable-auto-tool-choice --tool-call-parser). Pass
+            # the tools through CLEANLY and inject NOTHING else. Injecting the
+            # textual tool prompt here (the old behavior) taught the model to ALSO
+            # emit <tool_call> text, so it flip-flopped between native and textual
+            # formats — the root cause of the intermittent "doesn't edit / acts as
+            # chat / hallucinates" reports. The Portuguese-keyword intent heuristic
+            # is likewise NOT run in native mode (it guessed wrong and pushed the
+            # model toward the wrong action). Only attach the forced-tool fallback
+            # if the operator explicitly opted in.
             openai_request["tools"] = tools
-            _inject_vllm_tool_use_prompt(openai_request, tools)
-            _inject_vllm_mandatory_tool_instruction(
-                openai_request,
-                tools,
-                attach_fallback=_force_tool_fallback_enabled(),
-            )
+            if _force_tool_fallback_enabled():
+                _attach_mandatory_tool_fallback(openai_request, tools)
             if openai_request.get("tool_choice") not in (None, "auto"):
                 # vLLM's OpenAI server is picky about forced/required tool choice,
                 # while Claude Code still works with auto tool selection.
                 openai_request["tool_choice"] = "auto"
         else:
+            # FALLBACK mode (no native tool parser on the vLLM server): teach the
+            # model the textual tool-call format and linearize tool messages.
             _inject_vllm_tool_use_prompt(openai_request, tools)
             if _force_tool_fallback_enabled():
                 _inject_vllm_mandatory_tool_instruction(openai_request, tools)

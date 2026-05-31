@@ -332,7 +332,11 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Do not inspect, grep, read", system_text)
         self.assertIn(".env files, secrets, tokens, API keys", system_text)
 
-    def test_hosted_vllm_native_tools_include_textual_fallback_contract(self):
+    def test_hosted_vllm_native_tools_are_passed_cleanly(self):
+        """Native mode must pass tools through WITHOUT injecting textual tool-call
+        instructions. Injecting the <tool_call> textual format alongside native
+        tool calling makes the model flip-flop between formats — the root cause of
+        the intermittent "doesn't edit / acts as chat / hallucinates" behavior."""
         request = AnthropicMessagesRequest(
             model="hosted_vllm/qwen",
             max_tokens=1024,
@@ -354,15 +358,19 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.dict("os.environ", {"HOSTED_VLLM_NATIVE_TOOLS": "true"}):
             openai_request = translate_anthropic_request(request)
 
+        # Tools must be present in the native field.
         self.assertIn("tools", openai_request)
+        self.assertEqual(openai_request["tools"][0]["function"]["name"], "Write")
+
         system_text = "\n".join(
             message.get("content", "")
             for message in openai_request["messages"]
             if message.get("role") == "system"
         )
-        self.assertIn("<tool_call><function=ToolName>", system_text)
-        self.assertIn("- Write:", system_text)
-        self.assertIn("CURRENT REQUEST REQUIRES TOOL USE", system_text)
+        # The textual tool-call format must NOT be injected in native mode.
+        self.assertNotIn("<tool_call><function=ToolName>", system_text)
+        self.assertNotIn("CURRENT REQUEST REQUIRES TOOL USE", system_text)
+        # No forced-tool fallback unless explicitly opted in.
         self.assertNotIn("_vllm_forced_tool_call", openai_request)
 
     def test_parses_malformed_textual_tool_call_without_closing_tags(self):
