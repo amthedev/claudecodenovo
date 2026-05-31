@@ -228,6 +228,11 @@ label:first-of-type{margin-top:0}
 .dash-grid{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:20px}
 @media(max-width:880px){.dash-grid{grid-template-columns:1fr}}
 .chart-card{background:var(--s1);border:1px solid var(--border);border-radius:16px;padding:20px}
+/* Altura fixa do container do canvas: sem isto, Chart.js com
+   maintainAspectRatio:false cresce infinitamente para baixo e trava a tela. */
+.chart-box{position:relative;width:100%;height:300px}
+.chart-box.donut{height:260px}
+.chart-box canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
 .chart-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
 .chart-head b{font-size:15px}
 .period{display:flex;gap:4px;background:rgba(0,0,0,.25);border-radius:9px;padding:3px}
@@ -294,11 +299,11 @@ def _premium_dashboard_html(scope: str) -> str:
               <button data-d="30">30d</button><button data-d="90">90d</button>
             </div>
           </div>
-          <canvas id="cArea" height="120"></canvas>
+          <div class="chart-box"><canvas id="cArea"></canvas></div>
         </div>
         <div class="chart-card">
           <b style="font-size:15px">{donut_title}</b>
-          <canvas id="cDonut" height="160" style="margin-top:10px"></canvas>
+          <div class="chart-box donut" style="margin-top:10px"><canvas id="cDonut"></canvas></div>
         </div>
       </div>
       <div class="chart-card" style="margin-bottom:20px">
@@ -329,7 +334,7 @@ _DASH_JS = """
     const ctxA=document.getElementById('cArea').getContext('2d');
     const grad=ctxA.createLinearGradient(0,0,0,200);
     grad.addColorStop(0,'rgba(99,102,241,.45)');grad.addColorStop(1,'rgba(99,102,241,0)');
-    if(area)area.destroy();
+    if(area){area.destroy();area=null;}
     area=new Chart(ctxA,{type:'line',data:{labels,datasets:[
       {label:'Tokens',data:toks,borderColor:C.violet,backgroundColor:grad,fill:true,tension:.4,borderWidth:2,pointRadius:0,yAxisID:'y'},
       {label:'Requisições',data:reqs,borderColor:C.green,backgroundColor:'transparent',tension:.4,borderWidth:2,pointRadius:0,yAxisID:'y1'}
@@ -341,14 +346,15 @@ _DASH_JS = """
     // donut + ranking
     const rank=(scope==='admin')?(d.reseller_rank||[]):(d.client_rank||[]);
     const top=rank.slice(0,6).filter(r=>r.tokens_used>0);
-    const ctxD=document.getElementById('cDonut').getContext('2d');
-    if(donut)donut.destroy();
+    const donutCanvas=document.getElementById('cDonut');
+    if(donut){donut.destroy();donut=null;}
     if(top.length){
-      donut=new Chart(ctxD,{type:'doughnut',data:{labels:top.map(r=>r.name),
+      donutCanvas.style.display='';
+      donut=new Chart(donutCanvas.getContext('2d'),{type:'doughnut',data:{labels:top.map(r=>r.name),
         datasets:[{data:top.map(r=>r.tokens_used),backgroundColor:[C.violet,C.green,C.blue,C.amber,'#ec4899','#14b8a6'],borderWidth:0}]},
         options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
           plugins:{legend:{position:'bottom',labels:{color:'#9ca3af',usePointStyle:true,boxWidth:8,font:{size:11}}}}}});
-    }else{ ctxD.canvas.parentNode.querySelector('canvas').style.display='none'; }
+    }else{ donutCanvas.style.display='none'; }
     const list=document.getElementById('rankList');
     list.innerHTML = rank.length ? rank.slice(0,10).map((r,i)=>
       `<div class="rank-row"><div class="pos">${i+1}</div>
