@@ -1185,11 +1185,63 @@ def _trim_message_content(message: Dict[str, Any], max_chars: int) -> Dict[str, 
     return trimmed
 
 
+def _drop_orphan_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Remove tool_use/tool_result pairs that were broken by truncation.
+
+    After dropping old messages, a `tool` result can be left without the
+    `assistant` tool_call that produced it (or an assistant tool_call without its
+    result). vLLM/OpenAI reject this, and an inconsistent history makes the model
+    forget what it already did and re-run the same tool calls — an infinite loop
+    (e.g. re-searching the same symbols over and over). This pass keeps only tool
+    results whose call id appears in a preceding assistant tool_calls, and only
+    assistant tool_calls whose result follows — keeping the history coherent.
+    """
+    # Pass 1: collect tool_call ids that have a following tool result.
+    result_ids = {
+        m.get("tool_call_id")
+        for m in messages
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+
+    cleaned: List[Dict[str, Any]] = []
+    available_call_ids: set = set()
+    for message in messages:
+        role = message.get("role")
+        if role == "assistant" and message.get("tool_calls"):
+            # Keep only the tool_calls that have a matching result downstream.
+            kept_calls = [
+                tc for tc in message["tool_calls"]
+                if tc.get("id") in result_ids
+            ]
+            if kept_calls:
+                msg = dict(message)
+                msg["tool_calls"] = kept_calls
+                available_call_ids.update(tc.get("id") for tc in kept_calls)
+                cleaned.append(msg)
+            elif (message.get("content") or "").strip():
+                # No valid tool_calls but has text — keep as a plain assistant turn.
+                msg = dict(message)
+                msg.pop("tool_calls", None)
+                cleaned.append(msg)
+            # else: assistant with only orphan tool_calls → drop entirely
+        elif role == "tool":
+            # Keep the result only if its call id is still present upstream.
+            if message.get("tool_call_id") in available_call_ids:
+                cleaned.append(message)
+            # else: orphan result → drop
+        else:
+            cleaned.append(message)
+    return cleaned
+
+
 def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     messages = _compact_large_messages_for_vllm(messages)
     max_chars = _vllm_max_input_chars()
     if sum(_message_char_size(message) for message in messages) <= max_chars:
-        return messages
+        # Even without truncation, ensure tool pairs are coherent — Claude Code
+        # may send histories the model finds confusing if a pair is incomplete.
+        return _drop_orphan_tool_messages(messages)
 
     system_budget = max(4000, max_chars // 3)
     system_messages = [
@@ -1233,7 +1285,8 @@ def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str
         }
         system_messages = [*system_messages, notice]
 
-    return [*system_messages, *kept]
+    # Drop tool pairs broken by the truncation above to keep history coherent.
+    return _drop_orphan_tool_messages([*system_messages, *kept])
 
 
 def _vllm_max_tools() -> int:
