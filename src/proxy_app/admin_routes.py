@@ -215,7 +215,158 @@ label:first-of-type{margin-top:0}
 .empty{text-align:center;padding:48px;color:var(--muted)}
 .actions{display:flex;gap:6px;flex-wrap:wrap}
 .timer{font-size:11px;color:var(--muted);margin-top:6px}
+/* ── Premium dashboard ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+.kpi{background:linear-gradient(145deg,var(--s1),var(--s2));border:1px solid var(--border);
+  border-radius:16px;padding:18px 20px;position:relative;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.25)}
+.kpi::after{content:"";position:absolute;top:-30px;right:-30px;width:90px;height:90px;border-radius:50%;opacity:.10}
+.kpi.k-green::after{background:var(--green)} .kpi.k-blue::after{background:var(--blue)}
+.kpi.k-violet::after{background:var(--accent)} .kpi.k-amber::after{background:var(--yellow)}
+.kpi .k-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.kpi .k-val{font-size:26px;font-weight:700;margin-top:6px;line-height:1.1}
+.kpi .k-sub{font-size:12px;color:var(--muted);margin-top:4px}
+.dash-grid{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:20px}
+@media(max-width:880px){.dash-grid{grid-template-columns:1fr}}
+.chart-card{background:var(--s1);border:1px solid var(--border);border-radius:16px;padding:20px}
+.chart-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.chart-head b{font-size:15px}
+.period{display:flex;gap:4px;background:rgba(0,0,0,.25);border-radius:9px;padding:3px}
+.period button{border:none;background:transparent;color:var(--muted);font-size:12px;font-weight:600;
+  padding:5px 11px;border-radius:7px;cursor:pointer}
+.period button.on{background:var(--accent);color:#fff}
+.rank-list{display:flex;flex-direction:column;gap:8px}
+.rank-row{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--s2);border-radius:10px}
+.rank-row .pos{width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;
+  font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.rank-row .rn{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rank-row .rv{font-size:13px;font-weight:700;color:var(--green);white-space:nowrap}
+.rank-row .rsub{font-size:11px;color:var(--muted)}
+@media(max-width:600px){
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  table thead{display:none}
+  table tr{display:block;background:var(--s2);border-radius:10px;margin-bottom:10px;padding:8px}
+  table td{display:flex;justify-content:space-between;gap:12px;border:none;padding:6px 8px;text-align:right}
+  table td::before{content:attr(data-l);color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;text-align:left}
+}
 """
+
+def _premium_dashboard_html(scope: str) -> str:
+    """Premium dashboard markup (KPI cards + interactive chart + rankings).
+
+    `scope` is 'admin' or 'reseller'; the JS fetches the matching overview endpoint
+    and renders Chart.js. Both share the same layout to keep one implementation.
+    """
+    api = "/admin/api/overview" if scope == "admin" else "/reseller/api/overview"
+    # KPI cards differ slightly by scope.
+    if scope == "admin":
+        kpis = [
+            ("k-green",  "tokens_today",  "Tokens hoje", ""),
+            ("k-violet", "tokens_sold",   "Tokens vendidos", "distribuídos a revendedores"),
+            ("k-blue",   "tokens_in_circulation", "Saldo em circulação", "ainda não consumido"),
+            ("k-amber",  "active_resellers", "Revendedores ativos", ""),
+            ("k-green",  "active_clients", "Clientes ativos", ""),
+            ("k-violet", "tokens_total",  "Tokens (total)", ""),
+        ]
+        donut_title = "Consumo por revendedor"
+        rank_title = "Top revendedores"
+    else:
+        kpis = [
+            ("k-green",  "balance",      "Seu saldo", "tokens disponíveis"),
+            ("k-violet", "distributed",  "Distribuído", "aos seus clientes"),
+            ("k-blue",   "consumed",     "Consumido", "pelos clientes"),
+            ("k-amber",  "active_clients", "Clientes ativos", ""),
+        ]
+        donut_title = "Consumo por cliente"
+        rank_title = "Top clientes"
+    kpi_cards = "".join(
+        f'<div class="kpi {cls}"><div class="k-label">{lbl}</div>'
+        f'<div class="k-val" data-kpi="{key}">—</div>'
+        f'<div class="k-sub">{sub}</div></div>'
+        for (cls, key, lbl, sub) in kpis
+    )
+    return f"""<div id="dash" data-api="{api}" data-scope="{scope}">
+      <div class="kpi-grid">{kpi_cards}</div>
+      <div class="dash-grid">
+        <div class="chart-card">
+          <div class="chart-head"><b>Consumo de tokens</b>
+            <div class="period">
+              <button data-d="7">7d</button><button data-d="14" class="on">14d</button>
+              <button data-d="30">30d</button><button data-d="90">90d</button>
+            </div>
+          </div>
+          <canvas id="cArea" height="120"></canvas>
+        </div>
+        <div class="chart-card">
+          <b style="font-size:15px">{donut_title}</b>
+          <canvas id="cDonut" height="160" style="margin-top:10px"></canvas>
+        </div>
+      </div>
+      <div class="chart-card" style="margin-bottom:20px">
+        <b style="font-size:15px">{rank_title}</b>
+        <div class="rank-list" id="rankList" style="margin-top:12px"></div>
+      </div>
+    </div>
+    <script>{_DASH_JS}</script>"""
+
+
+_DASH_JS = """
+(function(){
+  const dash=document.getElementById('dash'); if(!dash)return;
+  const api=dash.dataset.api, scope=dash.dataset.scope;
+  const fmt=n=>{ if(n==null)return '∞'; n=+n;
+    if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M';
+    if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return n.toLocaleString('pt-BR'); };
+  const C={green:'#22c55e',blue:'#3b82f6',violet:'#6366f1',amber:'#f59e0b'};
+  let area, donut;
+  function render(d){
+    const k=d.kpis||{};
+    dash.querySelectorAll('[data-kpi]').forEach(el=>{
+      const key=el.dataset.kpi; let v=k[key];
+      el.textContent=(key==='revenue')?('$'+(v||0).toFixed(2)):fmt(v);
+    });
+    const s=d.series||[];
+    const labels=s.map(x=>x.label), toks=s.map(x=>x.tokens), reqs=s.map(x=>x.requests);
+    const ctxA=document.getElementById('cArea').getContext('2d');
+    const grad=ctxA.createLinearGradient(0,0,0,200);
+    grad.addColorStop(0,'rgba(99,102,241,.45)');grad.addColorStop(1,'rgba(99,102,241,0)');
+    if(area)area.destroy();
+    area=new Chart(ctxA,{type:'line',data:{labels,datasets:[
+      {label:'Tokens',data:toks,borderColor:C.violet,backgroundColor:grad,fill:true,tension:.4,borderWidth:2,pointRadius:0,yAxisID:'y'},
+      {label:'Requisições',data:reqs,borderColor:C.green,backgroundColor:'transparent',tension:.4,borderWidth:2,pointRadius:0,yAxisID:'y1'}
+    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},
+      plugins:{legend:{labels:{color:'#9ca3af',usePointStyle:true,boxWidth:8}}},
+      scales:{x:{grid:{display:false},ticks:{color:'#6b7280',maxTicksLimit:8}},
+        y:{position:'left',grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#6b7280',callback:fmt}},
+        y1:{position:'right',grid:{display:false},ticks:{color:'#6b7280'}}}}});
+    // donut + ranking
+    const rank=(scope==='admin')?(d.reseller_rank||[]):(d.client_rank||[]);
+    const top=rank.slice(0,6).filter(r=>r.tokens_used>0);
+    const ctxD=document.getElementById('cDonut').getContext('2d');
+    if(donut)donut.destroy();
+    if(top.length){
+      donut=new Chart(ctxD,{type:'doughnut',data:{labels:top.map(r=>r.name),
+        datasets:[{data:top.map(r=>r.tokens_used),backgroundColor:[C.violet,C.green,C.blue,C.amber,'#ec4899','#14b8a6'],borderWidth:0}]},
+        options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
+          plugins:{legend:{position:'bottom',labels:{color:'#9ca3af',usePointStyle:true,boxWidth:8,font:{size:11}}}}}});
+    }else{ ctxD.canvas.parentNode.querySelector('canvas').style.display='none'; }
+    const list=document.getElementById('rankList');
+    list.innerHTML = rank.length ? rank.slice(0,10).map((r,i)=>
+      `<div class="rank-row"><div class="pos">${i+1}</div>
+       <div class="rn">${r.name}${r.email?` <span class="rsub">${r.email}</span>`:''}</div>
+       <div style="text-align:right"><div class="rv">${fmt(r.tokens_used)}</div>
+       ${r.tokens_remaining!=null?`<div class="rsub">resta ${fmt(r.tokens_remaining)}</div>`:''}</div></div>`
+    ).join('') : '<div class="empty">Sem dados de consumo ainda.</div>';
+  }
+  function load(days){ fetch(api+'?days='+days,{credentials:'same-origin'})
+    .then(r=>r.json()).then(render).catch(()=>{}); }
+  dash.querySelectorAll('.period button').forEach(b=>b.addEventListener('click',()=>{
+    dash.querySelectorAll('.period button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); load(b.dataset.d);
+  }));
+  load(14);
+})();
+"""
+
 
 def _page(title, body, logged=False, proxy_key=""):
     nav = f"""<nav>
@@ -229,6 +380,7 @@ def _page(title, body, logged=False, proxy_key=""):
 <html lang="pt-BR">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} — ProxyAdmin</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>{CSS}</style></head>
 <body>{nav}{body}
 <script>
@@ -390,9 +542,8 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     @app.get("/admin/dashboard", response_class=HTMLResponse)
     async def dashboard(req: Request, reveal: str = "", err: str = ""):
         _need(req)
-        stats = admin_db.get_stats()
         keys  = admin_db.list_api_keys()
-        chart = admin_db.get_usage_chart(14)
+        # KPIs/chart agora vêm de /admin/api/overview (dashboard premium via fetch).
         # Detecta https via header do reverse proxy (Square Cloud)
         proto = req.headers.get("x-forwarded-proto", "https")
         host  = req.headers.get("host", str(req.base_url.hostname))
@@ -424,38 +575,10 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             </div>"""
 
         # Stats cards
-        stats_html = f"""<div class="grid-stats">
-          <div class="card stat">
-            <div class="stat-icon" style="background:rgba(99,102,241,.12)">⚡</div>
-            <div class="stat-num" style="color:var(--accent)">{stats['active_keys']}</div>
-            <div class="stat-label">Chaves ativas</div>
-          </div>
-          <div class="card stat">
-            <div class="stat-icon" style="background:rgba(34,197,94,.12)">📊</div>
-            <div class="stat-num" style="color:var(--green)">{stats['today_tokens']:,}</div>
-            <div class="stat-label">Tokens hoje</div>
-          </div>
-          <div class="card stat">
-            <div class="stat-icon" style="background:rgba(59,130,246,.12)">📅</div>
-            <div class="stat-num" style="color:var(--blue)">{stats['month_tokens']:,}</div>
-            <div class="stat-label">Tokens este mês</div>
-          </div>
-          <div class="card stat">
-            <div class="stat-icon" style="background:rgba(245,158,11,.12)">💰</div>
-            <div class="stat-num" style="color:var(--yellow)">${stats['total_revenue']:.2f}</div>
-            <div class="stat-label">Receita total</div>
-          </div>
-        </div>"""
-
-        # Gráfico
-        chart_svg = _svg_line(chart)
-        chart_html = f"""<div class="card" style="margin-bottom:24px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-            <b style="font-size:14px">Uso — últimos 14 dias</b>
-            <span style="font-size:12px;color:var(--muted)">{stats['total_tokens']:,} tokens total</span>
-          </div>
-          {chart_svg}
-        </div>"""
+        # Dashboard premium (KPIs + gráfico interativo + ranking) — alimentado por
+        # /admin/api/overview via fetch; substitui o antigo SVG estático.
+        stats_html = _premium_dashboard_html("admin")
+        chart_html = ""
 
         # Conexão
         root_html = ""
@@ -758,6 +881,33 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <table><thead><tr><th>Revendedor</th><th>Status</th><th>Saldo restante / total</th><th>Clientes</th><th>Ações</th></tr></thead>
           <tbody>{acct_rows}</tbody></table></div>"""
 
+        # ── Chaves mestre legadas sem conta (migração para login email/senha) ──
+        legacy = admin_db.list_unlinked_reseller_keys()
+        if legacy:
+            legacy_rows = "".join(f"""<tr>
+              <td data-l="Chave"><b>{_e(k['name'])}</b><br><span class="mono" style="font-size:11px;color:var(--muted)">{_e(k['key_preview'])}</span></td>
+              <td data-l="Saldo">{_tokens(k.get('tokens_remaining'))} / {_tokens(k.get('token_limit'))}</td>
+              <td data-l="Ação"><button class="btn-green btn-sm" onclick="openModal('m-mig-{k['id']}')">Criar acesso (e-mail/senha)</button></td>
+              </tr>""" for k in legacy)
+            for k in legacy:
+                acct_modals += f"""<div class="modal-bg" id="m-mig-{k['id']}"><div class="modal">
+                  <button class="x" onclick="closeModal('m-mig-{k['id']}')">✕</button>
+                  <h2>Criar acesso para {_e(k['name'])}</h2>
+                  <p>Gera um login email/senha vinculado a esta chave, preservando saldo e clientes.</p>
+                  <form method="post" action="/admin/resellers/migrate/{k['id']}">
+                  <label>Nome</label><input name="name" value="{_e(k['name'])}" required>
+                  <label>E-mail</label><input type="email" name="email" required>
+                  <label>Senha (mín. 8)</label><input type="password" name="password" required>
+                  <button class="btn" style="margin-top:18px">Criar acesso</button></form></div></div>"""
+            legacy_html = f"""<div class="card" style="margin-top:18px;border-color:rgba(245,158,11,.4)">
+              <h2 style="font-size:16px;margin-bottom:6px">⚠️ Revendedores legados (chave mestre)</h2>
+              <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Estes ainda entram com chave mestre. Crie um acesso email/senha para migrá-los; o login por chave continua funcionando até a migração completa.</p>
+              <table><thead><tr><th>Chave mestre</th><th>Saldo</th><th>Migração</th></tr></thead>
+              <tbody>{legacy_rows}</tbody></table></div>"""
+        else:
+            legacy_html = ""
+        resellers_html += legacy_html
+
         body = f"""<div class="container">
           {rev_html}{error_html}<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-sm" onclick="openModal('m-reseller')">+ Chave mestre revendedor</button></div>{stats_html}{chart_html}{conn_html}{keys_html}{resellers_html}
         </div>{modals}{create_modal}{js_extra}{acct_modals}"""
@@ -846,6 +996,18 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         admin_db.delete_reseller_account(aid)
         return RedirectResponse("/admin/dashboard", 302)
 
+    @app.post("/admin/resellers/migrate/{key_id}")
+    async def admin_migrate_reseller(req: Request, key_id: str):
+        _need(req)
+        f = await _form(req)
+        try:
+            admin_db.attach_account_to_reseller_key(
+                key_id, f.get("name", ""), f.get("email", ""), f.get("password", "")
+            )
+        except ValueError as exc:
+            return _with_error("/admin/dashboard", str(exc))
+        return RedirectResponse("/admin/dashboard", 302)
+
     @app.post("/admin/keys/{kid}/rotate")
     async def rotate_key(req: Request, kid: str):
         _need(req)
@@ -907,6 +1069,11 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         _need(req)
         return JSONResponse(admin_db.get_usage_chart(min(days, 90)))
 
+    @app.get("/admin/api/overview")
+    async def api_overview(req: Request, days: int = 14):
+        _need(req)
+        return JSONResponse(admin_db.get_admin_overview(min(max(days, 1), 90)))
+
     # ── Painel do revendedor ─────────────────────────────────────────────────
     @app.get("/reseller", response_class=HTMLResponse)
     async def reseller_index(req: Request, err: str = "", reveal: str = ""):
@@ -945,8 +1112,9 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           <div class="copy-row mono"><span>{rev['key_value']}</span><button class="btn btn-sm" onclick='cp({_j(rev["key_value"])},this)'>Copiar</button></div></div>""" if rev else ""
         return _page("Revendedor", f"""<div class="container">{banner}{error_banner}
 	          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><div><h1>{_e(reseller['name'])}</h1>
-          <p style="color:var(--muted)">Saldo mestre disponível: <b style="color:var(--green)">{_tokens(reseller['tokens_remaining'])}</b> tokens</p></div>
+          <p style="color:var(--muted)">Bem-vindo de volta — acompanhe seus clientes abaixo.</p></div>
           <form method="post" action="/reseller/logout"><button class="btn-ghost">Sair</button></form></div>
+          {_premium_dashboard_html("reseller")}
           <div class="card" style="margin-bottom:18px"><h2 style="font-size:16px;margin-bottom:12px">Nova chave para cliente</h2>
           <form method="post" action="/reseller/create-key"><div class="field-row">
           <div><label>Cliente</label><input name="name" required></div>
@@ -1054,6 +1222,13 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         except ValueError as exc:
             return _with_error("/reseller", str(exc))
         return RedirectResponse("/reseller", 302)
+
+    @app.get("/reseller/api/overview")
+    async def reseller_api_overview(req: Request, days: int = 14):
+        reseller = _need_reseller(req)
+        return JSONResponse(
+            admin_db.get_reseller_overview(reseller["id"], min(max(days, 1), 90))
+        )
 
     # ── Rotas legadas (compatibilidade) ───────────────────────────────────────
     @app.post("/admin/apps")

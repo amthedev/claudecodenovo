@@ -1188,3 +1188,153 @@ def migrate_from_json(json_path: Path) -> int:
         except Exception:
             pass
     return migrated
+
+
+# ── Dashboard overviews (premium dashboards) ────────────────────────────────────
+
+def _usage_series_for_keys(key_ids: list, days: int) -> List[Dict[str, Any]]:
+    """Daily total_tokens + request_count summed over the given key ids."""
+    if not key_ids:
+        return [
+            {"date": time.strftime("%Y-%m-%d", time.gmtime(time.time() - i * 86400)),
+             "label": time.strftime("%d/%m", time.gmtime(time.time() - i * 86400)),
+             "tokens": 0, "requests": 0}
+            for i in range(days - 1, -1, -1)
+        ]
+    placeholders = ",".join("?" * len(key_ids))
+    out = []
+    with _db() as c:
+        for i in range(days - 1, -1, -1):
+            ts = time.time() - i * 86400
+            d = time.strftime("%Y-%m-%d", time.gmtime(ts))
+            row = c.execute(
+                f"""SELECT COALESCE(SUM(total_tokens),0) AS t, COALESCE(SUM(request_count),0) AS r
+                    FROM key_usage WHERE date=? AND key_id IN ({placeholders})""",
+                (d, *key_ids),
+            ).fetchone()
+            out.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)),
+                        "tokens": int(row["t"]), "requests": int(row["r"])})
+    return out
+
+
+def get_admin_overview(days: int = 14) -> Dict[str, Any]:
+    """Global overview for the admin premium dashboard: KPIs, time series, and
+    rankings by reseller and by client."""
+    keys = list_api_keys()
+    stats = get_stats()
+    resellers = list_reseller_accounts()
+
+    # KPIs
+    tokens_sold = sum(int(a["token_limit"] or 0) for a in resellers)          # saldo distribuído aos revendedores
+    tokens_in_circulation = sum(int(a["tokens_remaining"] or 0) for a in resellers if a["tokens_remaining"] is not None)
+    active_resellers = sum(1 for a in resellers if a["status"] == "active")
+    client_keys = [k for k in keys if (k.get("key_type") or "client") == "client"]
+    active_clients = sum(1 for k in client_keys if k.get("active"))
+
+    # Time series (all usage)
+    series = _usage_series_for_keys([k["id"] for k in keys], days)
+
+    # Ranking por revendedor (consumo dos clientes dele)
+    reseller_rank = sorted(
+        [{"name": a["name"], "email": a["email"], "status": a["status"],
+          "tokens_used": int(a["clients_usage"] or 0),
+          "tokens_remaining": a["tokens_remaining"],
+          "clients": a["clients_count"]} for a in resellers],
+        key=lambda x: x["tokens_used"], reverse=True,
+    )[:10]
+
+    # Ranking por cliente (todos)
+    client_rank = sorted(
+        [{"name": k["name"], "tokens_used": int(k.get("tokens_total") or 0),
+          "tokens_remaining": k.get("tokens_remaining"),
+          "active": bool(k.get("active"))} for k in client_keys],
+        key=lambda x: x["tokens_used"], reverse=True,
+    )[:10]
+
+    return {
+        "kpis": {
+            "tokens_today": stats["today_tokens"],
+            "tokens_month": stats["month_tokens"],
+            "tokens_total": stats["total_tokens"],
+            "requests_today": stats["today_requests"],
+            "tokens_sold": tokens_sold,
+            "tokens_in_circulation": tokens_in_circulation,
+            "active_resellers": active_resellers,
+            "active_clients": active_clients,
+            "revenue": stats["total_revenue"],
+        },
+        "series": series,
+        "reseller_rank": reseller_rank,
+        "client_rank": client_rank,
+        "days": days,
+    }
+
+
+def get_reseller_overview(reseller_key_id: str, days: int = 14) -> Dict[str, Any]:
+    """Overview for a single reseller's premium dashboard: own balance, what was
+    distributed/consumed, time series of the reseller's clients, and client ranking."""
+    keys = {k["id"]: k for k in list_api_keys()}
+    master = keys.get(reseller_key_id)
+    clients = [k for k in keys.values() if k.get("parent_key_id") == reseller_key_id]
+
+    distributed = sum(int(k.get("token_limit") or 0) for k in clients)
+    consumed = sum(int(k.get("tokens_total") or 0) for k in clients)
+    balance = master.get("tokens_remaining") if master else None
+
+    series = _usage_series_for_keys([k["id"] for k in clients], days)
+
+    client_rank = sorted(
+        [{"name": k["name"], "preview": k.get("key_preview", ""),
+          "tokens_used": int(k.get("tokens_total") or 0),
+          "tokens_limit": int(k.get("token_limit") or 0),
+          "tokens_remaining": k.get("tokens_remaining"),
+          "active": bool(k.get("active"))} for k in clients],
+        key=lambda x: x["tokens_used"], reverse=True,
+    )
+
+    return {
+        "kpis": {
+            "balance": balance,
+            "token_limit": int(master["token_limit"]) if master and master.get("token_limit") else 0,
+            "distributed": distributed,
+            "consumed": consumed,
+            "clients_count": len(clients),
+            "active_clients": sum(1 for k in clients if k.get("active")),
+        },
+        "series": series,
+        "client_rank": client_rank,
+        "days": days,
+    }
+
+
+def attach_account_to_reseller_key(key_id: str, name: str, email: str, password: str) -> Dict[str, Any]:
+    """Migration helper: give an existing (legacy) reseller master key an email/
+    password account, preserving its balance and clients. After this the reseller
+    can log in with email/password instead of pasting the master key."""
+    name = (name or "").strip()
+    email = (email or "").strip().lower()
+    if not name:
+        raise ValueError("Informe o nome do revendedor.")
+    if "@" not in email:
+        raise ValueError("Informe um e-mail válido.")
+    if len(password or "") < 8:
+        raise ValueError("A senha precisa ter pelo menos 8 caracteres.")
+    with _db() as c:
+        key = c.execute(
+            "SELECT * FROM api_keys WHERE id=? AND key_type='reseller'", (key_id,)
+        ).fetchone()
+        if not key:
+            raise ValueError("Chave de revendedor inválida.")
+        if c.execute("SELECT 1 FROM web_accounts WHERE key_id=?", (key_id,)).fetchone():
+            raise ValueError("Esta chave já tem uma conta vinculada.")
+        if c.execute("SELECT 1 FROM web_accounts WHERE email=?", (email,)).fetchone():
+            raise ValueError("Este e-mail já possui uma conta.")
+        account_id = str(uuid.uuid4()).replace("-", "")
+        ph = _hash_pw(password)
+        c.execute(
+            """INSERT INTO web_accounts
+               (id,key_id,name,email,password_hash,password_salt,created_at,role,status)
+               VALUES(?,?,?,?,?,?,?,'reseller','active')""",
+            (account_id, key_id, name, email, ph["hash"], ph["salt"], time.time()),
+        )
+    return {"account_id": account_id, "key_id": key_id, "status": "active"}
