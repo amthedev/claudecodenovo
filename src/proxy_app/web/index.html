@@ -92,10 +92,6 @@
             <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
             <span>Pesquisa online</span>
           </button>
-          <button class="sidebar-action" type="button" data-sidebar-panel="drivePanel">
-            <svg viewBox="0 0 24 24"><path d="M8 4h8l4 7-4 7H8l-4-7 4-7Z" /><path d="m8 4 4 7-4 7M12 11h8" /></svg>
-            <span>Google Drive</span>
-          </button>
           <button class="sidebar-action auth-only hidden" type="button" data-sidebar-panel="apiPanel" aria-label="Abrir API compatível">
             <svg viewBox="0 0 24 24"><path d="M6 8h12v11H6V8Z" /><path d="M9 8V5h6v3M8 12h8M8 16h5" /></svg>
             <span>API compatível</span>
@@ -468,26 +464,6 @@
             </label>
           </div>
           <div id="accountDetails" class="details-list"></div>
-        </section>
-
-        <section id="drivePanel" class="client-panel side-panel">
-          <div class="panel-header">
-            <span class="overline">Google Drive</span>
-            <h2>Automação de pastas</h2>
-          </div>
-          <p>Use um conector Google Apps Script publicado pela sua própria conta para organizar arquivos com segurança.</p>
-          <p><a href="/web/assets/drive-connector.gs" target="_blank">Abrir código do conector</a></p>
-          <form id="driveForm" class="settings-form">
-            <label>Nome<input name="name" placeholder="Organizar relatórios" required /></label>
-            <label>URL do Apps Script<input name="webhook_url" placeholder="https://script.google.com/macros/s/.../exec" required /></label>
-            <label>Ação<select name="action"><option value="organize">Organizar arquivos</option><option value="create_folder">Criar pasta</option><option value="move_files">Mover arquivos</option></select></label>
-            <label>Pasta de origem<input name="source_folder" placeholder="ID da pasta" /></label>
-            <label>Pasta de destino<input name="destination_folder" placeholder="ID da pasta" /></label>
-            <label>Filtro de arquivo<input name="file_pattern" placeholder=".pdf ou relatorio" /></label>
-            <button class="primary" type="submit">Salvar automação</button>
-          </form>
-          <div id="driveError" class="form-error"></div>
-          <div id="automationList" class="web-automation-list"></div>
         </section>
 
         <section id="chartPanel" class="client-panel side-panel">

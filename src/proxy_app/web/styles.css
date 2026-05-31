@@ -3425,3 +3425,43 @@ button.result-item {
     min-height: 0;
   }
 }
+
+/* ── Botões de exportação (Baixar Word/PDF) abaixo das respostas da IA ── */
+.export-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cloud-line, #e4e0d8);
+  flex-wrap: wrap;
+}
+.export-hint {
+  font-size: 12px;
+  color: var(--cloud-muted, #74675d);
+  font-weight: 600;
+}
+.export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--cloud-line, #e4e0d8);
+  background: var(--cloud-panel, #fff);
+  color: var(--cloud-text, #37332d);
+  cursor: pointer;
+  transition: all .15s;
+}
+.export-btn:hover {
+  border-color: var(--accent, #d97757);
+  color: var(--accent, #d97757);
+  transform: translateY(-1px);
+}
+.export-btn:disabled { opacity: .6; cursor: default; transform: none; }
+@media (max-width: 600px) {
+  .export-bar { gap: 6px; }
+  .export-btn { flex: 1; justify-content: center; }
+}

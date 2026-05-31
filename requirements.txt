@@ -31,3 +31,8 @@ pypdf
 
 # PDF page rendering to image (for scanned PDFs sent to vision model)
 pymupdf
+
+# Document export from the web UI (relatórios em Word/PDF com gráficos)
+python-docx   # Word (.docx)
+reportlab     # PDF
+matplotlib    # gráficos embutidos nos documentos (backend Agg, import lazy)

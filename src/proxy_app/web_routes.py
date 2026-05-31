@@ -17,7 +17,9 @@ from typing import Any, Optional
 from xml.etree import ElementTree
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 
 from . import admin_db
@@ -28,8 +30,6 @@ MAX_EXTRACTED_CHARS = 100_000
 MAX_ZIP_MEMBER_BYTES = 2 * 1024 * 1024
 MAX_BASE64_CHARS = (MAX_UPLOAD_BYTES * 4 // 3) + 16
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".html", ".py", ".js", ".ts", ".xlsx", ".docx", ".pdf"}
-DRIVE_ACTIONS = {"organize", "create_folder", "move_files"}
-DRIVE_WEBHOOK_RE = re.compile(r"^https://script\.google\.com/macros/s/[^/]+/exec$")
 
 
 def _bearer(request: Request) -> str:
@@ -263,19 +263,6 @@ def _search_web(query: str) -> list[dict[str, str]]:
     return result[:6]
 
 
-def _public_automation(automation: dict[str, Any]) -> dict[str, Any]:
-    return {key: automation[key] for key in (
-        "id", "name", "action", "source_folder", "destination_folder", "file_pattern", "created_at"
-    )}
-
-
-def _limited(value: Any, name: str, limit: int = 180) -> str:
-    text = str(value or "").strip()
-    if len(text) > limit:
-        raise HTTPException(400, f"{name} excede {limit} caracteres.")
-    return text
-
-
 def register_web_routes(app: FastAPI) -> None:
     if getattr(app.state, "web_routes_registered", False):
         return
@@ -381,60 +368,41 @@ def register_web_routes(app: FastAPI) -> None:
         except Exception as exc:
             raise HTTPException(502, "A pesquisa online está temporariamente indisponível.") from exc
 
-    @app.get("/web/api/drive/automations")
-    async def drive_list(request: Request) -> JSONResponse:
-        return JSONResponse({"automations": [_public_automation(item) for item in admin_db.list_drive_automations(_account_id(request))]})
-
-    @app.post("/web/api/drive/automations")
-    async def drive_create(request: Request) -> JSONResponse:
-        account_id = _account_id(request)
+    @app.post("/web/api/export")
+    async def export_document(request: Request) -> StreamingResponse:
+        """Gera um arquivo Word (.docx) ou PDF a partir do conteúdo (markdown) que a
+        IA produziu, opcionalmente com um gráfico embutido. Download local, sem
+        custo de tokens."""
+        _account_id(request)
         body = await request.json()
-        webhook_url = str(body.get("webhook_url", "")).strip()
-        if not DRIVE_WEBHOOK_RE.match(webhook_url):
-            raise HTTPException(400, "Use uma URL publicada do Google Apps Script terminada em /exec.")
-        name = _limited(body.get("name"), "Nome")
-        if not name:
-            raise HTTPException(400, "Informe o nome da automação.")
-        action = _limited(body.get("action", "organize"), "Ação", 30)
-        if action not in DRIVE_ACTIONS:
-            raise HTTPException(400, "Ação de automação inválida.")
-        automation = admin_db.create_drive_automation(
-            account_id, name, webhook_url, action,
-            _limited(body.get("source_folder"), "Pasta de origem"),
-            _limited(body.get("destination_folder"), "Pasta de destino"),
-            _limited(body.get("file_pattern"), "Filtro de arquivo"),
-        )
-        return JSONResponse({"automation": _public_automation(automation)})
-
-    @app.post("/web/api/drive/automations/{automation_id}/run")
-    async def drive_run(request: Request, automation_id: str) -> JSONResponse:
-        automation = admin_db.get_drive_automation(_account_id(request), automation_id)
-        if not automation:
-            raise HTTPException(404, "Automação não encontrada.")
-        payload = json.dumps({key: automation[key] for key in (
-            "id", "name", "action", "source_folder", "destination_folder", "file_pattern"
-        )}).encode()
-        call = urllib.request.Request(
-            automation["webhook_url"], data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
+        fmt = str(body.get("format", "docx")).lower().strip()
+        title = str(body.get("title", "") or "").strip()[:200]
+        content = str(body.get("content", "") or "")
+        chart = body.get("chart") if isinstance(body.get("chart"), dict) else None
+        if fmt not in ("docx", "pdf"):
+            raise HTTPException(400, "Formato inválido (use docx ou pdf).")
+        if not content.strip():
+            raise HTTPException(400, "Não há conteúdo para exportar.")
+        if len(content) > 400_000:
+            raise HTTPException(413, "Conteúdo muito grande para exportar.")
+        from . import doc_export
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", (title or "documento")).strip("_")[:60] or "documento"
         try:
-            with urllib.request.urlopen(call, timeout=15) as response:
-                result = response.read(100_000).decode("utf-8", errors="replace")
+            if fmt == "docx":
+                data = doc_export.build_docx(title, content, chart)
+                media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ext = "docx"
+            else:
+                data = doc_export.build_pdf(title, content, chart)
+                media = "application/pdf"
+                ext = "pdf"
+        except ImportError as exc:
+            raise HTTPException(503, f"Biblioteca de exportação ausente no servidor: {exc}") from exc
         except Exception as exc:
-            raise HTTPException(502, "O conector do Google Drive não respondeu.") from exc
-        try:
-            parsed = json.loads(result)
-        except json.JSONDecodeError:
-            parsed = {"message": result[:10_000]}
-        if parsed.get("ok") is False:
-            raise HTTPException(502, str(parsed.get("error") or "O conector recusou a automação."))
-        return JSONResponse({"ok": True, "result": parsed})
-
-    @app.delete("/web/api/drive/automations/{automation_id}")
-    async def drive_delete(request: Request, automation_id: str) -> JSONResponse:
-        if not admin_db.delete_drive_automation(_account_id(request), automation_id):
-            raise HTTPException(404, "Automação não encontrada.")
-        return JSONResponse({"ok": True})
+            raise HTTPException(500, f"Falha ao gerar o arquivo: {exc}") from exc
+        return StreamingResponse(
+            io.BytesIO(data), media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.{ext}"'},
+        )
 
     app.state.web_routes_registered = True

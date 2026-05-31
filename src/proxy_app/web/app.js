@@ -203,7 +203,6 @@ function showPanel(id) {
   $$("[data-panel], [data-sidebar-panel]").forEach((button) => {
     button.classList.toggle("active", (button.dataset.panel || button.dataset.sidebarPanel) === id);
   });
-  if (id === "drivePanel") loadAutomations();
   if (id === "historyPanel") renderHistory();
   if (id === "projectsPanel") renderProjects();
   if (id === "artifactsPanel") renderArtifacts();
@@ -366,6 +365,7 @@ async function sendPrompt(text) {
     conversation.push({ role: "assistant", content: response });
     assistant.querySelector(".message-body").innerHTML = esc(response || "Resposta recebida.").replace(/\n/g, "<br>");
     assistant.insertAdjacentHTML("beforeend", sourceMarkup(sources));
+    attachExportButtons(assistant, clean, response);
     saveHistory(clean, response);
     await refreshAccount();
   } catch (exception) {
@@ -380,6 +380,64 @@ function saveHistory(prompt, answer) {
   history.unshift({ id: Date.now(), title: prompt.slice(0, 54), prompt, answer, createdAt: new Date().toISOString() });
   writeLocal(HISTORY_KEY, history.slice(0, 50));
   renderRecentHistory();
+}
+
+// Deriva um título a partir do primeiro heading do markdown ou do pedido do usuário.
+function deriveTitle(prompt, answer) {
+  const h = (answer || "").match(/^#{1,3}\s+(.+)$/m);
+  if (h) return h[1].trim().slice(0, 80);
+  return (prompt || "Documento").trim().slice(0, 60);
+}
+
+// Adiciona botões "Baixar Word / PDF" abaixo de uma resposta da IA. Toda resposta
+// pode ser exportada (relatórios, documentos preenchidos, análises).
+function attachExportButtons(messageEl, prompt, answer) {
+  if (!answer || answer.length < 40) return;  // respostas muito curtas não valem exportar
+  const title = deriveTitle(prompt, answer);
+  const bar = document.createElement("div");
+  bar.className = "export-bar";
+  bar.innerHTML = `
+    <span class="export-hint">Baixar como:</span>
+    <button type="button" class="export-btn" data-fmt="docx">📄 Word</button>
+    <button type="button" class="export-btn" data-fmt="pdf">📕 PDF</button>`;
+  bar.querySelectorAll(".export-btn").forEach((btn) => {
+    btn.onclick = () => downloadExport(btn, btn.dataset.fmt, title, answer);
+  });
+  messageEl.appendChild(bar);
+}
+
+async function downloadExport(btn, format, title, content) {
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = "Gerando…";
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch("/web/api/export", {
+      method: "POST", headers,
+      body: JSON.stringify({ format, title, content }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ detail: "Falha ao gerar o arquivo." }));
+      throw new Error(typeof data.detail === "string" ? data.detail : "Falha ao gerar o arquivo.");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safe = (title || "documento").replace(/[^A-Za-z0-9_-]+/g, "_").slice(0, 60) || "documento";
+    a.href = url;
+    a.download = `${safe}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    btn.innerHTML = "✓ Baixado";
+    setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 2500);
+  } catch (exception) {
+    btn.innerHTML = "Erro";
+    alert(exception.message);
+    setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 2500);
+  }
 }
 
 function renderRecentHistory() {
@@ -426,31 +484,6 @@ function renderPlans() {
 function renderApiGuide() {
   if (!$("#apiInstallGuide")) return;
   $("#apiInstallGuide").innerHTML = `<p>Use o token recebido no cadastro como <code>ANTHROPIC_AUTH_TOKEN</code> e a URL deste servidor como base.</p>`;
-}
-
-async function loadAutomations() {
-  if (!account || !$("#automationList")) return;
-  try {
-    const data = await request("/web/api/drive/automations");
-    $("#automationList").innerHTML = (data.automations || []).map((item) => `
-      <div class="web-automation">
-        <strong>${esc(item.name)}</strong>
-        <small>${esc(item.action)} · ${esc(item.file_pattern || "todos os arquivos")}</small>
-        <div><button type="button" data-run-automation="${item.id}">Executar</button><button type="button" data-delete-automation="${item.id}">Excluir</button></div>
-      </div>
-    `).join("") || "<p>Nenhuma automação cadastrada.</p>";
-    $$("[data-run-automation]").forEach((button) => button.onclick = async () => {
-      button.textContent = "Executando...";
-      try { await request(`/web/api/drive/automations/${button.dataset.runAutomation}/run`, { method: "POST" }); button.textContent = "Executado"; }
-      catch (exception) { $("#driveError").textContent = exception.message; button.textContent = "Executar"; }
-    });
-    $$("[data-delete-automation]").forEach((button) => button.onclick = async () => {
-      await request(`/web/api/drive/automations/${button.dataset.deleteAutomation}`, { method: "DELETE" });
-      loadAutomations();
-    });
-  } catch (exception) {
-    $("#driveError").textContent = exception.message;
-  }
 }
 
 $("#clientLoginForm").onsubmit = (event) => { event.preventDefault(); auth(event.currentTarget, "/web/api/login", "#clientLoginError"); };
@@ -514,15 +547,6 @@ $("#accountMenu").onclick = (event) => {
   if (action === "logout") $("#clientLogout").click();
   if (action === "settings") showPanel("settingsPanel");
   if (action === "support") showPanel("supportPanel");
-};
-$("#driveForm").onsubmit = async (event) => {
-  event.preventDefault();
-  $("#driveError").textContent = "";
-  try {
-    await request("/web/api/drive/automations", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
-    event.currentTarget.reset();
-    loadAutomations();
-  } catch (exception) { $("#driveError").textContent = exception.message; }
 };
 $$("[data-model-trigger]").forEach((button) => button.onclick = () => toggleFloatingMenu($("#modelMenu"), button));
 $$("[data-model-value]").forEach((button) => button.onclick = () => { syncModel(button.dataset.modelValue); $("#modelMenu").classList.add("hidden"); });
