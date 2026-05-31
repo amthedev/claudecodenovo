@@ -80,6 +80,19 @@ VLLM_TEXTUAL_TOOL_PROMPT = (
     "<tool_call><function=ToolName><parameter=param_name>value</parameter></function></tool_call>\n"
     "Use only tool names from the available tools list."
 )
+# Behavior-only agentic prompt for NATIVE mode. Says NOTHING about output format
+# (the vLLM parser handles that) — it only fixes the "acts like an intern, asks
+# what to do instead of doing it" complaint by telling the model to execute.
+VLLM_NATIVE_AGENT_PROMPT = (
+    "You are an autonomous coding agent operating inside an editor (Claude Code). "
+    "When the user asks for an action, DO IT using the available tools — read, "
+    "edit, create files and run commands yourself. Do not ask the user for "
+    "permission or for confirmation of obvious next steps, and do not just explain "
+    "what could be done: take the action. Only ask a question when the request is "
+    "genuinely ambiguous or a required detail is missing. Keep working through "
+    "tool results until the user's task is actually complete, then give a short "
+    "summary of what you did."
+)
 VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
 VLLM_AGENT_FLOW_PROMPT = (
     "Agent workflow contract: use tools for workspace actions, keep working "
@@ -1857,6 +1870,19 @@ def _inject_sensitive_workspace_boundary(openai_request: Dict[str, Any]) -> None
     )
 
 
+def _inject_native_agent_prompt(openai_request: Dict[str, Any]) -> None:
+    """Append the behavior-only agentic prompt once (idempotent across multi-turn
+    requests — Claude Code resends history, so we must not stack it every turn)."""
+    marker = "autonomous coding agent operating inside an editor"
+    messages = openai_request.setdefault("messages", [])
+    if messages and messages[0].get("role") == "system":
+        existing = messages[0].get("content") or ""
+        if marker not in existing:
+            messages[0]["content"] = f"{existing}\n\n{VLLM_NATIVE_AGENT_PROMPT}".strip()
+        return
+    messages.insert(0, {"role": "system", "content": VLLM_NATIVE_AGENT_PROMPT})
+
+
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
@@ -1917,6 +1943,11 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             # model toward the wrong action). Only attach the forced-tool fallback
             # if the operator explicitly opted in.
             openai_request["tools"] = tools
+            # Behavior-only nudge so the model acts instead of asking ("intern
+            # mode"). No output-format text here — that caused the flip-flop.
+            # Opt-out via VLLM_NATIVE_AGENT_PROMPT=off if ever undesired.
+            if os.getenv("VLLM_NATIVE_AGENT_PROMPT", "on").lower() not in {"off", "0", "false", "no"}:
+                _inject_native_agent_prompt(openai_request)
             if _force_tool_fallback_enabled():
                 _attach_mandatory_tool_fallback(openai_request, tools)
             if openai_request.get("tool_choice") not in (None, "auto"):
