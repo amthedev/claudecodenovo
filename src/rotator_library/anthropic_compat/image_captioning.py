@@ -116,6 +116,42 @@ def _extract_pdf_text(b64_data: str, max_chars: int, log: logging.Logger) -> Opt
         return None
 
 
+def _pdf_to_image_b64_pages(
+    b64_data: str,
+    max_pages: int,
+    log: logging.Logger,
+) -> list:
+    """
+    Render PDF pages to PNG images using pymupdf (fitz).
+    Returns a list of base64-encoded PNG strings, one per page.
+    Returns empty list if pymupdf is not installed or PDF cannot be rendered.
+    """
+    import base64
+
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        log.warning("pymupdf não instalado — não é possível renderizar PDF como imagem.")
+        return []
+    try:
+        raw = base64.b64decode(b64_data)
+        doc = fitz.open(stream=raw, filetype="pdf")
+        pages_b64 = []
+        for i, page in enumerate(doc):
+            if i >= max_pages:
+                break
+            # render at 150 DPI — good balance of quality vs. token cost
+            mat = fitz.Matrix(150 / 72, 150 / 72)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            png_bytes = pix.tobytes("png")
+            pages_b64.append(base64.b64encode(png_bytes).decode())
+        doc.close()
+        return pages_b64
+    except Exception as e:
+        log.warning("Falha ao renderizar PDF como imagem: %s", e)
+        return []
+
+
 def _image_data_uri(block: Any) -> Optional[str]:
     """Build a data: URI from an Anthropic image block (base64 or url source)."""
     source = block.get("source") if isinstance(block, dict) else getattr(block, "source", None)
@@ -247,6 +283,11 @@ async def caption_images_in_request(
     except ValueError:
         pdf_max_chars = 20000
 
+    try:
+        pdf_max_pages = int(os.getenv("PDF_MAX_PAGES", "8"))
+    except ValueError:
+        pdf_max_pages = 8
+
     messages = request.messages or []
 
     # Map of (message_index, block_index) -> replacement text.
@@ -267,31 +308,79 @@ async def caption_images_in_request(
                     image_jobs.append((m_idx, b_idx, data_uri, user_context))
             elif _is_pdf_document(block):
                 source = _block_source(block) or {}
+                b64_data = source.get("data", "")
                 pdf_text = None
-                if source.get("type") == "base64" or source.get("data"):
-                    pdf_text = _extract_pdf_text(
-                        source.get("data", ""), pdf_max_chars, log
-                    )
+                if source.get("type") == "base64" or b64_data:
+                    pdf_text = _extract_pdf_text(b64_data, pdf_max_chars, log)
                 if pdf_text:
+                    # Text PDF — fast local extraction, no VLM cost
                     replacement_by_pos[(m_idx, b_idx)] = (
                         f"[Conteúdo do PDF anexado]\n{pdf_text}"
                     )
+                elif b64_data:
+                    # Scanned/image-only PDF — render pages and send to vision model
+                    pages_b64 = _pdf_to_image_b64_pages(b64_data, pdf_max_pages, log)
+                    if pages_b64:
+                        log.info(
+                            "PDF digitalizado: enviando %d página(s) para o VLM (%s)",
+                            len(pages_b64), vision_model,
+                        )
+                        # Enqueue each page as an image job; use a sentinel
+                        # replacement key so we can collect all results and join them.
+                        # We use a negative block index trick: store as
+                        # (m_idx, b_idx, page_index) in a separate list and merge.
+                        for page_idx, page_b64 in enumerate(pages_b64):
+                            data_uri = f"data:image/png;base64,{page_b64}"
+                            page_context = (
+                                f"{user_context} (página {page_idx + 1} de {len(pages_b64)} do PDF)"
+                                if user_context else
+                                f"Página {page_idx + 1} de {len(pages_b64)} de um PDF digitalizado"
+                            )
+                            image_jobs.append((m_idx, b_idx, data_uri, page_context, page_idx, len(pages_b64)))
+                    else:
+                        replacement_by_pos[(m_idx, b_idx)] = (
+                            "[PDF digitalizado recebido, mas não foi possível renderizar as páginas. "
+                            "Instale pymupdf no servidor: pip install pymupdf]"
+                        )
                 else:
                     replacement_by_pos[(m_idx, b_idx)] = (
-                        "[PDF anexado, mas não foi possível extrair texto "
-                        "(pode ser um PDF digitalizado/sem texto).]"
+                        "[PDF recebido sem conteúdo extraível.]"
                     )
 
     if image_jobs:
-        log.info("Captioning %d image(s) via %s", len(image_jobs), vision_model)
+        log.info("Captioning %d image/page job(s) via %s", len(image_jobs), vision_model)
         descriptions = await asyncio.gather(
             *(
-                _describe_image(uri, ctx, client, vision_model, max_tokens, log)
-                for (_, _, uri, ctx) in image_jobs
+                _describe_image(job[2], job[3], client, vision_model, max_tokens, log)
+                for job in image_jobs
             )
         )
-        for (m_idx, b_idx, _, _), desc in zip(image_jobs, descriptions):
-            replacement_by_pos[(m_idx, b_idx)] = desc
+        # Accumulate results; multi-page PDFs share the same (m_idx, b_idx)
+        # and get their page descriptions joined in order.
+        page_buckets: dict = {}  # (m_idx, b_idx) -> list of (page_idx, desc)
+        for job, desc in zip(image_jobs, descriptions):
+            m_idx, b_idx = job[0], job[1]
+            page_idx = job[4] if len(job) > 4 else 0
+            total_pages = job[5] if len(job) > 5 else 1
+            key = (m_idx, b_idx)
+            if key not in page_buckets:
+                page_buckets[key] = {"pages": [], "total": total_pages}
+            page_buckets[key]["pages"].append((page_idx, desc))
+
+        for (m_idx, b_idx), bucket in page_buckets.items():
+            sorted_pages = sorted(bucket["pages"], key=lambda x: x[0])
+            total = bucket["total"]
+            if total == 1:
+                replacement_by_pos[(m_idx, b_idx)] = sorted_pages[0][1]
+            else:
+                parts = [
+                    f"[Página {idx + 1}/{total}]\n{desc}"
+                    for idx, desc in sorted_pages
+                ]
+                replacement_by_pos[(m_idx, b_idx)] = (
+                    f"[PDF digitalizado — {total} página(s) analisadas pelo modelo de visão]\n\n"
+                    + "\n\n".join(parts)
+                )
 
     if not replacement_by_pos:
         return request  # no images/PDFs — common path, zero cost

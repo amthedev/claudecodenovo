@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import os
 import csv
 import html
 import io
@@ -51,6 +52,94 @@ def _account_id(request: Request) -> str:
 
 def _truncate(value: str) -> str:
     return value[:MAX_EXTRACTED_CHARS]
+
+
+def _extract_pdf_content(raw: bytes) -> str:
+    """
+    Extract readable content from a PDF.
+    1. Try pypdf for text-based PDFs (fast, free).
+    2. If no text found (scanned/image PDF), render pages with pymupdf and
+       send each page image to the OpenRouter vision model.
+    3. Fallback to raw ASCII extraction if all else fails.
+    """
+    # Step 1: text extraction via pypdf
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(raw))
+        pages_text = []
+        for page in reader.pages:
+            t = page.extract_text() or ""
+            if t.strip():
+                pages_text.append(t)
+        text_content = "\n\n".join(pages_text).strip()
+        if text_content:
+            return text_content
+    except Exception:
+        pass
+
+    # Step 2: scanned PDF — render with pymupdf and describe via VLM
+    try:
+        import fitz  # pymupdf
+        import base64
+        import urllib.request
+        import json as _json
+
+        vision_model_env = os.getenv("VISION_MODEL", "openrouter/qwen/qwen-2.5-vl-7b-instruct")
+        # extract just the model id after "openrouter/"
+        openrouter_model = vision_model_env.replace("openrouter/", "", 1)
+        openrouter_key = os.getenv("OPENROUTER_API_KEY_1") or os.getenv("OPENROUTER_API_KEY")
+        max_pages = int(os.getenv("PDF_MAX_PAGES", "8"))
+
+        if openrouter_key:
+            doc = fitz.open(stream=raw, filetype="pdf")
+            total_pages = min(len(doc), max_pages)
+            page_descriptions = []
+
+            for i in range(total_pages):
+                page = doc[i]
+                mat = fitz.Matrix(150 / 72, 150 / 72)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                png_b64 = base64.b64encode(pix.tobytes("png")).decode()
+                data_uri = f"data:image/png;base64,{png_b64}"
+
+                prompt = (
+                    f"Página {i + 1} de {total_pages} de um PDF digitalizado. "
+                    "Transcreva todo o texto visível com fidelidade, preservando "
+                    "estrutura (tabelas, listas, parágrafos). Não se apresente."
+                )
+                payload = _json.dumps({
+                    "model": openrouter_model,
+                    "max_tokens": 2048,
+                    "messages": [{"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                    ]}],
+                }).encode()
+                req = urllib.request.Request(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    data=payload,
+                    headers={
+                        "Authorization": f"Bearer {openrouter_key}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    result = _json.loads(resp.read())
+                desc = result["choices"][0]["message"].get("content", "").strip()
+                if desc:
+                    page_descriptions.append(f"[Página {i + 1}/{total_pages}]\n{desc}")
+
+            doc.close()
+            if page_descriptions:
+                header = f"[PDF digitalizado — {total_pages} página(s) lidas pelo modelo de visão]\n\n"
+                return header + "\n\n".join(page_descriptions)
+    except Exception:
+        pass
+
+    # Step 3: last-resort raw ASCII fallback
+    chunks = re.findall(rb"[\x20-\x7e]{5,}", raw)
+    return "\n".join(chunk.decode("latin-1", errors="replace") for chunk in chunks)
 
 def _zip_read(archive: zipfile.ZipFile, name: str) -> bytes:
     info = archive.getinfo(name)
@@ -134,21 +223,7 @@ def _extract_file(filename: str, raw: bytes) -> dict[str, Any]:
         spreadsheet = _rows_payload(rows)
         content = "\n".join(" | ".join(row) for row in rows)
     elif suffix == ".pdf":
-        try:
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(raw))
-            pages = []
-            for page in reader.pages:
-                text = page.extract_text() or ""
-                if text.strip():
-                    pages.append(text)
-            content = "\n\n".join(pages).strip()
-            if not content:
-                content = "[PDF sem texto extraível — pode ser um PDF digitalizado (só imagem).]"
-        except Exception:
-            # pypdf não disponível ou PDF corrompido — fallback seguro
-            chunks = re.findall(rb"[\x20-\x7e]{5,}", raw)
-            content = "\n".join(chunk.decode("latin-1", errors="replace") for chunk in chunks)
+        content = _extract_pdf_content(raw)
     else:
         content = raw.decode("utf-8-sig", errors="replace")
     return {"name": Path(filename).name, "content": _truncate(content), "spreadsheet": spreadsheet}

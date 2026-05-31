@@ -28,3 +28,6 @@ pyinstaller
 
 # PDF text extraction (document attachments on text-only backends)
 pypdf
+
+# PDF page rendering to image (for scanned PDFs sent to vision model)
+pymupdf
