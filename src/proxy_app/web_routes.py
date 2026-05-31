@@ -134,8 +134,21 @@ def _extract_file(filename: str, raw: bytes) -> dict[str, Any]:
         spreadsheet = _rows_payload(rows)
         content = "\n".join(" | ".join(row) for row in rows)
     elif suffix == ".pdf":
-        chunks = re.findall(rb"[\x20-\x7e]{5,}", raw)
-        content = "\n".join(chunk.decode("latin-1", errors="replace") for chunk in chunks)
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(raw))
+            pages = []
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                if text.strip():
+                    pages.append(text)
+            content = "\n\n".join(pages).strip()
+            if not content:
+                content = "[PDF sem texto extraível — pode ser um PDF digitalizado (só imagem).]"
+        except Exception:
+            # pypdf não disponível ou PDF corrompido — fallback seguro
+            chunks = re.findall(rb"[\x20-\x7e]{5,}", raw)
+            content = "\n".join(chunk.decode("latin-1", errors="replace") for chunk in chunks)
     else:
         content = raw.decode("utf-8-sig", errors="replace")
     return {"name": Path(filename).name, "content": _truncate(content), "spreadsheet": spreadsheet}
