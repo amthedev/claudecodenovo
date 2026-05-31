@@ -1913,6 +1913,19 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             pass
     max_output_tokens = _vllm_max_output_tokens()
     requested_max_tokens = openai_request.get("max_tokens")
+    # Floor when tools are present: Qwen3's <think> reasoning is emitted BEFORE the
+    # tool call, so a low max_tokens makes the model "read, understand, then stop"
+    # (finish_reason=length) before it ever emits the action. Guarantee enough room
+    # for reasoning + the tool call. Configurable via VLLM_TOOL_MIN_TOKENS.
+    if openai_request.get("tools"):
+        try:
+            tool_floor = int(os.getenv("VLLM_TOOL_MIN_TOKENS", "4096"))
+        except ValueError:
+            tool_floor = 4096
+        tool_floor = min(tool_floor, max_output_tokens)  # never exceed the hard cap
+        if not requested_max_tokens or requested_max_tokens < tool_floor:
+            openai_request["max_tokens"] = tool_floor
+            requested_max_tokens = tool_floor
     if requested_max_tokens and requested_max_tokens > max_output_tokens:
         openai_request["max_tokens"] = max_output_tokens
 
