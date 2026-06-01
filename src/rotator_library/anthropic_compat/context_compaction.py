@@ -34,6 +34,32 @@ from .models import AnthropicMessagesRequest
 if TYPE_CHECKING:
     from ..client.rotating_client import RotatingClient
 
+# Dedicated semaphore so summary calls don't pile onto the single GPU all at
+# once. The MAIN request that triggered this summary is already holding a slot
+# of the backend concurrency semaphore (in client/anthropic.py), so we must NOT
+# reuse that one here — N main requests each spawning a summary would deadlock
+# waiting for slots none of them will release until their summary returns.
+# A small separate cap (default 1) means summaries are serialized among
+# themselves and add at most 1 extra concurrent stream to the GPU instead of
+# one-per-in-flight-request. Env VLLM_CONTEXT_SUMMARY_CONCURRENCY (0 = no cap).
+_SUMMARY_SEMAPHORE: Optional[asyncio.Semaphore] = None
+_SUMMARY_SEMAPHORE_LOCK = asyncio.Lock()
+
+
+async def _get_summary_semaphore() -> asyncio.Semaphore:
+    global _SUMMARY_SEMAPHORE
+    if _SUMMARY_SEMAPHORE is not None:
+        return _SUMMARY_SEMAPHORE
+    async with _SUMMARY_SEMAPHORE_LOCK:
+        if _SUMMARY_SEMAPHORE is None:
+            try:
+                cap = int(os.environ.get("VLLM_CONTEXT_SUMMARY_CONCURRENCY", "1"))
+            except (TypeError, ValueError):
+                cap = 1
+            _SUMMARY_SEMAPHORE = asyncio.Semaphore(10_000 if cap <= 0 else cap)
+        return _SUMMARY_SEMAPHORE
+
+
 _SUMMARY_MARKER = "[Resumo da conversa anterior]"
 _FALLBACK_SUMMARY = (
     f"{_SUMMARY_MARKER}\n"
@@ -543,15 +569,20 @@ async def compact_context_if_needed(
         summary_timeout = max(
             1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 60)
         )
-        response = await asyncio.wait_for(
-            client.acompletion(
-                model=model,
-                messages=[{"role": "user", "content": summary_prompt}],
-                stream=False,
-                max_tokens=summary_tokens,
-            ),
-            timeout=summary_timeout,
-        )
+        # Wait for a summary slot OUTSIDE the wait_for so queue time doesn't
+        # eat the generation timeout — the timeout should cover the model call,
+        # not the wait for a free GPU slot.
+        summary_sem = await _get_summary_semaphore()
+        async with summary_sem:
+            response = await asyncio.wait_for(
+                client.acompletion(
+                    model=model,
+                    messages=[{"role": "user", "content": summary_prompt}],
+                    stream=False,
+                    max_tokens=summary_tokens,
+                ),
+                timeout=summary_timeout,
+            )
         if isinstance(response, dict) and "choices" not in response:
             raise RuntimeError(f"summary error payload: {response.get('error')}")
         choices = response["choices"] if isinstance(response, dict) else response.choices
