@@ -410,6 +410,25 @@ async def compact_context_if_needed(
 
     messages = list(request.messages or [])
     if len(messages) <= 2:
+        # Special case: 1 or 2 messages but they're HUGE (e.g. Claude Code
+        # pastes 60k tokens of project context into a single "oi" message).
+        # The fallback can't help — there's nothing to drop. We need to
+        # truncate the CONTENT of the message itself instead.
+        # _truncate_message_tail keeps the END of the message (the recent
+        # task) and trims the head. For typical Claude Code requests, the
+        # head is the auto-attached project context which the user wasn't
+        # explicitly asking about anyway.
+        if messages:
+            per_msg_budget = max(2000, tail_budget // max(1, len(messages)))
+            truncated = [
+                _truncate_message_tail(m, per_msg_budget) for m in messages
+            ]
+            log.warning(
+                "Context compaction: %d giant message(s) truncated to ~%d tok each "
+                "(no middle to summarize — single oversized message case)",
+                len(messages), per_msg_budget,
+            )
+            return request.model_copy(update={"messages": truncated})
         return _fallback_to_recent_context(request, messages, tail_budget, log)
 
     # Effective keep_tail: cap by both the user-configured value AND by the

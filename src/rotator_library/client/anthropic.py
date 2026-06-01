@@ -8,6 +8,7 @@ This module provides Anthropic SDK compatibility methods that allow using
 Anthropic's Messages API format with the credential rotation system.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -35,6 +36,37 @@ if TYPE_CHECKING:
     from .rotating_client import RotatingClient
 
 lib_logger = logging.getLogger("rotator_library")
+
+
+# Per-process semaphore to cap concurrent requests to text-only backends
+# (vLLM/Qwen/Ollama). When Claude Code/Cursor prefetch (count_tokens + main +
+# opus + sonnet simultaneous) all hit the SAME vLLM single-GPU model, prefill
+# saturates and a tiny request (e.g. "oi") can wait 2 minutes behind 7 others.
+# Cap = how many parallel requests the backend can serve well. For a single
+# Qwen3-32B on L40S, 4 is a sane default (prefill scales linearly with batch).
+# Env: VLLM_BACKEND_CONCURRENCY (set 0 to disable the cap).
+_BACKEND_SEMAPHORE: Optional[asyncio.Semaphore] = None
+_BACKEND_SEMAPHORE_LOCK = asyncio.Lock()
+
+
+async def _get_backend_semaphore() -> Optional[asyncio.Semaphore]:
+    global _BACKEND_SEMAPHORE
+    if _BACKEND_SEMAPHORE is not None:
+        return _BACKEND_SEMAPHORE
+    async with _BACKEND_SEMAPHORE_LOCK:
+        if _BACKEND_SEMAPHORE is not None:
+            return _BACKEND_SEMAPHORE
+        try:
+            cap = int(os.environ.get("VLLM_BACKEND_CONCURRENCY", "4"))
+        except (TypeError, ValueError):
+            cap = 4
+        if cap <= 0:
+            # Sentinel "no cap" — use a sema with very high value rather than
+            # branching everywhere on None.
+            _BACKEND_SEMAPHORE = asyncio.Semaphore(10_000)
+        else:
+            _BACKEND_SEMAPHORE = asyncio.Semaphore(cap)
+        return _BACKEND_SEMAPHORE
 
 
 def _json_dump_str(s: str) -> str:
@@ -134,6 +166,52 @@ class AnthropicHandler:
         self._client = client
 
     async def messages(
+        self,
+        request: AnthropicMessagesRequest,
+        raw_request: Optional[Any] = None,
+        pre_request_callback: Optional[callable] = None,
+    ) -> Any:
+        """
+        Handle Anthropic Messages API requests.
+
+        Wraps the actual work in a per-process semaphore for text-only backends,
+        because a single vLLM/GPU model can't truly parallelize 8 requests
+        without ruinous prefill latency. Without this cap, Claude Code's
+        prefetch (count_tokens + messages + opus + sonnet simultaneous) made
+        a tiny "oi" request wait 2 minutes behind 7 large ones.
+        """
+        provider_check = (request.model.split("/")[0] if "/" in (request.model or "") else "unknown")
+        if provider_check not in {"hosted_vllm", "vllm", "lm_studio", "ollama"}:
+            return await self._messages_impl(request, raw_request, pre_request_callback)
+
+        sem = await _get_backend_semaphore()
+        # Acquire BEFORE building the request so prefill is what's gated. For a
+        # streaming request _messages_impl returns an async generator that hasn't
+        # produced any tokens yet — the expensive prefill happens while the
+        # generator is consumed downstream. So we must hold the semaphore until
+        # the stream is fully drained, not just until the generator is created.
+        await sem.acquire()
+        try:
+            result = await self._messages_impl(request, raw_request, pre_request_callback)
+        except BaseException:
+            sem.release()
+            raise
+
+        if not hasattr(result, "__aiter__"):
+            # Non-streaming: work is done, release now.
+            sem.release()
+            return result
+
+        async def _release_after_stream():
+            try:
+                async for chunk in result:
+                    yield chunk
+            finally:
+                sem.release()
+
+        return _release_after_stream()
+
+    async def _messages_impl(
         self,
         request: AnthropicMessagesRequest,
         raw_request: Optional[Any] = None,
