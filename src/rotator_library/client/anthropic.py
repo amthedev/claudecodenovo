@@ -27,6 +27,7 @@ from ..anthropic_compat import (
 from ..anthropic_compat.streaming import _model_text_to_write_tool_call
 from ..anthropic_compat.image_captioning import caption_images_in_request
 from ..anthropic_compat.context_compaction import compact_context_if_needed
+from ..anthropic_compat.self_critique import maybe_critique_response
 from ..transaction_logger import TransactionLogger
 
 if TYPE_CHECKING:
@@ -288,6 +289,13 @@ class AnthropicHandler:
             anthropic_response["id"] = request_id
             anthropic_response = _force_tool_use_response(
                 anthropic_response, forced_tool_call
+            )
+
+            # Optional self-critique pass (VLLM_SELF_CRITIQUE=on). Doubles cost
+            # and latency; off by default. Skips automatically if the response
+            # contains tool_use blocks or is empty.
+            anthropic_response = await maybe_critique_response(
+                anthropic_response, request, self._client, log=lib_logger
             )
 
             # Log Anthropic response

@@ -241,7 +241,12 @@ def get_root_key_preview() -> Optional[str]:
 _VALID_THINKING_MODES = {"on", "off", "auto"}
 
 
-def get_thinking_mode() -> str:
+def get_thinking_mode() -> Optional[str]:
+    """Returns the user-set thinking mode, or None if the user never picked one.
+
+    Returning None lets the translator distinguish 'user explicitly chose off'
+    from 'user never said anything, follow env default'. UI surfaces that want
+    a string for display can do `get_thinking_mode() or "auto"`."""
     with _db() as c:
         try:
             _ensure_settings_table(c)
@@ -249,9 +254,9 @@ def get_thinking_mode() -> str:
                 "SELECT value FROM app_settings WHERE key='thinking_mode'"
             ).fetchone()
             v = r["value"] if r else None
-            return v if v in _VALID_THINKING_MODES else "off"
+            return v if v in _VALID_THINKING_MODES else None
         except Exception:
-            return "off"
+            return None
 
 
 def set_thinking_mode(mode: str) -> str:

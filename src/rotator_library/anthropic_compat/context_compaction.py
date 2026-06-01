@@ -342,14 +342,28 @@ async def compact_context_if_needed(
         return request
 
     model_context = _env_int("VLLM_MODEL_CONTEXT", 40960)
-    output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 12288)
-    keep_tail_tokens = _env_int("VLLM_CONTEXT_KEEP_TAIL_TOKENS", 8000)
+    # OUTPUT_RESERVE is what we save for the response (think + tool call). Used
+    # only as the EMERGENCY trigger now — we no longer pre-emptively compact.
+    output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 4000)
+    # KEEP_TAIL: keep this much of the recent conversation INTACT (no summary,
+    # no truncation). 16k = roughly the last ~25 messages of a typical session.
+    keep_tail_tokens = _env_int("VLLM_CONTEXT_KEEP_TAIL_TOKENS", 16000)
     margin = 1024
     input_budget = max(2000, model_context - output_reserve - margin)
 
     total = _count_request_tokens(request, client, log)
     if total <= input_budget:
         return request  # fits — common path, no model call
+
+    # If we got here, the request really doesn't fit. Log it so you can spot
+    # when compaction is firing on real customers — if it's frequent, the
+    # budget is wrong, not the user's behaviour.
+    log.warning(
+        "Context compaction TRIGGERED: real=%d tok > budget=%d tok (model_ctx=%d, "
+        "out_reserve=%d). Conversation has grown beyond the model's ceiling; "
+        "summarizing the old middle to preserve the recent task intact.",
+        total, input_budget, model_context, output_reserve,
+    )
 
     # The tool schemas (~2-4k tokens) are re-attached AFTER compaction, downstream.
     # Reserve their space here so the messages we keep + the tools still fit. We

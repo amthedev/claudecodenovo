@@ -1906,11 +1906,33 @@ def _inject_native_tool_allowlist(
     names = [name for name in names if name]
     if not names:
         return
+    # Common synonym hints — when the model says "Search isn't available", it's
+    # usually because it knows another agent that uses a different name. List the
+    # canonical mapping explicitly so it tries the right one instead of giving up.
+    hints = []
+    name_set = {n.lower() for n in names}
+    synonyms = {
+        ("search", "find"): "Grep",
+        ("listdir", "list", "dir"): "LS",
+        ("filesystem", "fs"): "Read/Write",
+        ("shell", "terminal", "exec", "execute", "run"): "Bash",
+        ("editfile", "modify"): "Edit",
+        ("createfile", "newfile"): "Write",
+    }
+    for keys, target in synonyms.items():
+        if target.split("/")[0].lower() in name_set or target.lower() in name_set:
+            hints.append(f"{'/'.join(keys)} → {target}")
+    hint_text = (
+        f" Common aliases for tools you might be tempted to invent: {'; '.join(hints)}."
+        if hints else ""
+    )
     prompt = (
         f"{VLLM_NATIVE_TOOL_ALLOWLIST_MARKER} {', '.join(names)}. "
-        "Call only these exact tool names. Never invent a tool, claim an unavailable "
-        "tool was used, or ask for manual directory access unless an available tool "
-        "actually returns a permission error. Choose an available alternative when needed."
+        "Call only these exact tool names. If the user asks for something and "
+        "you think a tool is missing, FIRST check this list — the tool you want "
+        "is probably here under a different name. Never say 'I don't have that "
+        "tool' without first trying the closest match from this list. Only ask "
+        f"the user when no tool here can plausibly do the job.{hint_text}"
     )
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
@@ -1928,15 +1950,30 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     openai_request.pop("top_k", None)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
-    # Controla thinking mode via estado global do proxy (off/on/auto)
+    # Thinking mode: defaults to ON now (was OFF). Customer feedback: turning
+    # <think> reasoning on across the board makes the model noticeably smarter
+    # at the cost of ~1.5x tokens — worth it for an editor agent. The legacy
+    # /think on, /think off, /auto slash commands still override per-process
+    # via the SQLite-backed _thinking_mode (see proxy_app.admin_db).
+    _default_think = os.getenv("VLLM_DEFAULT_THINKING", "on").lower() in {
+        "on", "1", "true", "yes"
+    }
     try:
         import sys as _sys
         _pm = _sys.modules.get("proxy_app.main") or _sys.modules.get("main")
-        _mode = getattr(_pm, "_thinking_mode", "off") if _pm else "off"
+        _mode = getattr(_pm, "_thinking_mode", None) if _pm else None
     except Exception:
-        _mode = "off"
+        _mode = None
     _is_opus = "opus" in openai_request.get("model", "").lower()
-    _enable_think = (_mode == "on") or (_mode == "auto" and _is_opus)
+    if _mode == "on":
+        _enable_think = True
+    elif _mode == "off":
+        _enable_think = False
+    elif _mode == "auto":
+        _enable_think = _is_opus
+    else:
+        # No explicit slash-command setting → follow the env-controlled default.
+        _enable_think = _default_think
     extra_body = openai_request.setdefault("extra_body", {})
     extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = _enable_think
     # frequency_penalty=0.2 was previously hardcoded here but hurts code quality:
