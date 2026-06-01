@@ -21,6 +21,7 @@ sys.modules.setdefault("rotator_library.anthropic_compat", anthropic_package)
 from rotator_library.anthropic_compat.image_captioning import (
     _DEFAULT_VISION_MODEL,
     _DESCRIPTION_CACHE,
+    _FAILURE_CACHE,
     _FAILURE_PLACEHOLDER,
     caption_images_in_request,
     _describe_image,
@@ -41,9 +42,11 @@ class _VisionClient:
 class ImageCaptioningTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         _DESCRIPTION_CACHE.clear()
+        _FAILURE_CACHE.clear()
 
     def tearDown(self):
         _DESCRIPTION_CACHE.clear()
+        _FAILURE_CACHE.clear()
 
     def test_default_vision_model_is_current_openrouter_id(self):
         self.assertEqual(
@@ -92,6 +95,37 @@ class ImageCaptioningTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, _FAILURE_PLACEHOLDER)
+
+    async def test_failure_placeholder_is_reused_briefly(self):
+        class _FailingVisionClient:
+            def __init__(self):
+                self.calls = 0
+
+            async def acompletion(self, **kwargs):
+                self.calls += 1
+                raise RuntimeError("temporary failure")
+
+        client = _FailingVisionClient()
+        first = await _describe_image(
+            "data:image/png;base64,CCCC",
+            "",
+            client,
+            _DEFAULT_VISION_MODEL,
+            256,
+            mock.Mock(),
+        )
+        second = await _describe_image(
+            "data:image/png;base64,CCCC",
+            "",
+            client,
+            _DEFAULT_VISION_MODEL,
+            256,
+            mock.Mock(),
+        )
+
+        self.assertEqual(first, _FAILURE_PLACEHOLDER)
+        self.assertEqual(second, _FAILURE_PLACEHOLDER)
+        self.assertEqual(client.calls, 1)
 
     async def test_legacy_configured_model_is_mapped_to_current_id(self):
         client = _VisionClient()

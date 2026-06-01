@@ -20,6 +20,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, List, Optional
 
@@ -38,6 +39,7 @@ _LEGACY_VISION_MODELS = {
     "openrouter/qwen/qwen-2.5-vl-7b-instruct": _DEFAULT_VISION_MODEL,
 }
 _DESCRIPTION_CACHE: OrderedDict[str, str] = OrderedDict()
+_FAILURE_CACHE: OrderedDict[str, float] = OrderedDict()
 
 # Defesa conservadora contra vazamento de identidade do VLM. A prevenção principal
 # é o _VISION_IDENTITY_GUARD no prompt; aqui só limpamos vazamentos óbvios sem
@@ -93,6 +95,28 @@ def _cache_description(key: str, description: str) -> None:
     max_entries = _env_int("VISION_CACHE_MAX_ENTRIES", 128)
     while len(_DESCRIPTION_CACHE) > max_entries:
         _DESCRIPTION_CACHE.popitem(last=False)
+
+
+def _cache_failure(key: str) -> None:
+    ttl = _env_int("VISION_FAILURE_CACHE_SECONDS", 300, minimum=0)
+    if ttl <= 0:
+        return
+    _FAILURE_CACHE[key] = time.monotonic() + ttl
+    _FAILURE_CACHE.move_to_end(key)
+    max_entries = _env_int("VISION_CACHE_MAX_ENTRIES", 128)
+    while len(_FAILURE_CACHE) > max_entries:
+        _FAILURE_CACHE.popitem(last=False)
+
+
+def _has_cached_failure(key: str) -> bool:
+    expires_at = _FAILURE_CACHE.get(key)
+    if expires_at is None:
+        return False
+    if expires_at <= time.monotonic():
+        _FAILURE_CACHE.pop(key, None)
+        return False
+    _FAILURE_CACHE.move_to_end(key)
+    return True
 
 
 def _block_type(block: Any) -> Optional[str]:
@@ -261,6 +285,8 @@ async def _describe_image(
     if cached is not None:
         _DESCRIPTION_CACHE.move_to_end(cache_key)
         return cached
+    if _has_cached_failure(cache_key):
+        return _FAILURE_PLACEHOLDER
 
     messages = [
         {
@@ -284,6 +310,7 @@ async def _describe_image(
         # acompletion may return a dict (error) or a litellm response object.
         if isinstance(response, dict) and "choices" not in response:
             log.warning("Vision model returned error payload: %s", response.get("error"))
+            _cache_failure(cache_key)
             return _FAILURE_PLACEHOLDER
         choices = (
             response["choices"] if isinstance(response, dict) else response.choices
@@ -292,12 +319,15 @@ async def _describe_image(
         text = (message.get("content") if isinstance(message, dict) else message.content) or ""
         text = _sanitize_description(text)
         if not text:
+            _cache_failure(cache_key)
             return _FAILURE_PLACEHOLDER
         description = f"[Imagem analisada: {text}]"
+        _FAILURE_CACHE.pop(cache_key, None)
         _cache_description(cache_key, description)
         return description
     except Exception as e:
         log.warning("Image captioning failed via %s: %s", vision_model, e)
+        _cache_failure(cache_key)
         return _FAILURE_PLACEHOLDER
 
 

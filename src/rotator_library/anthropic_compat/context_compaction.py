@@ -21,8 +21,10 @@ char-budget and good enough with a safety margin. Falls back safely to plain
 truncation if the summarization call fails.
 """
 import asyncio
+import hashlib
 import logging
 import os
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from .models import AnthropicMessagesRequest
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from ..client.rotating_client import RotatingClient
 
 _SUMMARY_MARKER = "[Resumo da conversa anterior]"
+_SUMMARY_CACHE: OrderedDict[tuple[str, ...], str] = OrderedDict()
 # Average chars per token for mixed PT/EN/code. Conservative (low) so we
 # over-estimate tokens slightly and compact a bit earlier rather than too late.
 _CHARS_PER_TOKEN = 3.3
@@ -101,6 +104,35 @@ def _request_input_tokens(request: AnthropicMessagesRequest) -> int:
     return total
 
 
+def _message_fingerprint(message: Any) -> str:
+    return hashlib.sha256(_message_text(message).encode("utf-8")).hexdigest()
+
+
+def _find_cached_summary(messages: List[Any]) -> tuple[int, Optional[str]]:
+    fingerprints = tuple(_message_fingerprint(message) for message in messages)
+    best_key: Optional[tuple[str, ...]] = None
+    for key in _SUMMARY_CACHE:
+        if len(key) <= len(fingerprints) and fingerprints[: len(key)] == key:
+            if best_key is None or len(key) > len(best_key):
+                best_key = key
+    if best_key is None:
+        return 0, None
+    summary = _SUMMARY_CACHE[best_key]
+    _SUMMARY_CACHE.move_to_end(best_key)
+    return len(best_key), summary
+
+
+def _cache_summary(messages: List[Any], summary: str) -> None:
+    key = tuple(_message_fingerprint(message) for message in messages)
+    if not key:
+        return
+    _SUMMARY_CACHE[key] = summary
+    _SUMMARY_CACHE.move_to_end(key)
+    max_entries = max(1, _env_int("VLLM_CONTEXT_CACHE_MAX_ENTRIES", 64))
+    while len(_SUMMARY_CACHE) > max_entries:
+        _SUMMARY_CACHE.popitem(last=False)
+
+
 def _summary_input_text(messages: List[Any], max_chars: int) -> str:
     text = "\n\n".join(_message_text(m) for m in messages)
     if len(text) <= max_chars:
@@ -162,8 +194,24 @@ async def compact_context_if_needed(
     has_previous_summary = bool(
         middle and _SUMMARY_MARKER in _message_text(middle[0])
     )
-    new_middle = middle[1:] if has_previous_summary else middle
+    previous_summary_msg = middle[0] if has_previous_summary else None
+    cached_prefix_len = 0
+    if not has_previous_summary:
+        cached_prefix_len, cached_summary = _find_cached_summary(middle)
+        if cached_summary:
+            previous_summary_msg = {
+                "role": "user",
+                "content": f"{_SUMMARY_MARKER}\n{cached_summary}",
+            }
+    new_middle = (
+        middle[1:]
+        if has_previous_summary
+        else middle[cached_prefix_len:]
+    )
     if not new_middle:
+        if previous_summary_msg:
+            log.info("Context compaction: reusing cached summary")
+            return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
         return request
 
     summary_tokens = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 1000))
@@ -172,17 +220,21 @@ async def compact_context_if_needed(
         _env_int("VLLM_CONTEXT_REFRESH_MIN_TOKENS", 2500),
     )
     new_middle_tokens = sum(_estimate_tokens(_message_text(m)) for m in new_middle)
-    if has_previous_summary and new_middle_tokens < refresh_min_tokens:
+    if previous_summary_msg and new_middle_tokens < refresh_min_tokens:
         log.info(
             "Context compaction: reusing prior summary; dropping %d stale msgs (~%d tok)",
             len(new_middle),
             new_middle_tokens,
         )
-        return request.model_copy(update={"messages": [middle[0], *tail]})
+        return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
 
     # Cap what we feed the summarizer so the summary call itself fits comfortably.
     max_summary_input_chars = int(input_budget * _CHARS_PER_TOKEN * 0.7)
-    messages_to_summarize = middle if has_previous_summary else new_middle
+    messages_to_summarize = (
+        [previous_summary_msg, *new_middle]
+        if previous_summary_msg
+        else new_middle
+    )
     convo_text = _summary_input_text(messages_to_summarize, max_summary_input_chars)
 
     summary_prompt = (
@@ -225,10 +277,12 @@ async def compact_context_if_needed(
             raise RuntimeError("empty summary")
     except Exception as e:
         log.warning("Context compaction summary failed (%s); leaving truncation to guard.", e)
-        if has_previous_summary:
-            return request.model_copy(update={"messages": [middle[0], *tail]})
+        if previous_summary_msg:
+            return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
         return request  # safe fallback: char-truncation downstream still applies
 
+    if not has_previous_summary:
+        _cache_summary(middle, summary)
     log.info(
         "Context compaction: %d msgs (~%d tok) -> summary + %d tail msgs",
         len(messages_to_summarize), total, len(tail),
