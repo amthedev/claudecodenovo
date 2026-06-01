@@ -123,6 +123,10 @@ def _estimate_request_tokens(request: AnthropicMessagesRequest) -> int:
     return total
 
 
+# Backwards-compat alias: tests import the old name.
+_request_input_tokens = _estimate_request_tokens
+
+
 def _estimate_tools_tokens(request: AnthropicMessagesRequest) -> int:
     tools = getattr(request, "tools", None)
     if not tools:
@@ -146,7 +150,15 @@ def _count_request_tokens(
     """Real token count via litellm (messages + system + tools), with a safe
     fallback to the char estimate. litellm is always present where this code runs
     (the whole handler depends on it), but a model litellm can't map would raise —
-    hence the fallback. Counting beats estimating, especially for code/JSON."""
+    hence the fallback.
+
+    DEFENSIVE: returns max(real, estimate). litellm's token_counter uses a generic
+    tokenizer (not Qwen's exact one), so it can SUBESTIMATE for code/JSON. A
+    50-token-real-but-15k-estimate message would otherwise sneak past the budget,
+    overflow the ceiling, and bring back "thinks and stops". Trusting the higher
+    of the two costs a tiny bit of over-compaction in edge cases and prevents the
+    much worse failure mode of under-compaction."""
+    estimate = _estimate_request_tokens(request)
     try:
         from .translator import (
             anthropic_to_openai_messages,
@@ -168,10 +180,10 @@ def _count_request_tokens(
                 total += client.token_count(
                     model=request.model, text=json.dumps(openai_tools)
                 )
-        return int(total)
+        return max(int(total), estimate)
     except Exception as e:
         log.debug("Real token count unavailable (%r); using char estimate.", e)
-        return _estimate_request_tokens(request)
+        return estimate
 
 
 def _messages_input_tokens(system: Any, messages: List[Any]) -> int:
