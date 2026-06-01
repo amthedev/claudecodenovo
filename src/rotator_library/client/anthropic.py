@@ -52,6 +52,25 @@ def _has_tool_use(anthropic_response: dict) -> bool:
     )
 
 
+def _response_tool_allowlist(
+    openai_request: dict,
+    tool_name_mapping: Optional[dict],
+) -> set[str]:
+    names = openai_request.pop("_vllm_allowed_tool_names", None)
+    if names is None:
+        names = [
+            (tool.get("function") or {}).get("name")
+            for tool in openai_request.get("tools") or []
+        ]
+    return {
+        tool_name_mapping.get(str(name), str(name))
+        if tool_name_mapping
+        else str(name)
+        for name in names
+        if name
+    }
+
+
 def _force_tool_use_response(
     anthropic_response: dict,
     forced_tool_call: Optional[dict],
@@ -168,6 +187,9 @@ class AnthropicHandler:
         openai_request = translate_anthropic_request(request)
         forced_tool_call = openai_request.pop("_vllm_forced_tool_call", None)
         tool_name_mapping = openai_request.pop("_anthropic_tool_name_mapping", None)
+        allowed_tool_names = _response_tool_allowlist(
+            openai_request, tool_name_mapping
+        )
         openai_request.pop("_vllm_tool_intent", None)
         openai_request.pop("_vllm_previous_tool_count", None)
 
@@ -202,6 +224,7 @@ class AnthropicHandler:
                 openai_response,
                 original_model,
                 tool_name_mapping=tool_name_mapping,
+                allowed_tool_names=allowed_tool_names,
             )
             anthropic_response["id"] = request_id
             anthropic_response = _force_tool_use_response(
@@ -237,6 +260,7 @@ class AnthropicHandler:
                 transaction_logger=anthropic_logger,
                 forced_tool_call=forced_tool_call,
                 tool_name_mapping=tool_name_mapping,
+                allowed_tool_names=allowed_tool_names,
             )
         else:
             # Non-streaming response
@@ -257,6 +281,7 @@ class AnthropicHandler:
                 openai_response,
                 original_model,
                 tool_name_mapping=tool_name_mapping,
+                allowed_tool_names=allowed_tool_names,
             )
 
             # Override the ID with our request ID

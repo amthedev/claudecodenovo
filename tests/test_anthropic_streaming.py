@@ -34,10 +34,13 @@ async def _stream(chunks):
     yield "data: [DONE]\n\n"
 
 
-async def _collect_events(chunks, forced_tool_call=None):
+async def _collect_events(chunks, forced_tool_call=None, allowed_tool_names=None):
     events = []
     async for event in anthropic_streaming_wrapper(
-        _stream(chunks), "claude-test", forced_tool_call=forced_tool_call
+        _stream(chunks),
+        "claude-test",
+        forced_tool_call=forced_tool_call,
+        allowed_tool_names=allowed_tool_names,
     ):
         if not event.startswith("event: "):
             continue
@@ -370,6 +373,8 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         # The textual tool-call format must NOT be injected in native mode.
         self.assertNotIn("<tool_call><function=ToolName>", system_text)
         self.assertNotIn("CURRENT REQUEST REQUIRES TOOL USE", system_text)
+        self.assertIn("Current tool allowlist (exact names): Write", system_text)
+        self.assertEqual(openai_request["_vllm_allowed_tool_names"], ["Write"])
         # No forced-tool fallback unless explicitly opted in.
         self.assertNotIn("_vllm_forced_tool_call", openai_request)
 
@@ -707,6 +712,71 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
             data for event_type, data in events if event_type == "message_delta"
         )
         self.assertEqual(message_delta["delta"]["stop_reason"], "max_tokens")
+
+    async def test_stream_ignores_native_tool_that_was_not_available(self):
+        events = await _collect_events(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "function": {
+                                            "name": "request_cowork_directory",
+                                            "arguments": '{"path":"C:/memory"}',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
+            ],
+            allowed_tool_names={"Read", "Bash"},
+        )
+
+        tool_starts = [
+            data
+            for event_type, data in events
+            if event_type == "content_block_start"
+            and data["content_block"]["type"] == "tool_use"
+        ]
+        self.assertEqual(tool_starts, [])
+        message_delta = next(
+            data for event_type, data in events if event_type == "message_delta"
+        )
+        self.assertEqual(message_delta["delta"]["stop_reason"], "end_turn")
+
+    def test_nonstream_ignores_tool_that_was_not_available(self):
+        response = openai_to_anthropic_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call_123",
+                                    "function": {
+                                        "name": "request_cowork_directory",
+                                        "arguments": '{"path":"C:/memory"}',
+                                    },
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            "claude-test",
+            allowed_tool_names={"Read", "Bash"},
+        )
+
+        self.assertEqual(response["content"], [])
+        self.assertEqual(response["stop_reason"], "end_turn")
 
 
 if __name__ == "__main__":

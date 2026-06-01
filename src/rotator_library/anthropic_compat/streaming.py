@@ -193,6 +193,7 @@ async def anthropic_streaming_wrapper(
     transaction_logger: Optional["TransactionLogger"] = None,
     forced_tool_call: Optional[dict] = None,
     tool_name_mapping: Optional[dict] = None,
+    allowed_tool_names: Optional[set[str]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Convert OpenAI streaming format to Anthropic streaming format.
@@ -334,6 +335,15 @@ async def anthropic_streaming_wrapper(
                             str(block.get("name", "")),
                             tool_name_mapping,
                         )
+                        if (
+                            allowed_tool_names is not None
+                            and tool_name not in allowed_tool_names
+                        ):
+                            logger.warning(
+                                "Ignoring unavailable textual tool emitted by model: %s",
+                                tool_name,
+                            )
+                            continue
                         tool_calls_by_index[tc_index] = {
                             "id": block.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
                             "name": tool_name,
@@ -364,7 +374,7 @@ async def anthropic_streaming_wrapper(
                             yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
                         current_block_index += 1
 
-                if forced_tool_call and not tool_calls_by_index:
+                if forced_tool_call and not tool_block_indices:
                     tc_index = 0
                     block_idx = current_block_index
                     arguments = json.dumps(forced_tool_call.get("input") or {})
@@ -441,6 +451,8 @@ async def anthropic_streaming_wrapper(
                     stop_reason = "max_tokens"
                 else:
                     stop_reason = stop_reason_map.get(provider_finish_reason, "end_turn")
+                    if stop_reason == "tool_use":
+                        stop_reason = "end_turn"
                 stop_reason_final = stop_reason
 
                 # Build final usage dict with cached tokens
@@ -679,15 +691,28 @@ async def anthropic_streaming_wrapper(
                 # Accumulate arguments
                 func = tc.get("function", {})
                 if func.get("name"):
-                    tool_calls_by_index[tc_index]["name"] = _restore_tool_name(
+                    restored_name = _restore_tool_name(
                         str(func["name"]),
                         tool_name_mapping,
                     )
+                    if (
+                        allowed_tool_names is not None
+                        and restored_name not in allowed_tool_names
+                    ):
+                        logger.warning(
+                            "Ignoring unavailable native tool emitted by model: %s",
+                            restored_name,
+                        )
+                        tool_calls_by_index[tc_index]["rejected"] = True
+                    else:
+                        tool_calls_by_index[tc_index]["name"] = restored_name
+                        tool_calls_by_index[tc_index]["rejected"] = False
                 if func.get("arguments"):
                     tool_calls_by_index[tc_index]["arguments"] += func["arguments"]
 
                 if (
                     tool_calls_by_index[tc_index]["name"]
+                    and not tool_calls_by_index[tc_index].get("rejected")
                     and not tool_calls_by_index[tc_index]["started"]
                 ):
                     # Anthropic requires the tool name in content_block_start.

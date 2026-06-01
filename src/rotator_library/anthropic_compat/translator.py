@@ -93,6 +93,7 @@ VLLM_NATIVE_AGENT_PROMPT = (
     "tool results until the user's task is actually complete, then give a short "
     "summary of what you did."
 )
+VLLM_NATIVE_TOOL_ALLOWLIST_MARKER = "Current tool allowlist (exact names):"
 VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
 VLLM_AGENT_FLOW_PROMPT = (
     "Agent workflow contract: use tools for workspace actions, keep working "
@@ -1883,6 +1884,32 @@ def _inject_native_agent_prompt(openai_request: Dict[str, Any]) -> None:
     messages.insert(0, {"role": "system", "content": VLLM_NATIVE_AGENT_PROMPT})
 
 
+def _inject_native_tool_allowlist(
+    openai_request: Dict[str, Any],
+    tools: List[Dict[str, Any]],
+) -> None:
+    names = [
+        str((tool.get("function") or {}).get("name") or "").strip()
+        for tool in tools
+    ]
+    names = [name for name in names if name]
+    if not names:
+        return
+    prompt = (
+        f"{VLLM_NATIVE_TOOL_ALLOWLIST_MARKER} {', '.join(names)}. "
+        "Call only these exact tool names. Never invent a tool, claim an unavailable "
+        "tool was used, or ask for manual directory access unless an available tool "
+        "actually returns a permission error. Choose an available alternative when needed."
+    )
+    messages = openai_request.setdefault("messages", [])
+    if messages and messages[0].get("role") == "system":
+        existing = messages[0].get("content") or ""
+        if VLLM_NATIVE_TOOL_ALLOWLIST_MARKER not in existing:
+            messages[0]["content"] = f"{existing}\n\n{prompt}".strip()
+        return
+    messages.insert(0, {"role": "system", "content": prompt})
+
+
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
@@ -1941,6 +1968,11 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     if tools:
         tools = _strip_vllm_rejected_fields(tools)
         tools = _compact_tools_for_vllm(tools)
+        openai_request["_vllm_allowed_tool_names"] = [
+            str((tool.get("function") or {}).get("name") or "")
+            for tool in tools
+            if (tool.get("function") or {}).get("name")
+        ]
         if not tools:
             openai_request.pop("tools", None)
             openai_request.pop("tool_choice", None)
@@ -1961,6 +1993,7 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             # Opt-out via VLLM_NATIVE_AGENT_PROMPT=off if ever undesired.
             if os.getenv("VLLM_NATIVE_AGENT_PROMPT", "on").lower() not in {"off", "0", "false", "no"}:
                 _inject_native_agent_prompt(openai_request)
+            _inject_native_tool_allowlist(openai_request, tools)
             if _force_tool_fallback_enabled():
                 _attach_mandatory_tool_fallback(openai_request, tools)
             if openai_request.get("tool_choice") not in (None, "auto"):
@@ -1992,6 +2025,7 @@ def openai_to_anthropic_response(
     openai_response: dict,
     original_model: str,
     tool_name_mapping: Optional[Dict[str, str]] = None,
+    allowed_tool_names: Optional[set[str]] = None,
 ) -> dict:
     """
     Convert OpenAI chat completion response to Anthropic Messages format.
@@ -2040,6 +2074,11 @@ def openai_to_anthropic_response(
                     str(block.get("name", "")),
                     tool_name_mapping,
                 )
+        textual_tool_blocks = [
+            block
+            for block in textual_tool_blocks
+            if allowed_tool_names is None or block.get("name") in allowed_tool_names
+        ]
         if text_content:
             content_blocks.append({"type": "text", "text": text_content})
 
@@ -2052,14 +2091,17 @@ def openai_to_anthropic_response(
         except json.JSONDecodeError:
             input_data = {}
 
+        restored_name = _restore_tool_name(
+            str(func.get("name", "")),
+            tool_name_mapping,
+        )
+        if allowed_tool_names is not None and restored_name not in allowed_tool_names:
+            continue
         content_blocks.append(
             {
                 "type": "tool_use",
                 "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:12]}"),
-                "name": _restore_tool_name(
-                    str(func.get("name", "")),
-                    tool_name_mapping,
-                ),
+                "name": restored_name,
                 "input": input_data,
             }
         )
@@ -2077,6 +2119,9 @@ def openai_to_anthropic_response(
         "function_call": "tool_use",
     }
     stop_reason = stop_reason_map.get(finish_reason, "end_turn")
+    has_tool_use = any(block.get("type") == "tool_use" for block in content_blocks)
+    if finish_reason in {"tool_calls", "function_call"} and not has_tool_use:
+        stop_reason = "end_turn"
     if textual_tool_blocks:
         stop_reason = "tool_use"
 
