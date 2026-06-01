@@ -26,6 +26,7 @@ from ..anthropic_compat import (
 )
 from ..anthropic_compat.streaming import _model_text_to_write_tool_call
 from ..anthropic_compat.image_captioning import caption_images_in_request
+from ..anthropic_compat.context_compaction import compact_context_if_needed
 from ..transaction_logger import TransactionLogger
 
 if TYPE_CHECKING:
@@ -153,6 +154,13 @@ class AnthropicHandler:
         # before translating, so the request reaches the backend as plain text.
         if provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}:
             request = await caption_images_in_request(
+                request, self._client, log=lib_logger
+            )
+            # Long conversations can fill the model's context ceiling, leaving no
+            # room for the output — the model reasons (<think>) and stops before
+            # acting. Summarize the old middle (keeping system + recent tail) so
+            # there's always room to reason AND execute.
+            request = await compact_context_if_needed(
                 request, self._client, log=lib_logger
             )
 
