@@ -1200,23 +1200,66 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         if _reseller(req):
             return RedirectResponse("/reseller", 302)
         error = f'<div style="color:var(--red);margin-bottom:12px">{_e(err)}</div>' if err else ""
-        success = ('<div style="color:var(--green);margin-bottom:12px">Cadastro enviado! '
-                   'Aguarde a aprovação do administrador para acessar.</div>') if ok else ""
-        return _page("Cadastro de revendedor", f"""<div class="container" style="max-width:440px;padding-top:70px">
+        if ok:
+            # Sent for analysis: repeat the contact to buy the tokens.
+            return _page("Cadastro de revendedor", """<div class="container" style="max-width:460px;padding-top:70px">
+              <div class="card"><h1>Cadastro em análise ✅</h1>
+              <p style="color:var(--text);margin:14px 0 8px">Recebemos seu cadastro como revendedor. Para liberar seu saldo, fale com a gente e finalize a compra dos tokens:</p>
+              <div style="background:rgba(217,119,87,.12);border:1px solid rgba(217,119,87,.3);border-radius:12px;padding:16px;margin:14px 0;text-align:center">
+                <div style="color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em">Contato para compra</div>
+                <a href="https://wa.me/5581991498930" style="color:var(--accent);font-size:22px;font-weight:800;letter-spacing:.02em">(81) 99149-8930</a>
+                <div style="color:var(--muted);font-size:12px;margin-top:6px">WhatsApp · mín. 5 contas · 30% de desconto</div>
+              </div>
+              <p style="color:var(--muted);font-size:13px;text-align:center;margin-top:8px">
+              <a href="/reseller" style="color:var(--green)">Já comprei — entrar</a></p>
+              </div></div>""")
+        return _page("Cadastro de revendedor", f"""<div class="container" style="max-width:460px;padding-top:60px">
           <div class="card"><h1>Criar conta de revendedor</h1>
-          <p style="color:var(--muted);margin:8px 0 20px">Sua conta passa por aprovação antes de liberar saldo.</p>{error}{success}
-          <form method="post" action="/reseller/signup">
+          <div style="background:rgba(217,119,87,.1);border:1px solid rgba(217,119,87,.28);border-radius:12px;padding:14px 16px;margin:14px 0 18px">
+            <div style="font-weight:700;color:var(--accent);margin-bottom:6px">Como funciona a revenda</div>
+            <ul style="color:var(--text);font-size:13px;line-height:1.7;margin:0;padding-left:18px">
+              <li>Compra mínima de <b>5 contas</b> para se tornar revendedor.</li>
+              <li>A partir de 5 contas você ganha <b>30% de desconto</b>.</li>
+              <li>Após o cadastro, seu pedido vai para análise e você fala com a gente para pagar os tokens.</li>
+            </ul>
+          </div>{error}
+          <form method="post" action="/reseller/signup" id="resellerForm">
           <label>Nome</label><input name="name" required autofocus>
           <label style="margin-top:12px">E-mail</label><input type="email" name="email" required>
           <label style="margin-top:12px">Senha (mín. 8)</label><input type="password" name="password" required>
-          <button class="btn" style="width:100%;margin-top:18px">Cadastrar</button></form>
+          <label style="margin-top:12px">Quantas contas você quer comprar? (mín. 5)</label>
+          <input type="number" name="accounts" min="5" step="1" value="5" required>
+          <div id="accountsMsg" style="color:var(--red);font-size:12px;margin-top:6px;display:none">A compra mínima para revenda é de 5 contas.</div>
+          <button class="btn" style="width:100%;margin-top:18px">Enviar cadastro</button></form>
           <p style="color:var(--muted);margin-top:16px;text-align:center;font-size:13px">
           Já tem conta? <a href="/reseller" style="color:var(--green)">Entrar</a></p>
-          </div></div>""")
+          </div></div>
+          <script>
+          (function(){{
+            var form=document.getElementById('resellerForm');
+            var inp=form.querySelector('[name=accounts]');
+            var msg=document.getElementById('accountsMsg');
+            form.addEventListener('submit',function(e){{
+              if(parseInt(inp.value||'0',10)<5){{
+                e.preventDefault(); msg.style.display='block'; inp.focus();
+              }}
+            }});
+            inp.addEventListener('input',function(){{
+              msg.style.display=(parseInt(inp.value||'0',10)<5)?'block':'none';
+            }});
+          }})();
+          </script>""")
 
     @app.post("/reseller/signup")
     async def reseller_signup(req: Request):
         f = await _form(req)
+        # Server-side guard: reseller purchase requires at least 5 accounts.
+        try:
+            accounts = int(f.get("accounts", "0") or "0")
+        except (TypeError, ValueError):
+            accounts = 0
+        if accounts < 5:
+            return _with_error("/reseller/signup", "A compra mínima para revenda é de 5 contas.")
         try:
             admin_db.create_reseller_account(
                 f.get("name", ""), f.get("email", ""), f.get("password", "")
