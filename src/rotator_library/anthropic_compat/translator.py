@@ -1111,11 +1111,23 @@ def _vllm_max_output_tokens() -> int:
 
 
 def _vllm_max_input_chars() -> int:
-    return _env_int(
+    explicit = _env_int(
         ["HOSTED_VLLM_MAX_INPUT_CHARS", "VLLM_MAX_INPUT_CHARS"],
         VLLM_MAX_INPUT_CHARS,
         minimum=1000,
     )
+    # The char-truncation guard must stay WIDER than the token-based context
+    # compaction budget — compaction (smart) runs first; this guard (blind) is the
+    # last-resort net. If they cross (e.g. someone raises VLLM_MODEL_CONTEXT for a
+    # bigger model without raising this), the blind guard would chop the recent
+    # tail that compaction just preserved. Derive a floor from the token budget so
+    # they never cross, regardless of model size.
+    model_context = _env_int(["VLLM_MODEL_CONTEXT"], 40960)
+    output_reserve = _env_int(["VLLM_CONTEXT_OUTPUT_RESERVE"], 12288)
+    input_budget_tokens = max(2000, model_context - output_reserve - 1024)
+    # ~2.8 chars/token + 20% headroom so the guard sits above compaction's output.
+    floor_chars = int(input_budget_tokens * 2.8 * 1.2)
+    return max(explicit, floor_chars)
 
 
 def _vllm_max_message_chars() -> int:

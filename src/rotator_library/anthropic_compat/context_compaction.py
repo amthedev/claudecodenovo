@@ -16,9 +16,10 @@ the conversation with one model call (preserving decisions, files touched, value
 pending items), keeping the system message and the recent tail intact. This frees
 guaranteed space for the model to both reason and act.
 
-Token counting is an estimate (chars/ratio) — much better than the old
-char-budget and good enough with a safety margin. Falls back safely to plain
-truncation if the summarization call fails.
+Token counting is REAL (litellm token_counter on the OpenAI-translated request,
+including the tool schemas), with a char-based estimate as fallback when the model
+can't be mapped. Falls back safely to bounded recent-context truncation if the
+summarization call fails or times out.
 """
 import asyncio
 import hashlib
@@ -41,9 +42,12 @@ _FALLBACK_SUMMARY = (
 )
 _SUMMARY_CACHE: OrderedDict[tuple[str, ...], str] = OrderedDict()
 _SUMMARY_FAILURE_CACHE: OrderedDict[tuple[str, ...], float] = OrderedDict()
-# Average chars per token for mixed PT/EN/code. Conservative (low) so we
-# over-estimate tokens slightly and compact a bit earlier rather than too late.
-_CHARS_PER_TOKEN = 3.3
+# Chars-per-token used ONLY as a fallback when real token counting (litellm) is
+# unavailable. Code/JSON pack denser than prose (~2.5-3 chars/token), so we use a
+# low divisor to OVER-estimate and compact a bit early rather than too late — the
+# opposite mistake (under-estimating) brings back "thinks and stops" because the
+# real request overflows the shared ceiling.
+_CHARS_PER_TOKEN = 2.8
 
 
 def _env_int(name: str, default: int) -> int:
@@ -104,11 +108,70 @@ def _estimate_tokens(text: str) -> int:
     return int(len(text) / _CHARS_PER_TOKEN)
 
 
-def _request_input_tokens(request: AnthropicMessagesRequest) -> int:
+def _estimate_request_tokens(request: AnthropicMessagesRequest) -> int:
+    """Cheap char-based estimate of the whole request, INCLUDING the tool schemas.
+
+    Claude Code ships ~15 tool definitions (Read/Edit/Bash/...) that are easily
+    2-4k tokens of JSON. Ignoring them made the budget optimistic and let the real
+    request overflow the ceiling — the exact 'thinks and stops' bug this module
+    fixes. Counting them (even roughly) closes that gap.
+    """
     total = _estimate_tokens(_system_text(request.system))
     for m in (request.messages or []):
         total += _estimate_tokens(_message_text(m))
+    total += _estimate_tools_tokens(request)
     return total
+
+
+def _estimate_tools_tokens(request: AnthropicMessagesRequest) -> int:
+    tools = getattr(request, "tools", None)
+    if not tools:
+        return 0
+    import json
+
+    try:
+        serialized = json.dumps(
+            [t.model_dump(exclude_none=True) if hasattr(t, "model_dump") else t for t in tools]
+        )
+    except Exception:
+        serialized = str(tools)
+    return _estimate_tokens(serialized)
+
+
+def _count_request_tokens(
+    request: AnthropicMessagesRequest,
+    client: "RotatingClient",
+    log: logging.Logger,
+) -> int:
+    """Real token count via litellm (messages + system + tools), with a safe
+    fallback to the char estimate. litellm is always present where this code runs
+    (the whole handler depends on it), but a model litellm can't map would raise —
+    hence the fallback. Counting beats estimating, especially for code/JSON."""
+    try:
+        from .translator import (
+            anthropic_to_openai_messages,
+            anthropic_to_openai_tools,
+        )
+
+        messages = request.model_dump(exclude_none=True).get("messages", [])
+        openai_messages = anthropic_to_openai_messages(messages, request.system)
+        total = client.token_count(model=request.model, messages=openai_messages)
+
+        tools = getattr(request, "tools", None)
+        if tools:
+            openai_tools = anthropic_to_openai_tools(
+                [t.model_dump(exclude_none=True) if hasattr(t, "model_dump") else t for t in tools]
+            )
+            if openai_tools:
+                import json
+
+                total += client.token_count(
+                    model=request.model, text=json.dumps(openai_tools)
+                )
+        return int(total)
+    except Exception as e:
+        log.debug("Real token count unavailable (%r); using char estimate.", e)
+        return _estimate_request_tokens(request)
 
 
 def _messages_input_tokens(system: Any, messages: List[Any]) -> int:
@@ -272,13 +335,20 @@ async def compact_context_if_needed(
     margin = 1024
     input_budget = max(2000, model_context - output_reserve - margin)
 
-    total = _request_input_tokens(request)
+    total = _count_request_tokens(request, client, log)
     if total <= input_budget:
         return request  # fits — common path, no model call
 
+    # The tool schemas (~2-4k tokens) are re-attached AFTER compaction, downstream.
+    # Reserve their space here so the messages we keep + the tools still fit. We
+    # only build the kept messages against this net budget; the fits-check above
+    # already counted tools via _count_request_tokens.
+    tools_reserve = _estimate_tools_tokens(request)
+    tail_budget = max(2000, input_budget - tools_reserve)
+
     messages = list(request.messages or [])
     if len(messages) <= 2:
-        return _fallback_to_recent_context(request, messages, input_budget, log)
+        return _fallback_to_recent_context(request, messages, tail_budget, log)
 
     # Keep the recent tail intact (current task). Walk from the end accumulating
     # tokens until we hit keep_tail_tokens; everything before that is the "middle".
@@ -294,7 +364,7 @@ async def compact_context_if_needed(
         split_idx = i
     middle = messages[:split_idx]
     if not middle:
-        return _fallback_to_recent_context(request, tail, input_budget, log)
+        return _fallback_to_recent_context(request, tail, tail_budget, log)
 
     has_previous_summary = bool(
         middle and _SUMMARY_MARKER in _message_text(middle[0])
@@ -319,7 +389,7 @@ async def compact_context_if_needed(
             return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
         return request
 
-    summary_tokens = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 1000))
+    summary_tokens = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 3000))
     refresh_min_tokens = max(
         summary_tokens,
         _env_int("VLLM_CONTEXT_REFRESH_MIN_TOKENS", 2500),
@@ -345,7 +415,7 @@ async def compact_context_if_needed(
         return _fallback_to_recent_context(
             request,
             tail,
-            input_budget,
+            tail_budget,
             log,
             summary_message=previous_summary_msg,
         )
@@ -396,11 +466,11 @@ async def compact_context_if_needed(
             return _fallback_to_recent_context(
                 request,
                 tail,
-                input_budget,
+                tail_budget,
                 log,
                 summary_message=previous_summary_msg,
             )
-        return _fallback_to_recent_context(request, tail, input_budget, log)
+        return _fallback_to_recent_context(request, tail, tail_budget, log)
 
     if not has_previous_summary:
         _cache_summary(middle, summary)
@@ -409,5 +479,13 @@ async def compact_context_if_needed(
         len(messages_to_summarize), total, len(tail),
     )
     summary_msg = {"role": "user", "content": f"{_SUMMARY_MARKER}\n{summary}"}
-    new_messages = [summary_msg, *tail]
-    return request.model_copy(update={"messages": new_messages})
+    # The summary itself takes space (up to summary_tokens). Make sure summary +
+    # system + tail actually fits the budget; if a long summary plus a long tail
+    # still overflow, shrink the tail (reusing the same bounded-fallback logic)
+    # rather than handing the backend an over-budget request.
+    candidate = [summary_msg, *tail]
+    if _messages_input_tokens(request.system, candidate) > tail_budget:
+        return _fallback_to_recent_context(
+            request, tail, tail_budget, log, summary_message=summary_msg
+        )
+    return request.model_copy(update={"messages": candidate})
