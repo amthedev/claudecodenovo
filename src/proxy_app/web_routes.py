@@ -84,7 +84,9 @@ def _extract_pdf_content(raw: bytes) -> str:
         import urllib.request
         import json as _json
 
-        vision_model_env = os.getenv("VISION_MODEL", "openrouter/qwen/qwen-2.5-vl-7b-instruct")
+        vision_model_env = os.getenv("VISION_MODEL", "openrouter/qwen/qwen3-vl-8b-instruct")
+        if vision_model_env == "openrouter/qwen/qwen-2.5-vl-7b-instruct":
+            vision_model_env = "openrouter/qwen/qwen3-vl-8b-instruct"
         # extract just the model id after "openrouter/"
         openrouter_model = vision_model_env.replace("openrouter/", "", 1)
         openrouter_key = os.getenv("OPENROUTER_API_KEY_1") or os.getenv("OPENROUTER_API_KEY")
@@ -124,7 +126,9 @@ def _extract_pdf_content(raw: bytes) -> str:
                     },
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=60) as resp:
+                with urllib.request.urlopen(
+                    req, timeout=int(os.getenv("VISION_TIMEOUT_SECONDS", "20"))
+                ) as resp:
                     result = _json.loads(resp.read())
                 desc = result["choices"][0]["message"].get("content", "").strip()
                 if desc:

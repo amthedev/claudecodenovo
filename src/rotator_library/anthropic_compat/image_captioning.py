@@ -16,9 +16,11 @@ continues — the agent never hard-stops because of an image.
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from .models import (
@@ -31,6 +33,11 @@ if TYPE_CHECKING:
     from ..client.rotating_client import RotatingClient
 
 _FAILURE_PLACEHOLDER = "[Imagem recebida mas não pôde ser processada]"
+_DEFAULT_VISION_MODEL = "openrouter/qwen/qwen3-vl-8b-instruct"
+_LEGACY_VISION_MODELS = {
+    "openrouter/qwen/qwen-2.5-vl-7b-instruct": _DEFAULT_VISION_MODEL,
+}
+_DESCRIPTION_CACHE: OrderedDict[str, str] = OrderedDict()
 
 # Defesa conservadora contra vazamento de identidade do VLM. A prevenção principal
 # é o _VISION_IDENTITY_GUARD no prompt; aqui só limpamos vazamentos óbvios sem
@@ -58,6 +65,34 @@ def _sanitize_description(text: str) -> str:
     # Neutralize stray provider/model names anywhere in the text.
     text = _PROVIDER_NAME_RE.sub("o analisador de imagem", text)
     return text.strip()
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _description_cache_key(
+    data_uri: str,
+    user_context: str,
+    vision_model: str,
+    max_tokens: int,
+) -> str:
+    digest = hashlib.sha256()
+    for value in (vision_model, str(max_tokens), user_context, data_uri):
+        digest.update(value.encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _cache_description(key: str, description: str) -> None:
+    _DESCRIPTION_CACHE[key] = description
+    _DESCRIPTION_CACHE.move_to_end(key)
+    max_entries = _env_int("VISION_CACHE_MAX_ENTRIES", 128)
+    while len(_DESCRIPTION_CACHE) > max_entries:
+        _DESCRIPTION_CACHE.popitem(last=False)
 
 
 def _block_type(block: Any) -> Optional[str]:
@@ -221,6 +256,12 @@ async def _describe_image(
     log: logging.Logger,
 ) -> str:
     """Call the vision model for a single image. Returns description or placeholder."""
+    cache_key = _description_cache_key(data_uri, user_context, vision_model, max_tokens)
+    cached = _DESCRIPTION_CACHE.get(cache_key)
+    if cached is not None:
+        _DESCRIPTION_CACHE.move_to_end(cache_key)
+        return cached
+
     messages = [
         {
             "role": "user",
@@ -231,11 +272,14 @@ async def _describe_image(
         }
     ]
     try:
-        response = await client.acompletion(
-            model=vision_model,
-            messages=messages,
-            stream=False,
-            max_tokens=max_tokens,
+        response = await asyncio.wait_for(
+            client.acompletion(
+                model=vision_model,
+                messages=messages,
+                stream=False,
+                max_tokens=max_tokens,
+            ),
+            timeout=_env_int("VISION_TIMEOUT_SECONDS", 20),
         )
         # acompletion may return a dict (error) or a litellm response object.
         if isinstance(response, dict) and "choices" not in response:
@@ -249,7 +293,9 @@ async def _describe_image(
         text = _sanitize_description(text)
         if not text:
             return _FAILURE_PLACEHOLDER
-        return f"[Imagem analisada: {text}]"
+        description = f"[Imagem analisada: {text}]"
+        _cache_description(cache_key, description)
+        return description
     except Exception as e:
         log.warning("Image captioning failed via %s: %s", vision_model, e)
         return _FAILURE_PLACEHOLDER
@@ -270,8 +316,9 @@ async def caption_images_in_request(
     """
     log = log or logging.getLogger("rotator_library")
     vision_model = vision_model or os.getenv(
-        "VISION_MODEL", "openrouter/qwen/qwen-2.5-vl-7b-instruct"
+        "VISION_MODEL", _DEFAULT_VISION_MODEL
     )
+    vision_model = _LEGACY_VISION_MODELS.get(vision_model, vision_model)
     if max_tokens is None:
         try:
             max_tokens = int(os.getenv("VISION_MAX_TOKENS", "1024"))
