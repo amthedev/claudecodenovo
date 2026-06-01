@@ -344,29 +344,46 @@ async function sendPrompt(text) {
     return;
   }
   const clean = text.trim();
-  if (!clean) return;
-  addMessage("user", clean);
+  const pending = attachments.filter((file) => !file.sent);
+  // Allow sending with attachments even when the textarea is empty — that's a
+  // very common pattern ("anexei, vê aí"). Without this, an empty text and an
+  // attachment used to send `ARQUIVO: x\n<content>` with no instruction, and
+  // the model would reply "could you clarify?". We now generate a default
+  // instruction so the model knows what to do.
+  if (!clean && pending.length === 0) return;
+  const fileNames = pending.map((f) => f.name).filter(Boolean).join(", ");
+  const userIntent = clean || (
+    pending.length === 1
+      ? `Analise o arquivo anexado (${fileNames || "sem nome"}) e me devolva um resumo claro com os pontos principais.`
+      : `Analise os ${pending.length} arquivos anexados${fileNames ? ` (${fileNames})` : ""} e me devolva um resumo claro com os pontos principais de cada um.`
+  );
+  // Show the user's actual text in the chat (or the inferred intent if empty).
+  addMessage("user", clean || `📎 ${fileNames || "Arquivo anexado"}`);
   const assistant = addMessage("assistant", "Pensando...");
   try {
-    const sources = await onlineSources(clean);
+    const sources = await onlineSources(userIntent);
     const sourceText = sources.map((source, index) => `[${index + 1}] ${source.title}\n${source.url}\n${source.snippet}`).join("\n\n");
-    const prompt = [modePrompts[workMode], reasoningPrompts[reasoningMode], clean, attachmentText(), sourceText && `FONTES ONLINE:\n${sourceText}`].filter(Boolean).join("\n\n");
-    const pendingAttachments = attachments.filter((file) => !file.sent);
-    const content = [{ type: "text", text: prompt }, ...pendingAttachments.filter((file) => file.image).map((file) => file.image)];
+    const prompt = [modePrompts[workMode], reasoningPrompts[reasoningMode], userIntent, attachmentText(), sourceText && `FONTES ONLINE:\n${sourceText}`].filter(Boolean).join("\n\n");
+    const content = [{ type: "text", text: prompt }, ...pending.filter((file) => file.image).map((file) => file.image)];
     conversation.push({ role: "user", content });
     const response = await streamMessage({
       model: activeModel,
       max_tokens: 4096,
+      // System message ensures the model interprets attached files as
+      // "please analyze this" instead of asking "could you clarify what you'd
+      // like?". This was a real user complaint when attaching a file with no
+      // text.
+      system: "Você é um assistente que ajuda em chat. Quando o usuário anexa um arquivo, ele quer que você ANALISE o arquivo e responda algo útil sobre ele (resumo, pontos principais, insights, etc.) — nunca pergunte 'o que você gostaria de saber?' diante de um arquivo: analise direto e ofereça o que parece mais útil. Se realmente houver ambiguidade, responda com sua melhor interpretação primeiro e PERGUNTE no final se foi isso que o usuário queria. Quando o usuário escreve texto curto junto do arquivo (ex: 'vê aí'), interprete como pedido de análise geral. Responda em português a menos que o usuário use outro idioma.",
       messages: conversation,
     }, (partial) => {
       assistant.querySelector(".message-body").innerHTML = esc(partial).replace(/\n/g, "<br>");
     });
-    pendingAttachments.forEach((file) => { file.sent = true; });
+    pending.forEach((file) => { file.sent = true; });
     conversation.push({ role: "assistant", content: response });
     assistant.querySelector(".message-body").innerHTML = esc(response || "Resposta recebida.").replace(/\n/g, "<br>");
     assistant.insertAdjacentHTML("beforeend", sourceMarkup(sources));
-    attachExportButtons(assistant, clean, response);
-    saveHistory(clean, response);
+    attachExportButtons(assistant, userIntent, response);
+    saveHistory(userIntent, response);
     await refreshAccount();
   } catch (exception) {
     if (conversation.at(-1)?.role === "user") conversation.pop();
