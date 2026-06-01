@@ -1,0 +1,45 @@
+name: Build Antigravity API installer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/antigravity-claude-installer/**"
+      - ".github/workflows/build-antigravity-installer.yml"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: antigravity-api-installer-windows
+            executable: dist/antigravity-api-installer.exe
+            build_args: --onefile --windowed
+          - os: macos-latest
+            artifact: antigravity-api-installer-macos
+            executable: dist/antigravity-api-installer.app
+            build_args: --onedir --windowed
+          - os: ubuntu-latest
+            artifact: antigravity-api-installer-linux
+            executable: dist/antigravity-api-installer
+            build_args: --onefile --windowed
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: tools/antigravity-claude-installer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run tests
+        run: python -m unittest -v
+      - name: Install PyInstaller
+        run: python -m pip install pyinstaller
+      - name: Build executable
+        run: python -m PyInstaller ${{ matrix.build_args }} --name antigravity-api-installer installer.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: tools/antigravity-claude-installer/${{ matrix.executable }}
