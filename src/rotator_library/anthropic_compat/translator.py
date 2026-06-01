@@ -2129,6 +2129,16 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     )
 
 
+def _is_complete_tool_json(tool_use_block: dict) -> bool:
+    """Return True if a tool_use's input is a sane, fully-parsed dict.
+
+    A truncated tool_use (cut by max_tokens) has `input` either as a string
+    (failed parse fallback) or missing keys. If the input came back as a real
+    dict (even empty) the call was structurally OK and worth executing."""
+    inp = tool_use_block.get("input")
+    return isinstance(inp, dict)
+
+
 def openai_to_anthropic_response(
     openai_response: dict,
     original_model: str,
@@ -2237,12 +2247,20 @@ def openai_to_anthropic_response(
         stop_reason = "end_turn"
     if textual_tool_blocks:
         stop_reason = "tool_use"
-    # If the model emitted a valid tool_use AND was cut by length, Claude Code
-    # needs to know to execute the tool (stop_reason=tool_use), not that the
-    # whole response was truncated (stop_reason=max_tokens, which it ignores).
-    # Without this, partial-but-valid tool calls were silently dropped.
+    # finish_reason=length WITH a tool_use: only signal tool_use if the tool's
+    # JSON arguments are actually complete. A truncated tool_use has broken
+    # arguments and Claude Code would retry it forever (the edit-same-file
+    # loop). When args are valid JSON we trust the call and emit tool_use;
+    # otherwise stay on max_tokens so the client surfaces a real error.
+    # Mirrors the streaming-side logic in anthropic_streaming_wrapper.
     if finish_reason == "length" and has_tool_use:
-        stop_reason = "tool_use"
+        args_complete = all(
+            _is_complete_tool_json(b)
+            for b in content_blocks
+            if b.get("type") == "tool_use"
+        )
+        if args_complete:
+            stop_reason = "tool_use"
 
     # Build usage
     # Note: Google's promptTokenCount INCLUDES cached tokens, but Anthropic's

@@ -154,7 +154,10 @@ def _extract_pdf_text(b64_data: str, max_chars: int, log: logging.Logger) -> Opt
     try:
         from io import BytesIO
 
-        raw = base64.b64decode(b64_data)
+        # Strip whitespace/newlines that some clients include in long base64
+        # (e.g. PEM-style wrapping). base64.b64decode tolerates them but
+        # explicit normalization avoids surprises across Python versions.
+        raw = base64.b64decode("".join(b64_data.split()))
         reader = PdfReader(BytesIO(raw))
         parts = []
         total = 0
@@ -193,7 +196,7 @@ def _pdf_to_image_b64_pages(
         log.warning("pymupdf não instalado — não é possível renderizar PDF como imagem.")
         return []
     try:
-        raw = base64.b64decode(b64_data)
+        raw = base64.b64decode("".join(b64_data.split()))
         doc = fitz.open(stream=raw, filetype="pdf")
         pages_b64 = []
         for i, page in enumerate(doc):

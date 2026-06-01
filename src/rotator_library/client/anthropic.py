@@ -213,10 +213,20 @@ class AnthropicHandler:
         if anthropic_logger and anthropic_logger.log_dir:
             openai_request["_parent_log_dir"] = anthropic_logger.log_dir
 
+        # Force non-streaming when (a) operator explicitly opted in, OR (b)
+        # WebSearch is enabled and there are tools — the server-side WebSearch
+        # loop needs to inspect the full response before deciding to re-invoke,
+        # which can't be done mid-stream. Without this, a streaming client
+        # would get a tool_use WebSearch block it doesn't know how to execute
+        # and would stall waiting for nothing.
+        websearch_active = _ws.is_enabled() and bool(openai_request.get("tools"))
         force_nonstream_for_stream = (
             provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"}
-            and os.getenv("ANTHROPIC_STREAM_FALLBACK_NONSTREAM", "false").lower()
-            not in {"false", "0", "no"}
+            and (
+                os.getenv("ANTHROPIC_STREAM_FALLBACK_NONSTREAM", "false").lower()
+                not in {"false", "0", "no"}
+                or websearch_active
+            )
         )
         if request.stream and force_nonstream_for_stream:
             lib_logger.info(
@@ -245,6 +255,21 @@ class AnthropicHandler:
             anthropic_response["id"] = request_id
             anthropic_response = _force_tool_use_response(
                 anthropic_response, forced_tool_call
+            )
+            # WebSearch loop also runs in the force-nonstream fallback path —
+            # otherwise a streaming client with WebSearch enabled would get a
+            # tool_use the client can't execute and stall.
+            anthropic_response = await self._run_web_search_loop(
+                anthropic_response,
+                request,
+                openai_request,
+                raw_request,
+                pre_request_callback,
+                original_model,
+                tool_name_mapping,
+                allowed_tool_names,
+                forced_tool_call,
+                request_id,
             )
             if anthropic_logger:
                 anthropic_logger.log_response(

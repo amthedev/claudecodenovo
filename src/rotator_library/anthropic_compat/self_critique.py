@@ -112,11 +112,17 @@ async def maybe_critique_response(
         f"=== INSTRUCAO ===\n{_CRITIQUE_PROMPT}"
     )
     try:
+        # Budget: roughly 1.5x the original (in tokens). The improved version
+        # is usually similar in length but sometimes expands with corrections.
+        # `len(text)/3` converts chars to a token estimate (~3 chars/token).
+        # +1024 buffer covers structural overhead. Hard cap at 8k tokens.
+        original_token_estimate = len(original_text) // 3
+        critique_budget = min(8000, original_token_estimate * 3 // 2 + 1024)
         resp = await client.acompletion(
             model=request.model,
             messages=[{"role": "user", "content": critique_input}],
             stream=False,
-            max_tokens=min(8000, len(original_text) * 2 // 3 + 1024),
+            max_tokens=critique_budget,
         )
         if isinstance(resp, dict):
             choices = resp.get("choices") or []

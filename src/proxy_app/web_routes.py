@@ -412,7 +412,12 @@ def register_web_routes(app: FastAPI) -> None:
         if len(query) > 300:
             raise HTTPException(400, "A pesquisa deve ter no máximo 300 caracteres.")
         try:
-            return JSONResponse({"query": query, "sources": _search_web(query)})
+            # _search_web uses urllib.urlopen (synchronous, blocks up to 10s).
+            # Running it directly in an async handler would block the event loop
+            # and freeze every concurrent client. Off-thread it.
+            import asyncio
+            sources = await asyncio.to_thread(_search_web, query)
+            return JSONResponse({"query": query, "sources": sources})
         except Exception as exc:
             raise HTTPException(502, "A pesquisa online está temporariamente indisponível.") from exc
 
