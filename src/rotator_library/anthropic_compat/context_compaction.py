@@ -161,10 +161,19 @@ async def compact_context_if_needed(
         convo_text = convo_text[-max_summary_input_chars:]
 
     summary_prompt = (
-        "Resuma a conversa abaixo de forma concisa, preservando o que importa para "
-        "continuar a tarefa: decisões tomadas, arquivos criados/editados (com caminhos), "
-        "valores/configurações definidos, comandos executados e pendências. Não invente "
-        "nada; só registre o que aconteceu. Responda apenas com o resumo.\n\n"
+        "Você é um arquivista técnico. Resuma a conversa abaixo de forma DETALHADA e "
+        "ESTRUTURADA, para que outro agente possa continuar a tarefa sem ter visto o "
+        "original. Não seja econômico com informação importante — prefira preservar "
+        "demais a perder. Organize em seções com estes títulos (omita os que não se "
+        "aplicarem):\n"
+        "## Objetivo — o que o usuário quer no geral.\n"
+        "## Arquivos — cada arquivo criado/editado/lido, com caminho e o que mudou.\n"
+        "## Decisões técnicas — escolhas feitas e o porquê (libs, abordagens, nomes).\n"
+        "## Valores e configs — números, chaves, parâmetros, comandos exatos usados.\n"
+        "## Estado atual — o que já está pronto e funcionando.\n"
+        "## Pendências — o que falta fazer / próximos passos combinados.\n"
+        "Não invente nada; registre só o que realmente aconteceu na conversa. "
+        "Responda apenas com o resumo estruturado.\n\n"
         f"=== CONVERSA ===\n{convo_text}"
     )
     try:
@@ -173,7 +182,7 @@ async def compact_context_if_needed(
             model=model,
             messages=[{"role": "user", "content": summary_prompt}],
             stream=False,
-            max_tokens=_env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 1500),
+            max_tokens=_env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 3000),
         )
         if isinstance(response, dict) and "choices" not in response:
             raise RuntimeError(f"summary error payload: {response.get('error')}")
