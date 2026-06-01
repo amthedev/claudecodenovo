@@ -1044,10 +1044,15 @@ def recharge_reseller(account_id: str, add_tokens: int) -> None:
                         (account_id,)).fetchone()
         if not acc:
             raise ValueError("Revendedor não encontrado.")
-        row = c.execute("SELECT token_limit FROM api_keys WHERE id=?", (acc["key_id"],)).fetchone()
-        new_total = max(0, int(row["token_limit"] or 0) + int(add_tokens))
-        c.execute("UPDATE api_keys SET token_limit=?, updated_at=? WHERE id=?",
-                  (new_total, time.time(), acc["key_id"]))
+        # ATOMIC: SQL-level MAX(0, current + delta). Previous version was
+        # read-modify-write — two concurrent admin clicks at the same instant
+        # would both read the same starting balance and apply +N once, losing
+        # one increment. Doing it in a single UPDATE removes the race.
+        c.execute(
+            "UPDATE api_keys SET token_limit = MAX(0, COALESCE(token_limit, 0) + ?), "
+            "updated_at=? WHERE id=?",
+            (int(add_tokens), time.time(), acc["key_id"]),
+        )
 
 
 def delete_reseller_account(account_id: str) -> None:

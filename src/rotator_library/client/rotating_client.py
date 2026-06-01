@@ -438,12 +438,23 @@ class RotatingClient:
 
     async def close(self):
         """Close the HTTP client and save usage data."""
-        # Save and shutdown new usage managers
-        for manager in self._usage_managers.values():
-            await manager.shutdown()
+        # Save and shutdown all usage managers — if one fails (e.g. disk
+        # error during save), keep going so the others still get shut down.
+        # Previous version exited on first exception and lost in-memory
+        # counters from every subsequent manager.
+        for provider, manager in self._usage_managers.items():
+            try:
+                await manager.shutdown()
+            except Exception as e:
+                lib_logger.warning(
+                    f"Failed to shutdown usage manager for {provider}: {e!r}"
+                )
 
         if hasattr(self, "http_client") and self.http_client:
-            await self.http_client.aclose()
+            try:
+                await self.http_client.aclose()
+            except Exception as e:
+                lib_logger.warning(f"Failed to close http_client: {e!r}")
 
     async def acompletion(
         self,

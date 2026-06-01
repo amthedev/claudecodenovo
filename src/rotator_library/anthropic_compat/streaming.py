@@ -30,8 +30,26 @@ _FENCED_CODE_RE = re.compile(
     r"```(?:[A-Za-z0-9_+.-]+)?\s*\n(.*?)```",
     re.DOTALL,
 )
+# Broad set of extensions clients actually write. The previous list only had
+# 9 languages so requests like "edit config.json" or "create Dockerfile"
+# fell back to "script.py" and clobbered the user's intent. We can't list
+# every extension, but cover the long tail of common ones + a no-extension
+# fallback for files like Dockerfile, Makefile, etc.
 _FILE_PATH_RE = re.compile(
-    r"([A-Za-z0-9_.-]+\.(?:py|js|ts|tsx|jsx|html|css|go|rs))"
+    r"([A-Za-z0-9_.-]+\."
+    r"(?:py|js|mjs|cjs|ts|tsx|jsx|html|htm|css|scss|sass|less|"
+    r"go|rs|rb|php|java|kt|swift|c|h|hpp|cpp|cc|cs|m|mm|"
+    r"md|mdx|txt|json|yaml|yml|toml|xml|sql|sh|bash|zsh|fish|"
+    r"ini|cfg|conf|env|properties|dockerfile|makefile|vue|svelte|"
+    r"lua|r|dart|scala|groovy|pl|pm|tcl|elm|ex|exs|erl|fs|fsx|ml|"
+    r"clj|cljs|hs|nim|jl|zig|v|cr|d|f90|f95|asm|s|pas|ada"
+    r"))",
+    re.IGNORECASE,
+)
+# Fallback for files without an extension (Dockerfile, Makefile, LICENSE, etc.)
+_BARE_FILENAME_RE = re.compile(
+    r"\b(Dockerfile|Makefile|Rakefile|Gemfile|Procfile|Vagrantfile|"
+    r"LICENSE|README|CHANGELOG|CONTRIBUTING|TODO|AUTHORS|NOTICE|VERSION)\b"
 )
 _CODE_START_RE = re.compile(
     r"(?m)^(?:#![^\n]*\n)?\s*(?:import |from |class |def |async def |if __name__|print\(|[A-Za-z_][A-Za-z0-9_]*\s*=)"
@@ -39,8 +57,15 @@ _CODE_START_RE = re.compile(
 
 
 def _extract_file_path_from_text(text: str, fallback: str) -> str:
-    match = _FILE_PATH_RE.search(text or "")
-    return match.group(1) if match else fallback
+    if not text:
+        return fallback
+    match = _FILE_PATH_RE.search(text)
+    if match:
+        return match.group(1)
+    bare = _BARE_FILENAME_RE.search(text)
+    if bare:
+        return bare.group(1)
+    return fallback
 
 
 def _strip_leaked_reasoning(text: str) -> str:
@@ -135,7 +160,30 @@ async def anthropic_response_to_streaming_events(
         if not isinstance(block, dict):
             continue
         block_type = block.get("type")
-        if block_type == "text":
+        if block_type == "thinking":
+            # Thinking blocks were silently dropped — now that VLLM_DEFAULT_THINKING=on
+            # they show up in every response, and the non-stream → stream
+            # fallback path was throwing them away. Emit as a proper thinking
+            # block so Claude Code can display reasoning.
+            thinking_text = block.get("thinking", "")
+            signature = block.get("signature", "")
+            tb = {"type": "thinking", "thinking": ""}
+            if signature:
+                tb["signature"] = signature
+            yield (
+                "event: content_block_start\n"
+                f"data: {json.dumps({'type': 'content_block_start', 'index': index, 'content_block': tb})}\n\n"
+            )
+            if thinking_text:
+                yield (
+                    "event: content_block_delta\n"
+                    f"data: {json.dumps({'type': 'content_block_delta', 'index': index, 'delta': {'type': 'thinking_delta', 'thinking': thinking_text}})}\n\n"
+                )
+            yield (
+                "event: content_block_stop\n"
+                f"data: {json.dumps({'type': 'content_block_stop', 'index': index})}\n\n"
+            )
+        elif block_type == "text":
             yield (
                 "event: content_block_start\n"
                 f"data: {json.dumps({'type': 'content_block_start', 'index': index, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
@@ -818,6 +866,22 @@ async def anthropic_streaming_wrapper(
                 },
             }
             yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
+
+        # If we crashed mid-block (text/thinking/tool_use open), the Anthropic
+        # SDK expects content_block_stop before any new content_block_start.
+        # Without this the SDK either errors or silently drops the error block.
+        if thinking_block_started:
+            yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_block_index}}}\n\n'
+            current_block_index += 1
+            thinking_block_started = False
+        if content_block_started:
+            yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {current_block_index}}}\n\n'
+            current_block_index += 1
+            content_block_started = False
+        for tc_index in sorted(tool_block_indices.keys()):
+            block_idx = tool_block_indices[tc_index]
+            yield f'event: content_block_stop\ndata: {{"type": "content_block_stop", "index": {block_idx}}}\n\n'
+        tool_block_indices.clear()
 
         # Send the error as a text content block so it's visible to the user
         error_message = f"Error: {str(e)}"

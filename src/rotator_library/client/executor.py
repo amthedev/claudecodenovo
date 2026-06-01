@@ -702,9 +702,15 @@ class RequestExecutor:
 
                     except PreRequestCallbackError:
                         raise
-                    except Exception:
-                        # Let context manager handle cleanup
-                        pass
+                    except Exception as cleanup_exc:
+                        # Context manager will handle cleanup, but log so we
+                        # don't silently swallow an unexpected exception
+                        # (previously this `pass` masked real bugs).
+                        last_exception = cleanup_exc
+                        lib_logger.warning(
+                            "Unexpected exception in execution scope for "
+                            f"{mask_credential(cred)}: {cleanup_exc!r}"
+                        )
 
             except NoAvailableKeysError:
                 break
@@ -1297,6 +1303,13 @@ class RequestExecutor:
                 if classified.retry_after is not None
                 else self._get_transient_retry_delay()
             )
+            # Sanitize: some providers return negative or absurdly large
+            # retry_after; cap to a sensible window to keep the client from
+            # hanging or busy-looping.
+            try:
+                wait_time = max(0.1, min(float(wait_time), 60.0))
+            except (TypeError, ValueError):
+                wait_time = self._get_transient_retry_delay()
             retry_reason = (
                 f" (small cooldown {classified.retry_after}s < {small_cooldown_threshold}s threshold)"
                 if is_small_cooldown

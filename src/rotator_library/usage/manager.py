@@ -103,7 +103,18 @@ class CredentialContext:
             error = classify_error(exc_val)
             success = False
         else:
-            success = True
+            # Neither mark_success nor mark_failure was called, AND no
+            # exception propagated. This means the caller exited the `async
+            # with` block without recording an outcome. Previously we counted
+            # this as success with zero tokens — silent under-billing. Now
+            # we log it and skip recording entirely so metrics stay clean.
+            import logging as _logging
+            _logging.getLogger("rotator_library").warning(
+                "CredentialContext exited without mark_success/mark_failure "
+                "for stable_id=%s model=%s — request will not be billed.",
+                self.stable_id, self.model,
+            )
+            return False
 
         latency_ms = (time.time() - self._acquired_at) * 1000
 
