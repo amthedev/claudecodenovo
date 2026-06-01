@@ -98,7 +98,12 @@ def _cache_description(key: str, description: str) -> None:
 
 
 def _cache_failure(key: str) -> None:
-    ttl = _env_int("VISION_FAILURE_CACHE_SECONDS", 300, minimum=0)
+    # Was 300 (5 min) — same pattern as the context-compaction failure cache
+    # bug: one transient vision-model hiccup (network blip, OpenRouter 503)
+    # was poisoning ALL subsequent image requests for 5 minutes. The user
+    # tried the same image 3 times and kept seeing "imagem não processada".
+    # 30s lets us de-dupe a real outage burst without trapping recovery.
+    ttl = _env_int("VISION_FAILURE_CACHE_SECONDS", 30, minimum=0)
     if ttl <= 0:
         return
     _FAILURE_CACHE[key] = time.monotonic() + ttl

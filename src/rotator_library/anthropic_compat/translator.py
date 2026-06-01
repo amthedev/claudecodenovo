@@ -1311,13 +1311,27 @@ def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str
     ]
     conversation = [m for m in messages if m.get("role") != "system"]
 
+    # Preserve at least the last N turns even if it overshoots max_chars.
+    # The previous version dropped messages without a floor — the same shape
+    # that gutted Feitoza's session in the compaction fallback (kept 1/27).
+    # If the model overshoots, vLLM may still answer (graceful overshoot is
+    # FAR better than no context). Configurable via env for tuning.
+    min_keep = _env_int(
+        ["HOSTED_VLLM_TRUNCATE_MIN_KEEP", "VLLM_TRUNCATE_MIN_KEEP"],
+        8,
+        minimum=1,
+    )
+
     kept_reversed: List[Dict[str, Any]] = []
     used_chars = sum(_message_char_size(message) for message in system_messages)
     omitted_count = 0
 
     for message in reversed(conversation):
         message_size = _message_char_size(message)
-        if kept_reversed and used_chars + message_size > max_chars:
+        # Drop only when we've ALREADY kept at least min_keep messages.
+        # Otherwise we'd nuke the recent context and the model would have
+        # no idea what the user wants.
+        if len(kept_reversed) >= min_keep and used_chars + message_size > max_chars:
             omitted_count += 1
             continue
         if not kept_reversed and message_size > max_chars:
@@ -1869,10 +1883,20 @@ def _linearize_vllm_tool_messages(
                 for block in (_tool_call_to_textual_block(tc) for tc in tool_calls)
                 if block
             ]
-            message_copy["content"] = "\n".join(
-                part for part in [text, *textual_calls] if part
-            )
+            # Filter empties from the join so we don't end up with a leading
+            # newline ("\n<function=...>") which can confuse the model and
+            # leak strange whitespace into the tokenizer.
+            parts = [p for p in [text, *textual_calls] if p and p.strip()]
+            message_copy["content"] = "\n".join(parts)
 
+        # Skip assistant messages that ended up with no content AND no tool
+        # calls — leaving them in confuses vLLM (rejects empty assistant) or
+        # creates spurious turn boundaries. Previously empty assistant rows
+        # were silently appended.
+        if message_copy.get("role") == "assistant" and not (
+            (message_copy.get("content") or "").strip()
+        ):
+            continue
         linearized.append(message_copy)
     return linearized
 

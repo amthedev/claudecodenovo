@@ -698,11 +698,35 @@ async def anthropic_streaming_wrapper(
             if content:
                 if write_from_model_text and not tool_calls_by_index:
                     delayed_model_text_buffer += content
-                    continue
+                    # Cap the delayed buffer: if the model never produces a
+                    # closing marker, we'd buffer forever and the client gets
+                    # an empty stream. Past this size, flush as plain text.
+                    if len(delayed_model_text_buffer) > 200_000:
+                        logger.warning(
+                            "delayed_model_text_buffer exceeded 200k chars without "
+                            "completion — flushing as plain text"
+                        )
+                        # Fall through so the buffered text is emitted below.
+                        content = delayed_model_text_buffer
+                        delayed_model_text_buffer = ""
+                        write_from_model_text = False
+                    else:
+                        continue
 
                 if textual_tool_buffer:
                     textual_tool_buffer += content
-                    continue
+                    # Same cap for textual tool buffer. A model that emits
+                    # "<tool_call>" and never closes it would otherwise hold
+                    # the whole response hostage.
+                    if len(textual_tool_buffer) > 200_000:
+                        logger.warning(
+                            "textual_tool_buffer exceeded 200k chars without "
+                            "</tool_call> — flushing as plain text"
+                        )
+                        content = textual_tool_buffer
+                        textual_tool_buffer = ""
+                    else:
+                        continue
 
                 marker_positions = [
                     pos
