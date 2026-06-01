@@ -2054,6 +2054,12 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             # model the textual tool-call format and linearize tool messages.
             _inject_workspace_path_prompt(openai_request)
             _inject_vllm_tool_use_prompt(openai_request, tools)
+            # Inject the behavior-only agent prompt here TOO. Previous version
+            # only did this in native mode and the fallback could fall back to
+            # "intern mode" silently. The behavior prompt has zero output-format
+            # text so it doesn't conflict with the textual-tool injection.
+            if os.getenv("VLLM_NATIVE_AGENT_PROMPT", "on").lower() not in {"off", "0", "false", "no"}:
+                _inject_native_agent_prompt(openai_request)
             if _force_tool_fallback_enabled():
                 _inject_vllm_mandatory_tool_instruction(openai_request, tools)
             openai_request.pop("tools", None)
