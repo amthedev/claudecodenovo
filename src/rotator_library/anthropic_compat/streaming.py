@@ -14,7 +14,12 @@ import re
 import uuid
 from typing import AsyncGenerator, Callable, Optional, Awaitable, Any, TYPE_CHECKING
 
-from .translator import _parse_textual_tool_calls, _restore_tool_name
+from .translator import (
+    _normalize_tool_arguments_for_anthropic,
+    _normalize_tool_input_for_anthropic,
+    _parse_textual_tool_calls,
+    _restore_tool_name,
+)
 
 if TYPE_CHECKING:
     from ..transaction_logger import TransactionLogger
@@ -330,11 +335,15 @@ async def anthropic_streaming_wrapper(
                     for block in textual_tool_blocks:
                         tc_index = len(tool_calls_by_index)
                         block_idx = current_block_index
-                        arguments = json.dumps(block.get("input") or {})
                         tool_name = _restore_tool_name(
                             str(block.get("name", "")),
                             tool_name_mapping,
                         )
+                        tool_input = _normalize_tool_input_for_anthropic(
+                            tool_name,
+                            block.get("input") or {},
+                        )
+                        arguments = json.dumps(tool_input)
                         if (
                             allowed_tool_names is not None
                             and tool_name not in allowed_tool_names
@@ -408,6 +417,30 @@ async def anthropic_streaming_wrapper(
                         }
                         yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
                     current_block_index += 1
+
+                for tc_index in sorted(tool_block_indices.keys()):
+                    tc = tool_calls_by_index.get(tc_index) or {}
+                    if not tc.get("native"):
+                        continue
+                    arguments = _normalize_tool_arguments_for_anthropic(
+                        str(tc.get("name") or ""),
+                        str(tc.get("arguments") or ""),
+                    )
+                    if not arguments:
+                        continue
+                    try:
+                        json.loads(arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    block_delta = {
+                        "type": "content_block_delta",
+                        "index": tool_block_indices[tc_index],
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": arguments,
+                        },
+                    }
+                    yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
 
                 # Close all open tool_use blocks
                 for tc_index in sorted(tool_block_indices.keys()):
@@ -493,6 +526,10 @@ async def anthropic_streaming_wrapper(
                             input_data = json.loads(tc.get("arguments", "{}"))
                         except json.JSONDecodeError:
                             input_data = {}
+                        input_data = _normalize_tool_input_for_anthropic(
+                            tc.get("name", ""),
+                            input_data,
+                        )
                         content_blocks.append(
                             {
                                 "type": "tool_use",
@@ -684,6 +721,7 @@ async def anthropic_streaming_wrapper(
                         "arguments": "",
                         "emitted_arguments_length": 0,
                         "started": False,
+                        "native": True,
                     }
                 elif tc.get("id"):
                     tool_calls_by_index[tc_index]["id"] = tc["id"]
@@ -744,30 +782,8 @@ async def anthropic_streaming_wrapper(
                     yield f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n"
                     current_block_index += 1
 
-                if (
-                    tool_calls_by_index[tc_index]["started"]
-                    and len(tool_calls_by_index[tc_index]["arguments"])
-                    > tool_calls_by_index[tc_index]["emitted_arguments_length"]
-                ):
-                    emitted_length = tool_calls_by_index[tc_index][
-                        "emitted_arguments_length"
-                    ]
-                    partial_json = tool_calls_by_index[tc_index]["arguments"][
-                        emitted_length:
-                    ]
-                    tool_calls_by_index[tc_index]["emitted_arguments_length"] = len(
-                        tool_calls_by_index[tc_index]["arguments"]
-                    )
-                    # Send partial JSON delta using the correct block index for this tool
-                    block_delta = {
-                        "type": "content_block_delta",
-                        "index": tool_block_indices[tc_index],
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": partial_json,
-                        },
-                    }
-                    yield f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n"
+                # Native OpenAI tool arguments are emitted after [DONE], once the
+                # full JSON can be normalized for Anthropic's tool schemas.
 
             # Note: We intentionally ignore finish_reason here.
             # Block closing is handled when we receive [DONE] to avoid

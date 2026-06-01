@@ -374,6 +374,8 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("<tool_call><function=ToolName>", system_text)
         self.assertNotIn("CURRENT REQUEST REQUIRES TOOL USE", system_text)
         self.assertIn("Current tool allowlist (exact names): Write", system_text)
+        self.assertIn("Workspace path contract:", system_text)
+        self.assertIn("currently opened project/workspace", system_text)
         self.assertEqual(openai_request["_vllm_allowed_tool_names"], ["Write"])
         # No forced-tool fallback unless explicitly opted in.
         self.assertNotIn("_vllm_forced_tool_call", openai_request)
@@ -412,6 +414,20 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
             tool_blocks[0]["input"],
             {"file_path": "agent_probe.txt", "content": "agent-ok"},
         )
+
+    def test_textual_file_tools_normalize_path_to_file_path(self):
+        text = (
+            "<tool_call>"
+            '{"name":"Read","arguments":{"path":"src/app.py"}}'
+            "</tool_call>"
+        )
+
+        cleaned_text, tool_blocks = _parse_textual_tool_calls(text)
+
+        self.assertEqual(cleaned_text, "")
+        self.assertEqual(len(tool_blocks), 1)
+        self.assertEqual(tool_blocks[0]["name"], "Read")
+        self.assertEqual(tool_blocks[0]["input"], {"file_path": "src/app.py"})
 
     async def test_converts_textual_tool_call_after_prose_to_tool_use(self):
         events = await _collect_events(
@@ -751,6 +767,40 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(message_delta["delta"]["stop_reason"], "end_turn")
 
+    async def test_stream_normalizes_native_file_tool_path_argument(self):
+        events = await _collect_events(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "function": {
+                                            "name": "Read",
+                                            "arguments": '{"path":"src/app.py"}',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
+            ],
+            allowed_tool_names={"Read"},
+        )
+
+        partial_json = "".join(
+            data["delta"]["partial_json"]
+            for event_type, data in events
+            if event_type == "content_block_delta"
+            and data["delta"]["type"] == "input_json_delta"
+        )
+        self.assertEqual(json.loads(partial_json), {"file_path": "src/app.py"})
+
     def test_nonstream_ignores_tool_that_was_not_available(self):
         response = openai_to_anthropic_response(
             {
@@ -777,6 +827,39 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response["content"], [])
         self.assertEqual(response["stop_reason"], "end_turn")
+
+    def test_nonstream_normalizes_native_file_tool_path_argument(self):
+        response = openai_to_anthropic_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call_123",
+                                    "function": {
+                                        "name": "Edit",
+                                        "arguments": (
+                                            '{"path":"src/app.py",'
+                                            '"old_string":"a","new_string":"b"}'
+                                        ),
+                                    },
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            "claude-test",
+            allowed_tool_names={"Edit"},
+        )
+
+        self.assertEqual(response["content"][0]["name"], "Edit")
+        self.assertEqual(
+            response["content"][0]["input"],
+            {"file_path": "src/app.py", "old_string": "a", "new_string": "b"},
+        )
 
 
 if __name__ == "__main__":

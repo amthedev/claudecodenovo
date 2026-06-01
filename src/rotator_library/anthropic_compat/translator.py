@@ -93,6 +93,16 @@ VLLM_NATIVE_AGENT_PROMPT = (
     "tool results until the user's task is actually complete, then give a short "
     "summary of what you did."
 )
+VLLM_WORKSPACE_PATH_MARKER = "Workspace path contract:"
+VLLM_WORKSPACE_PATH_PROMPT = (
+    f"{VLLM_WORKSPACE_PATH_MARKER} tool paths are resolved inside the currently "
+    "opened project/workspace, not inside Claude memory, AppData, cache, or config "
+    "folders. Use relative paths from the current workspace or exact paths returned "
+    "by tools such as pwd, LS, Glob, Grep, Read, Write, or Bash. After creating a "
+    "file, reuse the same file_path for later Read/Edit/Bash steps. If a path is "
+    "not found, inspect pwd and list/search the workspace before asking the user "
+    "for help."
+)
 VLLM_NATIVE_TOOL_ALLOWLIST_MARKER = "Current tool allowlist (exact names):"
 VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
 VLLM_AGENT_FLOW_PROMPT = (
@@ -168,6 +178,14 @@ _JSON_TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
     re.DOTALL | re.IGNORECASE,
 )
+_FILE_PATH_TOOL_NAMES = {
+    "create",
+    "edit",
+    "multiedit",
+    "read",
+    "update",
+    "write",
+}
 _THINK_TAG_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 _REASONING_PREAMBLE_MARKERS = (
     "i need to ",
@@ -360,6 +378,32 @@ _PYTHON_REQUEST_MARKERS = (
 )
 
 
+def _normalize_tool_input_for_anthropic(tool_name: str, tool_input: Any) -> Any:
+    if not isinstance(tool_input, dict):
+        return tool_input
+    if (
+        str(tool_name or "").lower() in _FILE_PATH_TOOL_NAMES
+        and "file_path" not in tool_input
+        and "path" in tool_input
+    ):
+        tool_input = dict(tool_input)
+        tool_input["file_path"] = tool_input.pop("path")
+    return tool_input
+
+
+def _normalize_tool_arguments_for_anthropic(tool_name: str, arguments: str) -> str:
+    if not arguments:
+        return arguments
+    try:
+        tool_input = json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+    normalized = _normalize_tool_input_for_anthropic(tool_name, tool_input)
+    if normalized is tool_input:
+        return arguments
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+
 def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
     """
     Convert common text-emitted tool call markup into Anthropic tool_use blocks.
@@ -392,9 +436,7 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
                 tool_input = json.loads(tool_input)
             except json.JSONDecodeError:
                 tool_input = {}
-        if tool_name.lower() == "write" and isinstance(tool_input, dict):
-            if "file_path" not in tool_input and "path" in tool_input:
-                tool_input["file_path"] = tool_input.pop("path")
+        tool_input = _normalize_tool_input_for_anthropic(tool_name, tool_input)
 
         if tool_name and isinstance(tool_input, dict):
             tool_blocks.append(
@@ -433,9 +475,7 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
                 tool_input = json.loads(tool_input)
             except json.JSONDecodeError:
                 tool_input = {}
-        if tool_name.lower() == "write" and isinstance(tool_input, dict):
-            if "file_path" not in tool_input and "path" in tool_input:
-                tool_input["file_path"] = tool_input.pop("path")
+        tool_input = _normalize_tool_input_for_anthropic(tool_name, tool_input)
 
         if tool_name and isinstance(tool_input, dict):
             tool_blocks.append(
@@ -474,6 +514,8 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
                 except json.JSONDecodeError:
                     pass
             tool_input[key] = value
+
+        tool_input = _normalize_tool_input_for_anthropic(tool_name, tool_input)
 
         if tool_name and tool_input:
             return {
@@ -1884,6 +1926,16 @@ def _inject_native_agent_prompt(openai_request: Dict[str, Any]) -> None:
     messages.insert(0, {"role": "system", "content": VLLM_NATIVE_AGENT_PROMPT})
 
 
+def _inject_workspace_path_prompt(openai_request: Dict[str, Any]) -> None:
+    messages = openai_request.setdefault("messages", [])
+    if messages and messages[0].get("role") == "system":
+        existing = messages[0].get("content") or ""
+        if VLLM_WORKSPACE_PATH_MARKER not in existing:
+            messages[0]["content"] = f"{existing}\n\n{VLLM_WORKSPACE_PATH_PROMPT}".strip()
+        return
+    messages.insert(0, {"role": "system", "content": VLLM_WORKSPACE_PATH_PROMPT})
+
+
 def _inject_native_tool_allowlist(
     openai_request: Dict[str, Any],
     tools: List[Dict[str, Any]],
@@ -1993,6 +2045,7 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
             # Opt-out via VLLM_NATIVE_AGENT_PROMPT=off if ever undesired.
             if os.getenv("VLLM_NATIVE_AGENT_PROMPT", "on").lower() not in {"off", "0", "false", "no"}:
                 _inject_native_agent_prompt(openai_request)
+            _inject_workspace_path_prompt(openai_request)
             _inject_native_tool_allowlist(openai_request, tools)
             if _force_tool_fallback_enabled():
                 _attach_mandatory_tool_fallback(openai_request, tools)
@@ -2003,6 +2056,7 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         else:
             # FALLBACK mode (no native tool parser on the vLLM server): teach the
             # model the textual tool-call format and linearize tool messages.
+            _inject_workspace_path_prompt(openai_request)
             _inject_vllm_tool_use_prompt(openai_request, tools)
             if _force_tool_fallback_enabled():
                 _inject_vllm_mandatory_tool_instruction(openai_request, tools)
@@ -2095,6 +2149,7 @@ def openai_to_anthropic_response(
             str(func.get("name", "")),
             tool_name_mapping,
         )
+        input_data = _normalize_tool_input_for_anthropic(restored_name, input_data)
         if allowed_tool_names is not None and restored_name not in allowed_tool_names:
             continue
         content_blocks.append(
