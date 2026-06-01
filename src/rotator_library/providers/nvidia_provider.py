@@ -27,13 +27,14 @@ class NvidiaProvider(ProviderInterface):
             response = await client.get(
                 "https://integrate.api.nvidia.com/v1/models",
                 headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30.0,
             )
             response.raise_for_status()
             models = [
                 f"nvidia_nim/{model['id']}" for model in response.json().get("data", [])
             ]
             return models
-        except httpx.RequestError as e:
+        except (httpx.RequestError, httpx.TimeoutException) as e:
             lib_logger.error(f"Failed to fetch NVIDIA models: {e}")
             return []
 

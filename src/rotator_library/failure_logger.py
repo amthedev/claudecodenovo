@@ -145,26 +145,35 @@ def _extract_response_body(error: Exception) -> str:
             if result:
                 return result
 
+    # Cap the body so a provider that returns a 5 MB HTML error page doesn't
+    # flood the logs. 4 kB is plenty to diagnose the issue without bloat.
+    MAX_BODY = 4096
+
+    def _cap(s: str) -> str:
+        if len(s) > MAX_BODY:
+            return s[:MAX_BODY] + f"\n... [truncated {len(s) - MAX_BODY} chars]"
+        return s
+
     # Try to get response body from httpx errors
     if hasattr(error, "response") and error.response is not None:
         response = error.response
         # Try .text first (decoded)
         if hasattr(response, "text") and response.text:
-            return response.text
+            return _cap(response.text)
         # Try .content (bytes)
         if hasattr(response, "content") and response.content:
             try:
-                return response.content.decode("utf-8", errors="replace")
+                return _cap(response.content.decode("utf-8", errors="replace"))
             except Exception:
-                return str(response.content)
+                return _cap(str(response.content))
 
     # Check for litellm's body attribute
     if hasattr(error, "body") and error.body:
-        return str(error.body)
+        return _cap(str(error.body))
 
     # Check for message attribute that might contain response
     if hasattr(error, "message") and error.message:
-        return str(error.message)
+        return _cap(str(error.message))
 
     return None
 

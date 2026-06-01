@@ -22,10 +22,11 @@ class OpenAIProvider(ProviderInterface):
         try:
             response = await client.get(
                 "https://api.openai.com/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"}
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30.0,
             )
             response.raise_for_status()
             return [f"openai/{model['id']}" for model in response.json().get("data", [])]
-        except httpx.RequestError as e:
+        except (httpx.RequestError, httpx.TimeoutException) as e:
             lib_logger.error(f"Failed to fetch OpenAI models: {e}")
             return []

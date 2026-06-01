@@ -262,7 +262,10 @@ class DeepseekProvider(ProviderInterface):
             return
 
         content = await response.aread()
-        error_text = content.decode("utf-8", errors="replace") if content else ""
+        # Cap error_text — some providers respond with HTML pages on 5xx and
+        # the full body floods logs / exception messages. 2k chars is plenty
+        # to diagnose without spamming.
+        error_text = (content[:2000].decode("utf-8", errors="replace") if content else "")
         if response.status_code == 429:
             raise RateLimitError(
                 f"DeepSeek rate limit exceeded: {error_text}",

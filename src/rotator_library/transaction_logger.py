@@ -210,10 +210,15 @@ class TransactionLogger:
 
         self.streaming = request_data.get("stream", False)
 
+        # Strip framework infrastructure keys (api_key, api_base, etc.) so the
+        # upstream credential is never written to disk. Previously log_request
+        # logged the raw dict — callers like rotating_client pass kwargs with
+        # api_key already injected for the upstream call.
+        sanitized = _strip_framework_keys(request_data) if isinstance(request_data, dict) else request_data
         data = {
             "request_id": self.request_id,
             "timestamp_utc": datetime.utcnow().isoformat(),
-            "data": request_data,
+            "data": sanitized,
         }
         self._write_json(filename, data)
 

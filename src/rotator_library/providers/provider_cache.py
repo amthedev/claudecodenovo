@@ -117,6 +117,10 @@ class ProviderCache:
         # Background tasks
         self._writer_task: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
+        # Holds the _async_init task too — without a strong reference, the
+        # asyncio runtime can garbage-collect a still-pending task and never
+        # actually run _load_from_disk / _start_background_tasks (silent skip).
+        self._init_task: Optional[asyncio.Task] = None
         self._running = False
 
         # Statistics
@@ -139,7 +143,18 @@ class ProviderCache:
                 f"ProviderCache[{self._cache_name}]: Disk enabled "
                 f"(memory_ttl={memory_ttl_seconds}s, disk_ttl={disk_ttl_seconds}s)"
             )
-            asyncio.create_task(self._async_init())
+            # Hold a strong reference so the task isn't GC'd before it runs.
+            # Also handle the rare case where __init__ runs OUTSIDE an event
+            # loop (e.g. imported during sync startup): fall back to a deferred
+            # init that the first async caller will trigger.
+            try:
+                self._init_task = asyncio.create_task(self._async_init())
+            except RuntimeError:
+                lib_logger.debug(
+                    f"ProviderCache[{self._cache_name}]: no running loop; "
+                    "disk init deferred until first use"
+                )
+                self._init_task = None
         else:
             lib_logger.debug(f"ProviderCache[{self._cache_name}]: Memory-only mode")
 
@@ -164,8 +179,12 @@ class ProviderCache:
 
         try:
             async with self._disk_lock:
-                with open(self._cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                # Off-thread the sync json.load — at startup multiple caches
+                # load in parallel and were blocking the event loop together.
+                def _read():
+                    with open(self._cache_file, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                data = await asyncio.to_thread(_read)
 
                 if data.get("version") != "1.0":
                     lib_logger.warning(

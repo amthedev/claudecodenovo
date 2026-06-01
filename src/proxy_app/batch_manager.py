@@ -20,8 +20,21 @@ class EmbeddingBatcher:
         return await future
 
     async def _batch_worker(self):
+        # OUTER try guards against unhandled exceptions in _gather_batch
+        # (queue corruption, cancellation, etc.). Previously a stray exception
+        # outside the inner try killed the worker silently — clients then hung
+        # forever on `await future` because nothing else served the queue.
+        import logging as _logging
+        _log = _logging.getLogger("rotator_library")
         while True:
-            batch, futures = await self._gather_batch()
+            try:
+                batch, futures = await self._gather_batch()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                _log.error(f"EmbeddingBatcher: _gather_batch crashed ({e!r}); continuing")
+                await asyncio.sleep(0.1)
+                continue
             if not batch:
                 continue
 
@@ -34,14 +47,14 @@ class EmbeddingBatcher:
                     "model": model,
                     "input": inputs
                 }
-                
+
                 # Pass through any other relevant parameters from the first request
                 for key in ["input_type", "dimensions", "user"]:
                     if key in batch[0]:
                         batched_request[key] = batch[0][key]
 
                 response = await self.client.aembedding(**batched_request)
-                
+
                 # Distribute results back to the original requesters
                 for i, future in enumerate(futures):
                     # Create a new response object for each item in the batch
@@ -55,7 +68,8 @@ class EmbeddingBatcher:
 
             except Exception as e:
                 for future in futures:
-                    future.set_exception(e)
+                    if not future.done():
+                        future.set_exception(e)
 
     async def _gather_batch(self) -> Tuple[List[Dict[str, Any]], List[asyncio.Future]]:
         batch = []

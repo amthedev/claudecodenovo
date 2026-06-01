@@ -22,10 +22,11 @@ class CohereProvider(ProviderInterface):
         try:
             response = await client.get(
                 "https://api.cohere.ai/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"}
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30.0,
             )
             response.raise_for_status()
             return [f"cohere/{model['name']}" for model in response.json().get("models", [])]
-        except httpx.RequestError as e:
+        except (httpx.RequestError, httpx.TimeoutException) as e:
             lib_logger.error(f"Failed to fetch Cohere models: {e}")
             return []

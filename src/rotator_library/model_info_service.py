@@ -1282,15 +1282,21 @@ class ModelRegistry:
 # The old alias (ModelInfo = ModelMetadata) has been removed
 ModelInfoService = ModelRegistry
 
-# Global singleton
+# Global singleton — lock-guarded to handle multi-threaded workers safely.
+# Without the lock, two concurrent first-access calls could each instantiate
+# their own ModelRegistry and start parallel fetches with divergent state.
+import threading as _threading
 _registry_instance: Optional[ModelRegistry] = None
+_registry_lock = _threading.Lock()
 
 
 def get_model_info_service() -> ModelRegistry:
     """Get or create the global registry instance."""
     global _registry_instance
     if _registry_instance is None:
-        _registry_instance = ModelRegistry()
+        with _registry_lock:
+            if _registry_instance is None:
+                _registry_instance = ModelRegistry()
     return _registry_instance
 
 

@@ -22,10 +22,11 @@ class OpenRouterProvider(ProviderInterface):
         try:
             response = await client.get(
                 "https://openrouter.ai/api/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"}
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30.0,
             )
             response.raise_for_status()
             return [f"openrouter/{model['id']}" for model in response.json().get("data", [])]
-        except httpx.RequestError as e:
+        except (httpx.RequestError, httpx.TimeoutException) as e:
             lib_logger.error(f"Failed to fetch OpenRouter models: {e}")
             return []
