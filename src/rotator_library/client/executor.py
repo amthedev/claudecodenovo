@@ -382,6 +382,18 @@ class RequestExecutor:
         # Apply provider-specific LiteLLM params
         self._apply_litellm_provider_params(provider, kwargs)
 
+        # Generous request timeout for local/self-hosted text backends. A single
+        # GPU serving code generation under concurrent load can take well over
+        # the library/httpx default before the first/next token, which surfaced
+        # as "começa e congela / dá erro" (litellm.Timeout -> rotate). Only set
+        # it when the caller didn't, and only for the text backends that hit the
+        # shared vLLM. Env: VLLM_REQUEST_TIMEOUT (seconds, default 120).
+        if provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"} and "timeout" not in kwargs:
+            try:
+                kwargs["timeout"] = float(os.environ.get("VLLM_REQUEST_TIMEOUT", "120"))
+            except (TypeError, ValueError):
+                kwargs["timeout"] = 120.0
+
         # Add transaction context for provider logging
         if context.transaction_logger:
             kwargs["transaction_context"] = context.transaction_logger.get_context()

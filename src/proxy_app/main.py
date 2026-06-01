@@ -619,8 +619,12 @@ async def lifespan(app: FastAPI):
         "gemini_cli": {"project_id": os.getenv("GEMINI_CLI_PROJECT_ID")}
     }
 
-    # Load global timeout from environment (default 30 seconds)
-    global_timeout = int(os.getenv("GLOBAL_TIMEOUT", "30"))
+    # Load global timeout from environment. This is the budget for the whole
+    # request including retries across credentials. 30s was too tight for code
+    # generation on a busy single GPU: the first attempt could eat most of it,
+    # leaving no room to retry, surfacing as "começa e congela / dá erro".
+    # 120s gives a slow generation room to finish and still allow one retry.
+    global_timeout = int(os.getenv("GLOBAL_TIMEOUT", "120"))
 
     # The client now uses the root logger configuration
     client = RotatingClient(
