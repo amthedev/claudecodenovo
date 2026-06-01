@@ -392,25 +392,40 @@ async def compact_context_if_needed(
         total, input_budget, model_context, output_reserve,
     )
 
-    # The tool schemas (~2-4k tokens) are re-attached AFTER compaction, downstream.
-    # Reserve their space here so the messages we keep + the tools still fit. We
-    # only build the kept messages against this net budget; the fits-check above
-    # already counted tools via _count_request_tokens.
+    # The tool schemas (~2-4k tokens normal; up to ~30k for Claude Code with
+    # MCP) are re-attached AFTER compaction, downstream. Reserve their space.
+    # Plus reserve room for the summary itself (~3k by default) so the final
+    # request = system + tools + summary + tail still fits the input budget.
     tools_reserve = _estimate_tools_tokens(request)
-    tail_budget = max(2000, input_budget - tools_reserve)
+    summary_reserve = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 3000))
+    tail_budget = max(2000, input_budget - tools_reserve - summary_reserve)
 
     messages = list(request.messages or [])
     if len(messages) <= 2:
         return _fallback_to_recent_context(request, messages, tail_budget, log)
 
+    # Effective keep_tail: cap by both the user-configured value AND by the
+    # actual tail_budget. Previously the env was 16000 but tail_budget could
+    # be only 2000 (Claude Code w/ lots of tools) — the tail loop greedily
+    # filled to 16k, leaving `middle` empty, which dropped us into the
+    # fallback WITHOUT ever attempting a summary. That's why Feitoza's log
+    # kept showing "keeping N/N recent msgs" with no "summary applied" line.
+    effective_keep_tail = max(2000, min(keep_tail_tokens, tail_budget))
+
     # Keep the recent tail intact (current task). Walk from the end accumulating
-    # tokens until we hit keep_tail_tokens; everything before that is the "middle".
+    # tokens until we hit effective_keep_tail; everything before that is the "middle".
+    # CRITICAL: stop accumulating BEFORE consuming all messages — we need at
+    # least ONE message left in the middle to have something to summarize.
     tail: List[Any] = []
     tail_tokens = 0
     split_idx = len(messages)
     for i in range(len(messages) - 1, -1, -1):
         t = _estimate_tokens(_message_text(messages[i]))
-        if tail and tail_tokens + t > keep_tail_tokens:
+        # Stop if adding would overflow tail budget AND tail isn't empty.
+        # Also stop if we'd swallow ALL but the first message — we need at
+        # least one middle message to summarize, otherwise this whole pass
+        # is wasted and we degrade to the brutal fallback.
+        if tail and (tail_tokens + t > effective_keep_tail or i == 0):
             break
         tail.insert(0, messages[i])
         tail_tokens += t
@@ -492,8 +507,14 @@ async def compact_context_if_needed(
     )
     try:
         model = request.model
+        # Was 15s default — but summarizing ~25k tokens of input on Qwen3-32B
+        # easily takes 20-40s (model has to read everything + generate 3k tokens
+        # of output). 15s timed out silently, poisoned the cooldown cache (now
+        # 30s instead of 5min after recent fix), and dropped the next handful
+        # of turns into the brutal recent-context fallback. 60s gives the
+        # model real time to produce a useful summary.
         summary_timeout = max(
-            1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 15)
+            1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 60)
         )
         response = await asyncio.wait_for(
             client.acompletion(
