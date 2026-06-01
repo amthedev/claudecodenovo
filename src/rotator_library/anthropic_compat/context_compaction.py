@@ -228,14 +228,33 @@ def _fallback_to_recent_context(
     *,
     summary_message: Optional[Any] = None,
 ) -> AnthropicMessagesRequest:
-    """Guarantee a bounded request when hidden summarization is unavailable."""
+    """Guarantee a bounded request when hidden summarization is unavailable.
+
+    Previously this was CATASTROPHIC: production logs showed `keeping 1/27 recent
+    msgs` over and over. Tail_budget got squeezed by the tools reserve down to
+    ~5k tokens — that fits one message and dumps the rest. The model then had
+    no idea what the user wanted and answered 'what would you like?'.
+
+    New behavior:
+    1. Preserve at least the last MIN_KEEP_MESSAGES (default 8) messages REGARDLESS
+       of budget — better to slightly overshoot the input ceiling than to nuke
+       the conversation. The model degrades gracefully on slight overshoot;
+       losing 26/27 messages destroys the session entirely.
+    2. If even the minimum tail exceeds the budget hard, truncate the OLDEST kept
+       message rather than dropping (keeps coherence of recent turns).
+    3. Per-message truncation only kicks in for the head of the kept window,
+       NOT the most recent message (that's the active task).
+    """
     summary_message = summary_message or {
         "role": "user",
         "content": _FALLBACK_SUMMARY,
     }
     kept = list(recent_messages)
     original_count = len(kept)
-    while len(kept) > 1:
+    min_keep = _env_int("VLLM_CONTEXT_FALLBACK_MIN_KEEP", 8)
+
+    # Pop oldest until we fit OR we're at min_keep messages — whichever comes first.
+    while len(kept) > max(1, min_keep):
         candidate = [summary_message, *kept]
         if _messages_input_tokens(request.system, candidate) <= input_budget:
             break
@@ -243,10 +262,14 @@ def _fallback_to_recent_context(
 
     candidate = [summary_message, *kept]
     if kept and _messages_input_tokens(request.system, candidate) > input_budget:
-        fixed_tokens = _messages_input_tokens(request.system, [summary_message])
-        available_tokens = max(256, input_budget - fixed_tokens)
-        kept[-1] = _truncate_message_tail(kept[-1], available_tokens)
-        candidate = [summary_message, kept[-1]]
+        # Still overflowing with min_keep messages — truncate the oldest kept
+        # message (its tail is preserved by _truncate_message_tail). This
+        # preserves the count of turns the model sees and the recency of the
+        # task. Better to lose detail in old turn than to lose the turn itself.
+        fixed_tokens = _messages_input_tokens(request.system, [summary_message] + kept[1:])
+        available_tokens = max(512, input_budget - fixed_tokens)
+        kept[0] = _truncate_message_tail(kept[0], available_tokens)
+        candidate = [summary_message, *kept]
 
     log.warning(
         "Context compaction fallback: keeping %d/%d recent msgs within ~%d tok budget",
@@ -287,7 +310,11 @@ def _cache_summary(messages: List[Any], summary: str) -> None:
 
 
 def _cache_summary_failure(messages: List[Any]) -> None:
-    ttl = max(0, _env_int("VLLM_CONTEXT_FAILURE_CACHE_SECONDS", 300))
+    # Was 300 (5 min) — a single transient hiccup poisoned every subsequent
+    # request for 5 minutes, dropping them all into the brutal recent-context
+    # fallback. 30s is enough cooldown for genuine outages without ruining
+    # the next 50 user turns after one timeout.
+    ttl = max(0, _env_int("VLLM_CONTEXT_FAILURE_CACHE_SECONDS", 30))
     key = tuple(_message_fingerprint(message) for message in messages)
     if ttl <= 0 or not key:
         return
