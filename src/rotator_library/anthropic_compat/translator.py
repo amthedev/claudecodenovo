@@ -449,7 +449,10 @@ def _parse_textual_tool_calls(text: str) -> tuple[str, List[dict]]:
 
         tool_input = _normalize_tool_input_for_anthropic(tool_name, tool_input)
 
-        if tool_name and tool_input:
+        # Accept tool calls even with empty args dict — tools like LS, pwd, or
+        # ListFiles legitimately take no parameters. The previous `and tool_input`
+        # check treated {} as missing and rejected those entirely.
+        if tool_name and isinstance(tool_input, dict):
             return {
                 "type": "tool_use",
                 "id": f"toolu_{uuid.uuid4().hex[:12]}",
@@ -915,6 +918,16 @@ def anthropic_to_openai_tools(
     for index, tool in enumerate(anthropic_tools):
         input_schema = tool.get("input_schema")
         if not isinstance(input_schema, dict):
+            # Server-side tools (e.g. Anthropic's web_search) ship without an
+            # input_schema because the provider executes them — vLLM can't, so
+            # we must skip. But we now LOG the skip explicitly, instead of
+            # silently dropping (which previously made tool counts mismatch
+            # and the model later "complained the tool wasn't available").
+            import logging
+            logging.getLogger("rotator_library").info(
+                "Skipping tool %r — no input_schema (likely a server-side tool unsupported by this backend).",
+                tool.get("name"),
+            )
             continue
         raw_name = str(tool.get("name") or "").strip()
         if not raw_name:
@@ -1197,12 +1210,19 @@ def _drop_orphan_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[str,
     results whose call id appears in a preceding assistant tool_calls, and only
     assistant tool_calls whose result follows — keeping the history coherent.
     """
-    # Pass 1: collect tool_call ids that have a following tool result.
-    result_ids = {
-        m.get("tool_call_id")
-        for m in messages
-        if m.get("role") == "tool" and m.get("tool_call_id")
-    }
+    # Pass 1 (order-aware): for each tool result, mark the call_id only if it
+    # appears in an ASSISTANT tool_calls BEFORE this result. A reversed order
+    # (result before its call) is semantically broken — both sides get dropped.
+    seen_call_ids: set = set()
+    result_ids: set = set()
+    for m in messages:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            for tc in m["tool_calls"]:
+                if tc.get("id"):
+                    seen_call_ids.add(tc["id"])
+        elif m.get("role") == "tool" and m.get("tool_call_id"):
+            if m["tool_call_id"] in seen_call_ids:
+                result_ids.add(m["tool_call_id"])
 
     cleaned: List[Dict[str, Any]] = []
     available_call_ids: set = set()
@@ -1507,7 +1527,7 @@ def _append_system_instruction(
 ) -> None:
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
-        existing = messages[0].get("content") or ""
+        existing = _existing_system_text(messages[0].get("content"))
         if VLLM_MANDATORY_TOOL_MARKER not in existing:
             messages[0]["content"] = f"{existing}\n\n{instruction}".strip()
         return
@@ -1841,7 +1861,7 @@ def _inject_vllm_tool_use_prompt(
     prompt = _format_vllm_textual_tool_prompt(tools)
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
-        existing = messages[0].get("content") or ""
+        existing = _existing_system_text(messages[0].get("content"))
         if VLLM_TOOL_USE_SYSTEM_PROMPT not in existing:
             # Only append when the existing system is proxy-injected content only
             # (the boundary marker). If the user supplied a real system prompt
@@ -1856,12 +1876,35 @@ def _inject_vllm_tool_use_prompt(
     messages.insert(0, {"role": "system", "content": prompt})
 
 
+def _existing_system_text(content: Any) -> str:
+    """Coerce a system message's content into a plain string for concatenation.
+
+    Some clients send `content` as a list of blocks (multimodal-style: list of
+    {"type":"text","text":...}). The naive f"{content}\\n\\n{prompt}" produces a
+    str() of the list literal — pure garbage — which then becomes the system
+    message. This helper joins text blocks and ignores non-text safely.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text") or ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    return str(content)
+
+
 def _inject_sensitive_workspace_boundary(openai_request: Dict[str, Any]) -> None:
     """Always present the secrets boundary, regardless of tool/intent heuristics."""
     messages = openai_request.setdefault("messages", [])
     marker = "Sensitive workspace boundary:"
     if messages and messages[0].get("role") == "system":
-        existing = messages[0].get("content") or ""
+        existing = _existing_system_text(messages[0].get("content"))
         if marker not in existing:
             messages[0]["content"] = (
                 f"{existing}\n\n{VLLM_SENSITIVE_WORKSPACE_PROMPT}".strip()
@@ -1878,7 +1921,7 @@ def _inject_native_agent_prompt(openai_request: Dict[str, Any]) -> None:
     marker = "autonomous coding agent operating inside an editor"
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
-        existing = messages[0].get("content") or ""
+        existing = _existing_system_text(messages[0].get("content"))
         if marker not in existing:
             messages[0]["content"] = f"{existing}\n\n{VLLM_NATIVE_AGENT_PROMPT}".strip()
         return
@@ -1888,7 +1931,7 @@ def _inject_native_agent_prompt(openai_request: Dict[str, Any]) -> None:
 def _inject_workspace_path_prompt(openai_request: Dict[str, Any]) -> None:
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
-        existing = messages[0].get("content") or ""
+        existing = _existing_system_text(messages[0].get("content"))
         if VLLM_WORKSPACE_PATH_MARKER not in existing:
             messages[0]["content"] = f"{existing}\n\n{VLLM_WORKSPACE_PATH_PROMPT}".strip()
         return
@@ -1911,17 +1954,21 @@ def _inject_native_tool_allowlist(
     # canonical mapping explicitly so it tries the right one instead of giving up.
     hints = []
     name_set = {n.lower() for n in names}
-    synonyms = {
-        ("search", "find"): "Grep",
-        ("listdir", "list", "dir"): "LS",
-        ("filesystem", "fs"): "Read/Write",
-        ("shell", "terminal", "exec", "execute", "run"): "Bash",
-        ("editfile", "modify"): "Edit",
-        ("createfile", "newfile"): "Write",
-    }
-    for keys, target in synonyms.items():
-        if target.split("/")[0].lower() in name_set or target.lower() in name_set:
-            hints.append(f"{'/'.join(keys)} → {target}")
+    # Each entry: (aliases, list-of-canonical-names). Hint is emitted only if
+    # ALL canonical names actually exist in the allowlist — otherwise we'd be
+    # promising the model a tool that isn't there (e.g. "filesystem → Read/Write"
+    # when only Read exists).
+    synonyms = [
+        (("search", "find"), ["Grep"]),
+        (("listdir", "list", "dir"), ["LS"]),
+        (("filesystem", "fs"), ["Read", "Write"]),
+        (("shell", "terminal", "exec", "execute", "run"), ["Bash"]),
+        (("editfile", "modify"), ["Edit"]),
+        (("createfile", "newfile"), ["Write"]),
+    ]
+    for keys, targets in synonyms:
+        if all(t.lower() in name_set for t in targets):
+            hints.append(f"{'/'.join(keys)} → {'/'.join(targets)}")
     hint_text = (
         f" Common aliases for tools you might be tempted to invent: {'; '.join(hints)}."
         if hints else ""
@@ -1936,7 +1983,7 @@ def _inject_native_tool_allowlist(
     )
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
-        existing = messages[0].get("content") or ""
+        existing = _existing_system_text(messages[0].get("content"))
         if VLLM_NATIVE_TOOL_ALLOWLIST_MARKER not in existing:
             messages[0]["content"] = f"{existing}\n\n{prompt}".strip()
         return
@@ -1975,7 +2022,12 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         # No explicit slash-command setting → follow the env-controlled default.
         _enable_think = _default_think
     extra_body = openai_request.setdefault("extra_body", {})
-    extra_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = _enable_think
+    chat_template_kwargs = extra_body.setdefault("chat_template_kwargs", {})
+    # Respect the client's explicit enable_thinking if it already set one. Only
+    # fill in our computed default when the field is absent. Previous version
+    # always overwrote, ignoring the client's intent.
+    if "enable_thinking" not in chat_template_kwargs:
+        chat_template_kwargs["enable_thinking"] = _enable_think
     # frequency_penalty=0.2 was previously hardcoded here but hurts code quality:
     # variable names and keywords must repeat, and the penalty caused the model to
     # invent alternatives, hallucinate, and produce inconsistent output. Removed.
@@ -2093,9 +2145,13 @@ def openai_to_anthropic_response(
     Returns:
         Response in Anthropic Messages format
     """
-    choice = openai_response.get("choices", [{}])[0]
-    message = choice.get("message", {})
-    usage = openai_response.get("usage", {})
+    # vLLM occasionally returns {"choices": [], "error": ...} on partial failures.
+    # `choices[0]` would IndexError and crash the whole request. Empty/missing
+    # choices → degrade to a graceful empty Anthropic response with end_turn.
+    choices = openai_response.get("choices") or [{}]
+    choice = choices[0] if choices else {}
+    message = choice.get("message") or {}
+    usage = openai_response.get("usage") or {}
 
     # Build content blocks
     content_blocks = []
@@ -2180,6 +2236,12 @@ def openai_to_anthropic_response(
     if finish_reason in {"tool_calls", "function_call"} and not has_tool_use:
         stop_reason = "end_turn"
     if textual_tool_blocks:
+        stop_reason = "tool_use"
+    # If the model emitted a valid tool_use AND was cut by length, Claude Code
+    # needs to know to execute the tool (stop_reason=tool_use), not that the
+    # whole response was truncated (stop_reason=max_tokens, which it ignores).
+    # Without this, partial-but-valid tool calls were silently dropped.
+    if finish_reason == "length" and has_tool_use:
         stop_reason = "tool_use"
 
     # Build usage
