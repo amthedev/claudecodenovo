@@ -167,12 +167,32 @@ def _estimate_tools_tokens(request: AnthropicMessagesRequest) -> int:
         return 0
     import json
 
+    raw = [
+        t.model_dump(exclude_none=True) if hasattr(t, "model_dump") else t
+        for t in tools
+    ]
+    # IMPORTANT: estimate the tools AS THEY WILL BE SENT to vLLM, not the raw
+    # Anthropic schemas. The translator runs anthropic_to_openai_tools +
+    # _compact_tools_for_vllm before sending — that drops examples/$defs/default,
+    # truncates descriptions, and caps the tool count, shrinking ~46k of raw
+    # Claude Code tools down to ~13k. Reserving budget for the RAW size stole
+    # ~30k tokens from the conversation for nothing, collapsing the tail to a
+    # handful of messages. Mirror the real pipeline so the reserve matches what
+    # actually occupies the context window.
     try:
-        serialized = json.dumps(
-            [t.model_dump(exclude_none=True) if hasattr(t, "model_dump") else t for t in tools]
+        from .translator import (
+            anthropic_to_openai_tools,
+            _compact_tools_for_vllm,
         )
+
+        openai_tools = anthropic_to_openai_tools(raw)
+        compacted = _compact_tools_for_vllm(openai_tools) if openai_tools else []
+        serialized = json.dumps(compacted)
     except Exception:
-        serialized = str(tools)
+        try:
+            serialized = json.dumps(raw)
+        except Exception:
+            serialized = str(raw)
     return _estimate_tokens(serialized)
 
 

@@ -23,6 +23,7 @@ from rotator_library.anthropic_compat.context_compaction import (
     _SUMMARY_CACHE,
     _SUMMARY_FAILURE_CACHE,
     _SUMMARY_MARKER,
+    _estimate_tools_tokens,
     _request_input_tokens,
     compact_context_if_needed,
 )
@@ -241,6 +242,54 @@ class ContextCompactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.calls, 1)
         self.assertLessEqual(_request_input_tokens(first), 2000)
         self.assertLessEqual(_request_input_tokens(second), 2000)
+
+
+class ToolsReserveEstimateTests(unittest.TestCase):
+    """The tools reserve must reflect what's ACTUALLY sent to vLLM (compacted),
+    not the raw verbose Anthropic schemas. Over-reserving stole ~26k tokens from
+    the conversation, collapsing the tail to ~3 messages."""
+
+    def _verbose_tool(self, name, n_params=8):
+        props = {
+            f"p{i}": {
+                "type": "string",
+                "description": "D" * 300,
+                "examples": ["e" * 150],
+                "default": "x" * 100,
+            }
+            for i in range(n_params)
+        }
+        return {
+            "name": name,
+            "description": "X" * 1500,
+            "input_schema": {
+                "type": "object",
+                "properties": props,
+                "$defs": {"big": {"type": "string", "description": "Z" * 500}},
+                "required": list(props.keys()),
+            },
+        }
+
+    def test_estimate_uses_compacted_tools_not_raw(self):
+        import json
+
+        tools = [self._verbose_tool(n) for n in
+                 ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Task",
+                  "TodoWrite", "WebFetch", "WebSearch", "LS", "create"]]
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": "oi"}],
+            tools=tools,
+        )
+        estimate = _estimate_tools_tokens(request)
+        raw_serialized = json.dumps(
+            [t.model_dump(exclude_none=True) for t in request.tools]
+        )
+        raw_estimate = int(len(raw_serialized) / 2.8)
+        # The compacted estimate must be much smaller than the raw schema size.
+        self.assertLess(estimate, raw_estimate * 0.6)
+        self.assertGreater(raw_estimate - estimate, 10000)
 
 
 class BackgroundSummaryTests(unittest.IsolatedAsyncioTestCase):
