@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, List, Optional
 
@@ -39,6 +40,7 @@ _FALLBACK_SUMMARY = (
     "a tempo. Continue usando o contexto recente preservado abaixo.]"
 )
 _SUMMARY_CACHE: OrderedDict[tuple[str, ...], str] = OrderedDict()
+_SUMMARY_FAILURE_CACHE: OrderedDict[tuple[str, ...], float] = OrderedDict()
 # Average chars per token for mixed PT/EN/code. Conservative (low) so we
 # over-estimate tokens slightly and compact a bit earlier rather than too late.
 _CHARS_PER_TOKEN = 3.3
@@ -209,6 +211,35 @@ def _cache_summary(messages: List[Any], summary: str) -> None:
         _SUMMARY_CACHE.popitem(last=False)
 
 
+def _cache_summary_failure(messages: List[Any]) -> None:
+    ttl = max(0, _env_int("VLLM_CONTEXT_FAILURE_CACHE_SECONDS", 300))
+    key = tuple(_message_fingerprint(message) for message in messages)
+    if ttl <= 0 or not key:
+        return
+    _SUMMARY_FAILURE_CACHE[key] = time.monotonic() + ttl
+    _SUMMARY_FAILURE_CACHE.move_to_end(key)
+    max_entries = max(1, _env_int("VLLM_CONTEXT_CACHE_MAX_ENTRIES", 64))
+    while len(_SUMMARY_FAILURE_CACHE) > max_entries:
+        _SUMMARY_FAILURE_CACHE.popitem(last=False)
+
+
+def _has_cached_summary_failure(messages: List[Any]) -> bool:
+    fingerprints = tuple(_message_fingerprint(message) for message in messages)
+    now = time.monotonic()
+    matched_key: Optional[tuple[str, ...]] = None
+    for key, expires_at in list(_SUMMARY_FAILURE_CACHE.items()):
+        if expires_at <= now:
+            _SUMMARY_FAILURE_CACHE.pop(key, None)
+            continue
+        if len(key) <= len(fingerprints) and fingerprints[: len(key)] == key:
+            if matched_key is None or len(key) > len(matched_key):
+                matched_key = key
+    if matched_key is None:
+        return False
+    _SUMMARY_FAILURE_CACHE.move_to_end(matched_key)
+    return True
+
+
 def _summary_input_text(messages: List[Any], max_chars: int) -> str:
     text = "\n\n".join(_message_text(m) for m in messages)
     if len(text) <= max_chars:
@@ -309,6 +340,15 @@ async def compact_context_if_needed(
         if previous_summary_msg
         else new_middle
     )
+    if _has_cached_summary_failure(messages_to_summarize):
+        log.info("Context compaction: summary cooldown active; using recent-context fallback")
+        return _fallback_to_recent_context(
+            request,
+            tail,
+            input_budget,
+            log,
+            summary_message=previous_summary_msg,
+        )
     convo_text = _summary_input_text(messages_to_summarize, max_summary_input_chars)
 
     summary_prompt = (
@@ -330,7 +370,7 @@ async def compact_context_if_needed(
     try:
         model = request.model
         summary_timeout = max(
-            1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 45)
+            1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 15)
         )
         response = await asyncio.wait_for(
             client.acompletion(
@@ -351,6 +391,7 @@ async def compact_context_if_needed(
             raise RuntimeError("empty summary")
     except Exception as e:
         log.warning("Context compaction summary failed (%r); using recent-context fallback.", e)
+        _cache_summary_failure(messages_to_summarize)
         if previous_summary_msg:
             return _fallback_to_recent_context(
                 request,

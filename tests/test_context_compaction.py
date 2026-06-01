@@ -20,6 +20,7 @@ sys.modules.setdefault("rotator_library.anthropic_compat", anthropic_package)
 
 from rotator_library.anthropic_compat.context_compaction import (
     _SUMMARY_CACHE,
+    _SUMMARY_FAILURE_CACHE,
     _SUMMARY_MARKER,
     _request_input_tokens,
     compact_context_if_needed,
@@ -52,9 +53,11 @@ class _SummaryClient:
 class ContextCompactionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         _SUMMARY_CACHE.clear()
+        _SUMMARY_FAILURE_CACHE.clear()
 
     def tearDown(self):
         _SUMMARY_CACHE.clear()
+        _SUMMARY_FAILURE_CACHE.clear()
 
     async def test_first_compaction_uses_short_summary_budget(self):
         client = _SummaryClient()
@@ -184,6 +187,41 @@ class ContextCompactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.calls, [])
         self.assertIn(_SUMMARY_MARKER, _content(compacted.messages[0]))
         self.assertLessEqual(_request_input_tokens(compacted), 2100)
+
+    async def test_summary_failure_cooldown_skips_repeated_hidden_call(self):
+        class _FailingClient:
+            def __init__(self):
+                self.calls = 0
+
+            async def acompletion(self, **kwargs):
+                self.calls += 1
+                raise RuntimeError("temporary failure")
+
+        client = _FailingClient()
+        request = _request(
+            [
+                {"role": "user", "content": "antigo " * 1800},
+                {"role": "assistant", "content": "feito " * 1800},
+                {"role": "user", "content": "tarefa atual " * 500},
+            ]
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "VLLM_MODEL_CONTEXT": "4000",
+                "VLLM_CONTEXT_OUTPUT_RESERVE": "1000",
+                "VLLM_CONTEXT_KEEP_TAIL_TOKENS": "1000",
+                "VLLM_CONTEXT_FAILURE_CACHE_SECONDS": "300",
+            },
+            clear=False,
+        ):
+            first = await compact_context_if_needed(request, client)
+            second = await compact_context_if_needed(request, client)
+
+        self.assertEqual(client.calls, 1)
+        self.assertLessEqual(_request_input_tokens(first), 2000)
+        self.assertLessEqual(_request_input_tokens(second), 2000)
 
 
 if __name__ == "__main__":

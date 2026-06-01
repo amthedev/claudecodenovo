@@ -425,7 +425,23 @@ async def caption_images_in_request(
                     )
 
     if image_jobs:
-        log.info("Captioning %d image/page job(s) via %s", len(image_jobs), vision_model)
+        uncached_jobs = sum(
+            1
+            for job in image_jobs
+            if _DESCRIPTION_CACHE.get(
+                _description_cache_key(job[2], job[3], vision_model, max_tokens)
+            )
+            is None
+            and not _has_cached_failure(
+                _description_cache_key(job[2], job[3], vision_model, max_tokens)
+            )
+        )
+        if uncached_jobs:
+            log.info(
+                "Captioning %d uncached image/page job(s) via %s",
+                uncached_jobs,
+                vision_model,
+            )
         descriptions = await asyncio.gather(
             *(
                 _describe_image(job[2], job[3], client, vision_model, max_tokens, log)
