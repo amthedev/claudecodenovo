@@ -52,7 +52,10 @@ VLLM_MAX_OUTPUT_TOKENS = 12288
 VLLM_MAX_INPUT_CHARS = 95000
 VLLM_MAX_MESSAGE_CHARS = 40000
 VLLM_MAX_TOOL_RESULT_CHARS = 20000
-VLLM_MAX_RESPONSE_TEXT_CHARS = 16000
+# Was 16000. Doubled because long technical analyses (code review, multi-file
+# explanation) legitimately go above 16k chars and the truncation message in
+# the middle of a perfectly valid answer makes the model look broken.
+VLLM_MAX_RESPONSE_TEXT_CHARS = 32000
 VLLM_MAX_TOOLS = 16
 # All system-prompt templates live in prompts.py (pure data, no logic). The
 # helpers in this file (e.g. _inject_workspace_path_prompt) consume them.
@@ -119,20 +122,21 @@ _FILE_PATH_TOOL_NAMES = {
     "write",
 }
 _THINK_TAG_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+# These markers MUST be specific enough to ONLY match Qwen3's leaked reasoning
+# (think-style meta-commentary), NOT normal answers in English. Earlier the list
+# included "i need to ", "let me ", "i'll " — those are perfectly valid response
+# openers ("Let me explain step by step.", "I'll add the function and run the
+# tests."). The strip pass was deleting LEGITIMATE first paragraphs and
+# leaving incoherent answers.
+#
+# What we keep: phrases that are unambiguously about the meta-task ("the user
+# asked X so I should Y", "system reminders", "allowed scope"). Removed all
+# generic "I X" openers that double as normal English.
 _REASONING_PREAMBLE_MARKERS = (
-    "i need to ",
-    "i should ",
-    "i'll ",
-    "i will ",
-    "let me ",
     "since the user ",
     "since they ",
-    "the user ",
     "system reminders",
-    "simple response",
-    "that should ",
     "allowed scope",
-    "no need for that",
     "straightforward language switch",
 )
 _CREATE_OR_EDIT_MARKERS = (
@@ -1095,13 +1099,34 @@ def _message_char_size(message: Dict[str, Any]) -> int:
 def _compact_text_middle(text: str, max_chars: int, label: str) -> str:
     if len(text) <= max_chars:
         return text
-    head_chars = max(1, max_chars // 2)
-    tail_chars = max(1, max_chars - head_chars)
-    omitted = len(text) - head_chars - tail_chars
+    # Try to cut at line boundaries so we don't slice a function/struct in
+    # half. Falls back to character cut if no newlines are nearby. Improves
+    # how readable the kept context is to the model — splitting mid-function
+    # makes the model think the code is malformed.
+    head_target = max(1, max_chars // 2)
+    tail_target = max(1, max_chars - head_target)
+    # Snap head to the last newline within ±200 chars of head_target.
+    head_cut = head_target
+    for i in range(min(head_target + 200, len(text)), max(0, head_target - 200), -1):
+        if i < len(text) and text[i] == "\n":
+            head_cut = i
+            break
+    # Snap tail to the first newline within ±200 chars of (len-tail_target).
+    tail_start_target = len(text) - tail_target
+    tail_start = tail_start_target
+    for i in range(max(0, tail_start_target - 200), min(len(text), tail_start_target + 200)):
+        if text[i] == "\n":
+            tail_start = i + 1
+            break
+    if tail_start <= head_cut:
+        # Snapping collapsed the window; fall back to raw char cut.
+        head_cut = head_target
+        tail_start = len(text) - tail_target
+    omitted = max(0, tail_start - head_cut)
     return (
-        f"{text[:head_chars]}\n\n"
+        f"{text[:head_cut]}\n\n"
         f"[... {omitted} characters omitted from {label} to fit hosted vLLM context ...]\n\n"
-        f"{text[-tail_chars:]}"
+        f"{text[tail_start:]}"
     )
 
 
