@@ -54,96 +54,22 @@ VLLM_MAX_MESSAGE_CHARS = 40000
 VLLM_MAX_TOOL_RESULT_CHARS = 20000
 VLLM_MAX_RESPONSE_TEXT_CHARS = 16000
 VLLM_MAX_TOOLS = 16
-VLLM_SENSITIVE_WORKSPACE_PROMPT = (
-    "Sensitive workspace boundary: Do not inspect, grep, read, print, summarize, "
-    "or search for .env files, secrets, tokens, API keys, credentials, private "
-    "URLs, key files, PEM/cert files, SSH files, or auth caches unless the user "
-    "explicitly asks for a security audit or credential configuration help. If "
-    "you encounter such files during normal repo work, ignore their contents. "
-    "Mention only that sensitive files exist if it is directly relevant; never "
-    "reveal values. Adding or opening a repo means work in that repo, not hunting "
-    "for credentials."
-)
-VLLM_TOOL_USE_SYSTEM_PROMPT = (
-    "Anthropic tool bridge contract: when the user asks for an action that "
-    "requires a tool, emit a real tool call instead of narrating the action or "
-    "printing code for the user to copy. Use only the tools and argument schemas "
-    "provided in this request, preserve the user's requested scope, and continue "
-    "from tool results until the task is complete. Do not expose private "
-    "reasoning or <think> blocks. "
-    # Sensitive-workspace boundary is injected unconditionally elsewhere.
-)
-VLLM_TEXTUAL_TOOL_PROMPT = (
-    "The upstream vLLM server may not support native OpenAI tool calling. "
-    "When you need a tool, output exactly one tool call using this format and "
-    "no extra prose:\n"
-    "<tool_call><function=ToolName><parameter=param_name>value</parameter></function></tool_call>\n"
-    "Use only tool names from the available tools list."
-)
-# Behavior-only agentic prompt for NATIVE mode. Says NOTHING about output format
-# (the vLLM parser handles that) — it only fixes the "acts like an intern, asks
-# what to do instead of doing it" complaint by telling the model to execute.
-VLLM_NATIVE_AGENT_PROMPT = (
-    "You are an autonomous coding agent operating inside an editor (Claude Code). "
-    "When the user asks for an action, DO IT using the available tools — read, "
-    "edit, create files and run commands yourself. Do not ask the user for "
-    "permission or for confirmation of obvious next steps, and do not just explain "
-    "what could be done: take the action. Only ask a question when the request is "
-    "genuinely ambiguous or a required detail is missing. Keep working through "
-    "tool results until the user's task is actually complete, then give a short "
-    "summary of what you did."
-)
-VLLM_WORKSPACE_PATH_MARKER = "Workspace path contract:"
-VLLM_WORKSPACE_PATH_PROMPT = (
-    f"{VLLM_WORKSPACE_PATH_MARKER} tool paths are resolved inside the currently "
-    "opened project/workspace, not inside Claude memory, AppData, cache, or config "
-    "folders. Use relative paths from the current workspace or exact paths returned "
-    "by tools such as pwd, LS, Glob, Grep, Read, Write, or Bash. After creating a "
-    "file, reuse the same file_path for later Read/Edit/Bash steps. If a path is "
-    "not found, inspect pwd and list/search the workspace before asking the user "
-    "for help. The Bash tool runs in a Unix-style shell (bash) even on Windows: "
-    "always use forward slashes '/' as the path separator and never backslashes "
-    "'\\' (a Windows path like C:\\Users\\me breaks — write /c/Users/me or, better, "
-    "a path relative to the current directory). Prefer relative paths so the OS "
-    "does not matter. If a 'cd' or command fails with 'No such file or directory', "
-    "run pwd once to see where you are instead of retrying the same path with "
-    "different slashes."
-)
-VLLM_NATIVE_TOOL_ALLOWLIST_MARKER = "Current tool allowlist (exact names):"
-VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
-VLLM_AGENT_FLOW_PROMPT = (
-    "Agent workflow contract: use tools for workspace actions, keep working "
-    "through tool results until the user-visible task is complete, and verify "
-    "edits when a relevant lightweight check is available. Inspect only the "
-    "files needed for the current task; do not broaden the scope on your own. "
-    # Sensitive-workspace boundary is injected unconditionally elsewhere.
-)
-VLLM_MANDATORY_TOOL_PROMPT = (
-    f"{VLLM_MANDATORY_TOOL_MARKER}: The next output must be one tool call in "
-    "the textual tool-call format. Use this only for compatibility backends "
-    "that cannot return native OpenAI tool_calls. After tool results come back, "
-    "continue normally and keep the user's requested scope.\n"
-    f"{VLLM_AGENT_FLOW_PROMPT}"
-)
-VLLM_CREATE_FILE_TOOL_PROMPT = (
-    "This is a create/edit request. Use a file editing tool such as Write, "
-    "Create, Edit, Update, or MultiEdit. If no path is specified, choose a "
-    "short descriptive filename with the right extension for the requested "
-    "language or artifact. Then run it or compile it before finalizing."
-)
-VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
-    "This is a project inspection request. Inspect only files relevant to the "
-    "user's task. Start with LS/Glob or a safe file listing, then read selected "
-    "source/docs/config files needed to answer. Do not read all files blindly. "
-    "Never inspect .env, secrets, credentials, tokens, API keys, private key "
-    "material, auth caches, or credential dumps unless the user explicitly asks "
-    "for security auditing or credential setup. Do not stop after listing files; "
-    "deliver the requested report or next action."
-)
-VLLM_RUN_COMMAND_TOOL_PROMPT = (
-    "This is a run/test request. Use Bash to execute the relevant command "
-    "instead of explaining how the user can run it. If the command fails, "
-    "inspect and retry when the fix is obvious."
+# All system-prompt templates live in prompts.py (pure data, no logic). The
+# helpers in this file (e.g. _inject_workspace_path_prompt) consume them.
+from .prompts import (  # noqa: E402
+    VLLM_SENSITIVE_WORKSPACE_PROMPT,
+    VLLM_TOOL_USE_SYSTEM_PROMPT,
+    VLLM_TEXTUAL_TOOL_PROMPT,
+    VLLM_NATIVE_AGENT_PROMPT,
+    VLLM_WORKSPACE_PATH_MARKER,
+    VLLM_WORKSPACE_PATH_PROMPT,
+    VLLM_NATIVE_TOOL_ALLOWLIST_MARKER,
+    VLLM_MANDATORY_TOOL_MARKER,
+    VLLM_AGENT_FLOW_PROMPT,
+    VLLM_MANDATORY_TOOL_PROMPT,
+    VLLM_CREATE_FILE_TOOL_PROMPT,
+    VLLM_INSPECT_PROJECT_TOOL_PROMPT,
+    VLLM_RUN_COMMAND_TOOL_PROMPT,
 )
 VLLM_TOOL_PRIORITY = {
     "create": 0,
@@ -1310,6 +1236,21 @@ def _drop_orphan_tool_messages(messages: List[Dict[str, Any]]) -> List[Dict[str,
 
 
 def _truncate_messages_for_vllm(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Last-resort blind char-based truncation. The PRIMARY budget controller is
+    the token-based compaction in context_compaction.py (runs BEFORE this for
+    Anthropic+vLLM requests). This guard exists for two reasons:
+
+    1. OpenAI-compatible clients (Cursor / vanilla /v1/chat/completions) skip
+       the Anthropic pipeline entirely — compaction doesn't run for them, so we
+       still need *some* size cap.
+    2. Belt-and-suspenders: if compaction is disabled or fails open, this
+       prevents an unbounded payload from reaching the backend.
+
+    Why chars and not tokens here: this function used to be the only line of
+    defense and char-counting has zero dependencies. Now that compaction runs
+    first for the heavy case, the precise unit matters less; _vllm_max_input_chars
+    derives a floor from VLLM_MODEL_CONTEXT so this guard always sits ABOVE the
+    compaction budget — they never disagree on what fits."""
     messages = _compact_large_messages_for_vllm(messages)
     max_chars = _vllm_max_input_chars()
     if sum(_message_char_size(message) for message in messages) <= max_chars:

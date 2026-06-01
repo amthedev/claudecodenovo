@@ -736,7 +736,24 @@ api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 ADMIN_DATA_FILE = _root_dir / os.getenv("ADMIN_DATA_FILE", "admin_data.json")
 ADMIN_SESSION_COOKIE = "proxy_admin_session"
 ADMIN_SESSION_SECONDS = int(os.getenv("ADMIN_SESSION_SECONDS", "43200"))
-PASSWORD_ITERATIONS = 260_000
+
+# Pure helpers were extracted to auth_helpers.py. The _-prefixed names below
+# remain as thin aliases so the rest of main.py (and any future cherry-pick
+# imports) keeps working without churn.
+from proxy_app.auth_helpers import (  # noqa: E402
+    PASSWORD_ITERATIONS,
+    utc_day as _utc_day,
+    hash_secret as _hash_secret,
+    verify_secret as _verify_secret,
+    hash_api_key as _hash_api_key,
+    generate_proxy_key as _generate_proxy_key,
+    parse_non_negative_int as _parse_daily_limit,
+    parse_non_negative_int as _parse_validity_days,
+    expiry_from_days as _expiry_from_days,
+    timestamp_value as _timestamp_value,
+    is_expired as _is_expired,
+    extract_bearer_token as _extract_bearer_token,
+)
 
 
 def get_rotating_client(request: Request) -> RotatingClient:
@@ -747,10 +764,6 @@ def get_rotating_client(request: Request) -> RotatingClient:
 def get_embedding_batcher(request: Request) -> EmbeddingBatcher:
     """Dependency to get the embedding batcher instance from the app state."""
     return request.app.state.embedding_batcher
-
-
-def _utc_day() -> str:
-    return time.strftime("%Y-%m-%d", time.gmtime())
 
 
 def _default_admin_data() -> Dict[str, Any]:
@@ -781,78 +794,10 @@ def _save_admin_data(data: Dict[str, Any]) -> None:
     tmp_path.replace(ADMIN_DATA_FILE)
 
 
-def _hash_secret(secret_value: str, salt: Optional[str] = None) -> Dict[str, str]:
-    salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        secret_value.encode("utf-8"),
-        bytes.fromhex(salt),
-        PASSWORD_ITERATIONS,
-    ).hex()
-    return {"salt": salt, "hash": digest}
-
-
-def _verify_secret(secret_value: str, stored: Dict[str, str]) -> bool:
-    if not secret_value or not stored:
-        return False
-    candidate = _hash_secret(secret_value, stored.get("salt"))
-    return hmac.compare_digest(candidate["hash"], stored.get("hash", ""))
-
-
-def _hash_api_key(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-
-
-def _generate_proxy_key() -> str:
-    return "sk-" + secrets.token_urlsafe(32).replace("_", "").replace("-", "")[:42]
-
-
-def _parse_daily_limit(value: Any) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _parse_validity_days(value: Any) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _expiry_from_days(validity_days: int) -> Optional[float]:
-    if validity_days <= 0:
-        return None
-    return time.time() + (validity_days * 86400)
-
-
-def _timestamp_value(value: Any) -> Optional[float]:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _is_expired(value: Any) -> bool:
-    ts = _timestamp_value(value)
-    return bool(ts and ts <= time.time())
-
-
 async def _read_form_data(request: Request) -> Dict[str, str]:
     body = (await request.body()).decode("utf-8")
     parsed = parse_qs(body, keep_blank_values=True)
     return {key: values[0] if values else "" for key, values in parsed.items()}
-
-
-def _extract_bearer_token(auth: Optional[str]) -> Optional[str]:
-    if not auth:
-        return None
-    if auth.lower().startswith("bearer "):
-        return auth.split(" ", 1)[1].strip()
-    return auth.strip()
 
 
 def _candidate_api_keys_from_request(request: Request) -> List[str]:
@@ -878,222 +823,23 @@ def _candidate_api_keys_from_request(request: Request) -> List[str]:
     return candidates
 
 
-def _static_env_models() -> list:
-    """Retorna lista de modelos configurados via variáveis de ambiente (fallback estático)."""
-    models = []
-    for env_name in (
-        "PROXY_MODELS",
-        "STATIC_MODELS",
-        "HOSTED_VLLM_MODELS",
-        "OPENAI_MODELS",
-    ):
-        raw = os.getenv(env_name, "").strip()
-        if not raw:
-            continue
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                models.extend(str(m) for m in parsed if m)
-            elif isinstance(parsed, dict):
-                models.extend(str(k) for k in parsed.keys() if k)
-        except json.JSONDecodeError:
-            # Trata como lista separada por vírgula
-            models.extend(m.strip() for m in raw.split(",") if m.strip())
-    return list(dict.fromkeys(models))
-
-
-def _default_proxy_model() -> Optional[str]:
-    for env_name in (
-        "PROXY_DEFAULT_MODEL",
-        "DEFAULT_PROXY_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    ):
-        value = os.getenv(env_name)
-        if value:
-            return value.strip()
-
-    static_models = _static_env_models()
-    if static_models:
-        return static_models[0]
-    return None
-
-
-def _resolve_model_alias(model: Optional[str]) -> Optional[str]:
-    if not model:
-        return model
-    model = model.strip()
-    if "/" in model:
-        return model
-
-    default_model = _default_proxy_model()
-    if not default_model:
-        return model
-
-    # Se o default_model não tem prefixo de provider, tenta descobrir o provider
-    # a partir das credenciais configuradas para evitar o erro
-    # "Invalid model format or no credentials for provider".
-    if "/" not in default_model:
-        provider_prefix = os.getenv("PROXY_DEFAULT_PROVIDER", "")
-        if not provider_prefix:
-            # Infere o provider pela env var de base URL mais comum
-            if os.getenv("HOSTED_VLLM_API_BASE") or os.getenv("VLLM_API_BASE"):
-                provider_prefix = "hosted_vllm"
-            elif os.getenv("OPENAI_API_KEY"):
-                provider_prefix = "openai"
-        if provider_prefix:
-            default_model = f"{provider_prefix}/{default_model}"
-
-    alias_env = os.getenv("PROXY_MODEL_ALIASES", "")
-    aliases = {
-        "claude-code-pro",
-        "claude-code-sonnet",
-        "claude-code-opus",
-        "claude-code-haiku",
-    }
-    aliases.update(alias.strip() for alias in alias_env.split(",") if alias.strip())
-
-    # Claude Code and some OpenAI-compatible clients send providerless model names.
-    if model in aliases or "/" not in model:
-        logging.info("Mapping client model '%s' to '%s'", model, default_model)
-        return default_model
-    return model
-
-
-def _apply_thinking_mode_openai(request_data: dict, original_model: str) -> None:
-    """
-    Injeta modo thinking do Qwen3 baseado no nome original do modelo.
-    - opus  -> enable_thinking=True, budget=10000 tokens (mais inteligente, mais lento)
-    - outros -> enable_thinking=False (rapido, sem raciocinio extendido)
-    """
-    is_opus = "opus" in (original_model or "").lower()
-    extra = request_data.setdefault("extra_body", {})
-    extra.setdefault("chat_template_kwargs", {})["enable_thinking"] = is_opus
-    if is_opus:
-        extra["thinking"] = {"type": "enabled", "budget_tokens": 10000}
-        logging.info("[thinking] opus -> enable_thinking=True (deep analysis)")
-    else:
-        logging.info("[thinking] sonnet -> enable_thinking=False (fast)")
-
-
-def _virtual_claude_models() -> list:
-    """
-    Retorna lista de nomes Claude-branded para exibir no /v1/models.
-    Configuravel via env var VIRTUAL_MODELS (separado por virgula).
-    """
-    raw = os.getenv("VIRTUAL_MODELS", "claude-sonnet-4-5,claude-opus-4-6,claude-opus-4-7")
-    return [m.strip() for m in raw.split(",") if m.strip()]
-
-
-def _virtual_model_context_window() -> int:
-    return 32768
-
-
-def _virtual_model_max_output_tokens() -> int:
-    return 4096
-
-
-def _apply_virtual_model_limits(model_cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    virtual_models = set(_virtual_claude_models())
-    if not virtual_models:
-        return model_cards
-
-    context_window = _virtual_model_context_window()
-    max_output_tokens = _virtual_model_max_output_tokens()
-
-    for card in model_cards:
-        if not isinstance(card, dict) or card.get("id") not in virtual_models:
-            continue
-        card["owned_by"] = card.get("id") or "claude"
-        card["context_length"] = context_window
-        card["context_window"] = context_window
-        card["max_input_tokens"] = context_window
-        card["max_completion_tokens"] = max_output_tokens
-        card["max_output_tokens"] = max_output_tokens
-
-    return model_cards
-
-
-def _is_virtual_claude_model(model: Optional[str]) -> bool:
-    if not model:
-        return False
-    return model.strip() in set(_virtual_claude_models())
-
-
-def _public_response_model(
-    original_model: Optional[str], resolved_model: Optional[str]
-) -> Optional[str]:
-    """
-    Model name that should be visible to API clients.
-
-    The provider model can be Qwen/vLLM internally, but clients should only see
-    Claude-branded virtual models when those are configured.
-    """
-    original_model = (original_model or "").strip()
-    if _is_virtual_claude_model(original_model):
-        return original_model
-
-    virtual_models = _virtual_claude_models()
-    if original_model and "/" not in original_model and virtual_models:
-        return virtual_models[0]
-
-    resolved_model = (resolved_model or "").strip()
-    default_model = (_default_proxy_model() or "").strip()
-    if resolved_model and default_model and resolved_model == default_model:
-        if virtual_models:
-            return virtual_models[0]
-
-    return original_model or resolved_model or None
-
-
-def _identity_instruction(public_model: Optional[str]) -> Optional[str]:
-    if not _is_virtual_claude_model(public_model):
-        return None
-    return (
-        f"You are {public_model}. If asked what model you are, answer with "
-        f"{public_model}. Do not mention any upstream, proxy, or internal model name."
-    )
-
-
-def _inject_openai_identity(request_data: dict, public_model: Optional[str]) -> None:
-    instruction = _identity_instruction(public_model)
-    if not instruction:
-        return
-
-    messages = request_data.get("messages")
-    if not isinstance(messages, list):
-        return
-
-    if (
-        messages
-        and isinstance(messages[0], dict)
-        and messages[0].get("role") == "system"
-    ):
-        existing = messages[0].get("content") or ""
-        messages[0]["content"] = (
-            f"{instruction}\n\n{existing}" if existing else instruction
-        )
-    else:
-        messages.insert(0, {"role": "system", "content": instruction})
-
-
-def _inject_anthropic_identity(
-    body: AnthropicMessagesRequest, public_model: Optional[str]
-) -> AnthropicMessagesRequest:
-    instruction = _identity_instruction(public_model)
-    if not instruction:
-        return body
-
-    system = body.system
-    if system is None:
-        system = instruction
-    elif isinstance(system, str):
-        system = f"{instruction}\n\n{system}" if system else instruction
-    elif isinstance(system, list):
-        system = [{"type": "text", "text": instruction}, *system]
-
-    return body.model_copy(update={"system": system})
+# Model resolution + identity injection were extracted to model_resolution.py.
+# Re-exported via _-prefixed aliases so the rest of main.py keeps working.
+from proxy_app.model_resolution import (  # noqa: E402
+    static_env_models as _static_env_models,
+    default_proxy_model as _default_proxy_model,
+    resolve_model_alias as _resolve_model_alias,
+    apply_thinking_mode_openai as _apply_thinking_mode_openai,
+    virtual_claude_models as _virtual_claude_models,
+    virtual_model_context_window as _virtual_model_context_window,
+    virtual_model_max_output_tokens as _virtual_model_max_output_tokens,
+    apply_virtual_model_limits as _apply_virtual_model_limits,
+    is_virtual_claude_model as _is_virtual_claude_model,
+    public_response_model as _public_response_model,
+    identity_instruction as _identity_instruction,
+    inject_openai_identity as _inject_openai_identity,
+    inject_anthropic_identity as _inject_anthropic_identity,
+)
 
 
 def _active_admin_session(request: Request) -> Optional[Dict[str, Any]]:
