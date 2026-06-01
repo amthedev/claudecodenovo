@@ -33,6 +33,11 @@ if TYPE_CHECKING:
     from ..client.rotating_client import RotatingClient
 
 _SUMMARY_MARKER = "[Resumo da conversa anterior]"
+_FALLBACK_SUMMARY = (
+    f"{_SUMMARY_MARKER}\n"
+    "[Mensagens antigas omitidas automaticamente porque o resumo não ficou pronto "
+    "a tempo. Continue usando o contexto recente preservado abaixo.]"
+)
 _SUMMARY_CACHE: OrderedDict[tuple[str, ...], str] = OrderedDict()
 # Average chars per token for mixed PT/EN/code. Conservative (low) so we
 # over-estimate tokens slightly and compact a bit earlier rather than too late.
@@ -104,6 +109,77 @@ def _request_input_tokens(request: AnthropicMessagesRequest) -> int:
     return total
 
 
+def _messages_input_tokens(system: Any, messages: List[Any]) -> int:
+    return _estimate_tokens(_system_text(system)) + sum(
+        _estimate_tokens(_message_text(message)) for message in messages
+    )
+
+
+def _truncate_message_tail(message: Any, max_tokens: int) -> Any:
+    max_chars = max(256, int(max_tokens * _CHARS_PER_TOKEN))
+    role = (
+        message.get("role", "")
+        if isinstance(message, dict)
+        else getattr(message, "role", "")
+    )
+    content = (
+        message.get("content")
+        if isinstance(message, dict)
+        else getattr(message, "content", "")
+    )
+    if isinstance(content, str):
+        text = content
+    else:
+        text = "\n".join(_block_text(block) for block in (content or []))
+    role_prefix = f"{role}: "
+    if len(role_prefix) + len(text) <= max_chars:
+        return message
+    prefix = "[... conteúdo antigo omitido ...]\n"
+    tail_chars = max(0, max_chars - len(role_prefix) - len(prefix))
+    tail_text = text[-tail_chars:] if tail_chars else ""
+    trimmed = f"{prefix}{tail_text}"
+    if isinstance(message, dict):
+        return {**message, "content": trimmed}
+    return message.model_copy(update={"content": trimmed})
+
+
+def _fallback_to_recent_context(
+    request: AnthropicMessagesRequest,
+    recent_messages: List[Any],
+    input_budget: int,
+    log: logging.Logger,
+    *,
+    summary_message: Optional[Any] = None,
+) -> AnthropicMessagesRequest:
+    """Guarantee a bounded request when hidden summarization is unavailable."""
+    summary_message = summary_message or {
+        "role": "user",
+        "content": _FALLBACK_SUMMARY,
+    }
+    kept = list(recent_messages)
+    original_count = len(kept)
+    while len(kept) > 1:
+        candidate = [summary_message, *kept]
+        if _messages_input_tokens(request.system, candidate) <= input_budget:
+            break
+        kept.pop(0)
+
+    candidate = [summary_message, *kept]
+    if kept and _messages_input_tokens(request.system, candidate) > input_budget:
+        fixed_tokens = _messages_input_tokens(request.system, [summary_message])
+        available_tokens = max(256, input_budget - fixed_tokens)
+        kept[-1] = _truncate_message_tail(kept[-1], available_tokens)
+        candidate = [summary_message, kept[-1]]
+
+    log.warning(
+        "Context compaction fallback: keeping %d/%d recent msgs within ~%d tok budget",
+        len(kept),
+        original_count,
+        input_budget,
+    )
+    return request.model_copy(update={"messages": candidate})
+
+
 def _message_fingerprint(message: Any) -> str:
     return hashlib.sha256(_message_text(message).encode("utf-8")).hexdigest()
 
@@ -171,7 +247,7 @@ async def compact_context_if_needed(
 
     messages = list(request.messages or [])
     if len(messages) <= 2:
-        return request  # nothing to compact (single exchange too big is handled by truncation)
+        return _fallback_to_recent_context(request, messages, input_budget, log)
 
     # Keep the recent tail intact (current task). Walk from the end accumulating
     # tokens until we hit keep_tail_tokens; everything before that is the "middle".
@@ -187,9 +263,7 @@ async def compact_context_if_needed(
         split_idx = i
     middle = messages[:split_idx]
     if not middle:
-        # Tail alone already exceeds budget — nothing old to summarize; let the
-        # downstream char-truncation guard handle it.
-        return request
+        return _fallback_to_recent_context(request, tail, input_budget, log)
 
     has_previous_summary = bool(
         middle and _SUMMARY_MARKER in _message_text(middle[0])
@@ -276,10 +350,16 @@ async def compact_context_if_needed(
         if not summary:
             raise RuntimeError("empty summary")
     except Exception as e:
-        log.warning("Context compaction summary failed (%s); leaving truncation to guard.", e)
+        log.warning("Context compaction summary failed (%r); using recent-context fallback.", e)
         if previous_summary_msg:
-            return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
-        return request  # safe fallback: char-truncation downstream still applies
+            return _fallback_to_recent_context(
+                request,
+                tail,
+                input_budget,
+                log,
+                summary_message=previous_summary_msg,
+            )
+        return _fallback_to_recent_context(request, tail, input_budget, log)
 
     if not has_previous_summary:
         _cache_summary(middle, summary)

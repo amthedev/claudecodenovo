@@ -21,6 +21,7 @@ sys.modules.setdefault("rotator_library.anthropic_compat", anthropic_package)
 from rotator_library.anthropic_compat.context_compaction import (
     _SUMMARY_CACHE,
     _SUMMARY_MARKER,
+    _request_input_tokens,
     compact_context_if_needed,
 )
 from rotator_library.anthropic_compat.models import AnthropicMessagesRequest
@@ -134,7 +135,7 @@ class ContextCompactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(_SUMMARY_MARKER, _content(first.messages[0]))
         self.assertIn(_SUMMARY_MARKER, _content(second.messages[0]))
 
-    async def test_summary_timeout_falls_back_without_breaking_request(self):
+    async def test_summary_timeout_falls_back_to_bounded_recent_context(self):
         class _SlowClient:
             async def acompletion(self, **kwargs):
                 await asyncio.sleep(10)
@@ -159,7 +160,30 @@ class ContextCompactionTests(unittest.IsolatedAsyncioTestCase):
         ):
             compacted = await compact_context_if_needed(request, _SlowClient())
 
-        self.assertIs(compacted, request)
+        self.assertIsNot(compacted, request)
+        self.assertIn(_SUMMARY_MARKER, _content(compacted.messages[0]))
+        self.assertIn("tarefa atual", _content(compacted.messages[-1]))
+        self.assertLessEqual(_request_input_tokens(compacted), 2000)
+
+    async def test_single_oversized_message_is_trimmed_to_budget(self):
+        client = _SummaryClient()
+        request = _request(
+            [{"role": "user", "content": "pedido recente " * 3000}]
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "VLLM_MODEL_CONTEXT": "4000",
+                "VLLM_CONTEXT_OUTPUT_RESERVE": "1000",
+            },
+            clear=False,
+        ):
+            compacted = await compact_context_if_needed(request, client)
+
+        self.assertEqual(client.calls, [])
+        self.assertIn(_SUMMARY_MARKER, _content(compacted.messages[0]))
+        self.assertLessEqual(_request_input_tokens(compacted), 2100)
 
 
 if __name__ == "__main__":
