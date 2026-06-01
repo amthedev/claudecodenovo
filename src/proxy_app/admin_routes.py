@@ -10,6 +10,7 @@ from . import admin_db
 COOKIE = "proxy_admin_v2"
 RESELLER_COOKIE = "proxy_reseller_v1"          # legacy: login por chave mestre
 RESELLER_ACCT_COOKIE = "proxy_reseller_acct_v1"  # novo: login email/senha
+CLIENT_COOKIE = "proxy_client_v1"              # painel /cliente: chave colada → sessão
 
 async def _form(req) -> dict:
     """Parse URL-encoded form sem precisar de python-multipart."""
@@ -267,9 +268,20 @@ def _premium_dashboard_html(scope: str) -> str:
     `scope` is 'admin' or 'reseller'; the JS fetches the matching overview endpoint
     and renders Chart.js. Both share the same layout to keep one implementation.
     """
-    api = "/admin/api/overview" if scope == "admin" else "/reseller/api/overview"
+    api = {"admin": "/admin/api/overview",
+           "reseller": "/reseller/api/overview",
+           "client": "/cliente/api/overview"}.get(scope, "/admin/api/overview")
     # KPI cards differ slightly by scope.
-    if scope == "admin":
+    if scope == "client":
+        kpis = [
+            ("k-green",  "tokens_remaining", "Saldo restante", "tokens disponíveis"),
+            ("k-blue",   "tokens_today",     "Gasto hoje", "tokens"),
+            ("k-violet", "tokens_total",     "Gasto total", "desde o início"),
+            ("k-amber",  "daily_limit",      "Limite diário", "tokens/dia"),
+        ]
+        donut_title = ""
+        rank_title = ""
+    elif scope == "admin":
         kpis = [
             ("k-green",  "tokens_today",  "Tokens hoje", ""),
             ("k-violet", "tokens_sold",   "Tokens vendidos", "distribuídos a revendedores"),
@@ -295,8 +307,26 @@ def _premium_dashboard_html(scope: str) -> str:
         f'<div class="k-sub">{sub}</div></div>'
         for (cls, key, lbl, sub) in kpis
     )
-    return f"""<div id="dash" data-api="{api}" data-scope="{scope}">
-      <div class="kpi-grid">{kpi_cards}</div>
+    if scope == "client":
+        # Client panel: line chart (tokens) + bar chart (requests). No donut/ranking.
+        body = """
+      <div class="dash-grid">
+        <div class="chart-card">
+          <div class="chart-head"><b>Tokens consumidos</b>
+            <div class="period">
+              <button data-d="7">7d</button><button data-d="14" class="on">14d</button>
+              <button data-d="30">30d</button><button data-d="90">90d</button>
+            </div>
+          </div>
+          <div class="chart-box"><canvas id="cArea"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <b style="font-size:15px">Requisições por dia</b>
+          <div class="chart-box" style="margin-top:10px"><canvas id="cBar"></canvas></div>
+        </div>
+      </div>"""
+    else:
+        body = f"""
       <div class="dash-grid">
         <div class="chart-card">
           <div class="chart-head"><b>Consumo de tokens</b>
@@ -315,7 +345,10 @@ def _premium_dashboard_html(scope: str) -> str:
       <div class="chart-card" style="margin-bottom:20px">
         <b style="font-size:15px">{rank_title}</b>
         <div class="rank-list" id="rankList" style="margin-top:12px"></div>
-      </div>
+      </div>"""
+    return f"""<div id="dash" data-api="{api}" data-scope="{scope}">
+      <div class="kpi-grid">{kpi_cards}</div>
+      {body}
     </div>
     <script>{_DASH_JS}</script>"""
 
@@ -328,7 +361,7 @@ _DASH_JS = """
     if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M';
     if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return n.toLocaleString('pt-BR'); };
   const C={green:'#22c55e',blue:'#3b82f6',violet:'#6366f1',amber:'#f59e0b'};
-  let area, donut;
+  let area, donut, bar;
   function render(d){
     const k=d.kpis||{};
     dash.querySelectorAll('[data-kpi]').forEach(el=>{
@@ -337,6 +370,17 @@ _DASH_JS = """
     });
     const s=d.series||[];
     const labels=s.map(x=>x.label), toks=s.map(x=>x.tokens), reqs=s.map(x=>x.requests);
+    // Bar chart (client panel): requests per day. Only if the canvas exists.
+    const barCanvas=document.getElementById('cBar');
+    if(barCanvas){
+      if(bar){bar.destroy();bar=null;}
+      bar=new Chart(barCanvas.getContext('2d'),{type:'bar',data:{labels,datasets:[
+        {label:'Requisições',data:reqs,backgroundColor:C.green,borderRadius:6,maxBarThickness:22}
+      ]},options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{x:{grid:{display:false},ticks:{color:'#6b7280',maxTicksLimit:8}},
+          y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#6b7280',precision:0}}}}});
+    }
     const ctxA=document.getElementById('cArea').getContext('2d');
     const grad=ctxA.createLinearGradient(0,0,0,200);
     grad.addColorStop(0,'rgba(99,102,241,.45)');grad.addColorStop(1,'rgba(99,102,241,0)');
@@ -349,19 +393,21 @@ _DASH_JS = """
       scales:{x:{grid:{display:false},ticks:{color:'#6b7280',maxTicksLimit:8}},
         y:{position:'left',grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#6b7280',callback:fmt}},
         y1:{position:'right',grid:{display:false},ticks:{color:'#6b7280'}}}}});
-    // donut + ranking
+    // donut + ranking (only present on admin/reseller dashboards, not /cliente)
+    const donutCanvas=document.getElementById('cDonut');
+    const list=document.getElementById('rankList');
+    if(!donutCanvas && !list) return;  // client panel has neither
     const rank=(scope==='admin')?(d.reseller_rank||[]):(d.client_rank||[]);
     const top=rank.slice(0,6).filter(r=>r.tokens_used>0);
-    const donutCanvas=document.getElementById('cDonut');
     if(donut){donut.destroy();donut=null;}
-    if(top.length){
+    if(donutCanvas && top.length){
       donutCanvas.style.display='';
       donut=new Chart(donutCanvas.getContext('2d'),{type:'doughnut',data:{labels:top.map(r=>r.name),
         datasets:[{data:top.map(r=>r.tokens_used),backgroundColor:[C.violet,C.green,C.blue,C.amber,'#ec4899','#14b8a6'],borderWidth:0}]},
         options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
           plugins:{legend:{position:'bottom',labels:{color:'#9ca3af',usePointStyle:true,boxWidth:8,font:{size:11}}}}}});
-    }else{ donutCanvas.style.display='none'; }
-    const list=document.getElementById('rankList');
+    }else if(donutCanvas){ donutCanvas.style.display='none'; }
+    if(!list) return;
     list.innerHTML = rank.length ? rank.slice(0,10).map((r,i)=>
       `<div class="rank-row"><div class="pos">${i+1}</div>
        <div class="rn">${r.name}${r.email?` <span class="rsub">${r.email}</span>`:''}</div>
@@ -1213,6 +1259,65 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         r.delete_cookie(RESELLER_ACCT_COOKIE)
         r.delete_cookie(RESELLER_COOKIE)
         return r
+
+    # ── Painel do cliente (/cliente) ────────────────────────────────────────
+    @app.get("/cliente", response_class=HTMLResponse)
+    async def client_panel(req: Request, err: str = ""):
+        kid = admin_db.client_session_key_id(req.cookies.get(CLIENT_COOKIE, ""))
+        if not kid:
+            # Not logged in: show the "paste your key" screen.
+            error = f'<div style="color:var(--red);margin-bottom:12px">{_e(err)}</div>' if err else ""
+            return _page("Meu painel", f"""<div class="container" style="max-width:440px;padding-top:70px">
+              <div class="card"><h1>Meu consumo</h1>
+              <p style="color:var(--muted);margin:8px 0 20px">Cole sua chave de API para ver seus limites e gastos. Você fica conectado neste navegador.</p>{error}
+              <form method="post" action="/cliente/login">
+              <label>Sua chave</label><input name="key" required autofocus placeholder="sk-..." autocomplete="off">
+              <button class="btn" style="width:100%;margin-top:18px">Entrar</button></form>
+              <p style="color:var(--muted);margin-top:16px;text-align:center;font-size:13px">
+              Quer revender? <a href="/reseller/signup" style="color:var(--green)">Cadastre-se como revendedor</a></p>
+              </div></div>""")
+        # Logged in: show the premium client dashboard + actions.
+        plan = (admin_db.get_client_overview(kid, 1) or {}).get("plan", "")
+        header = f"""<nav><span class="logo">&#9670; Meu painel</span>
+          <span class="spacer"></span>
+          {f'<span class="mono" style="font-size:11px;color:var(--muted)">{_e(plan)}</span>' if plan else ''}
+          <a class="btn-ghost btn-sm" href="/reseller/signup" style="margin-right:8px">Quero revender</a>
+          <form method="post" action="/cliente/logout" style="margin:0"><button class="btn-ghost btn-sm">Sair</button></form>
+        </nav>"""
+        dash = _premium_dashboard_html("client")
+        return HTMLResponse(f"""<!DOCTYPE html><html lang="pt-BR"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meu painel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>{CSS}</style></head><body>{header}
+<div class="container" style="padding-top:24px">{dash}</div></body></html>""")
+
+    @app.post("/cliente/login")
+    async def client_login(req: Request):
+        from proxy_app.rate_limit import enforce_login_rate_limit
+        await enforce_login_rate_limit(req)
+        f = await _form(req)
+        result = admin_db.create_client_session(f.get("key", ""))
+        if result.get("error"):
+            return _with_error("/cliente", result["error"])
+        r = RedirectResponse("/cliente", 302)
+        r.set_cookie(CLIENT_COOKIE, result["token"], httponly=True,
+                     secure=_secure_cookie(req), samesite="lax", max_age=admin_db.SESSION_TTL)
+        return r
+
+    @app.post("/cliente/logout")
+    async def client_logout(req: Request):
+        admin_db.delete_client_session(req.cookies.get(CLIENT_COOKIE, ""))
+        r = RedirectResponse("/cliente", 302)
+        r.delete_cookie(CLIENT_COOKIE)
+        return r
+
+    @app.get("/cliente/api/overview")
+    async def client_api_overview(req: Request, days: int = 14):
+        kid = admin_db.client_session_key_id(req.cookies.get(CLIENT_COOKIE, ""))
+        if not kid:
+            raise HTTPException(401, "Sessão expirada. Cole sua chave novamente.")
+        return JSONResponse(admin_db.get_client_overview(kid, min(max(days, 1), 90)))
 
     @app.post("/reseller/create-key")
     async def reseller_create_key(req: Request):

@@ -122,6 +122,13 @@ def init_db() -> None:
                 FOREIGN KEY (account_id) REFERENCES web_accounts(id) ON DELETE CASCADE,
                 FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS client_sessions (
+                token_hash TEXT PRIMARY KEY,
+                key_id TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS drive_automations (
                 id TEXT PRIMARY KEY,
                 account_id TEXT NOT NULL,
@@ -610,6 +617,50 @@ def _create_web_session(account_id: str, key_id: str) -> str:
             (hash_api_key(token), account_id, key_id, now, now + SESSION_TTL),
         )
     return token
+
+
+def create_client_session(raw_key: str) -> Dict[str, Any]:
+    """For the /cliente panel: validate a pasted client key and return an opaque
+    session token (so the raw key never lives in a browser cookie). Returns
+    {"token", "key_id"} on success or {"error": msg} on failure. Uses its own
+    client_sessions table (no web_account needed behind a pasted-key session)."""
+    verified = verify_api_key_db((raw_key or "").strip())
+    if not verified:
+        return {"error": "Chave inválida ou não encontrada."}
+    if verified.get("error"):
+        return {"error": verified["error"]}
+    token = "cli-" + secrets.token_urlsafe(36)
+    now = time.time()
+    with _db() as c:
+        c.execute("DELETE FROM client_sessions WHERE expires_at<=?", (now,))
+        c.execute(
+            """INSERT INTO client_sessions(token_hash,key_id,created_at,expires_at)
+               VALUES(?,?,?,?)""",
+            (hash_api_key(token), verified["app_id"], now, now + SESSION_TTL),
+        )
+    return {"token": token, "key_id": verified["app_id"]}
+
+
+def client_session_key_id(token: str) -> Optional[str]:
+    """Resolve a /cliente session cookie back to its key_id (or None if expired)."""
+    if not token:
+        return None
+    now = time.time()
+    with _db() as c:
+        c.execute("DELETE FROM client_sessions WHERE expires_at<=?", (now,))
+        row = c.execute(
+            "SELECT key_id FROM client_sessions WHERE token_hash=? AND expires_at>?",
+            (hash_api_key(token), now),
+        ).fetchone()
+    return row["key_id"] if row else None
+
+
+def delete_client_session(token: str) -> None:
+    """Drop a /cliente session (logout)."""
+    if not token:
+        return
+    with _db() as c:
+        c.execute("DELETE FROM client_sessions WHERE token_hash=?", (hash_api_key(token),))
 
 
 def create_web_account(name: str, email: str, password: str, raw_key: str) -> Dict[str, Any]:
@@ -1353,6 +1404,27 @@ def get_reseller_overview(reseller_key_id: str, days: int = 14) -> Dict[str, Any
         },
         "series": series,
         "client_rank": client_rank,
+        "days": days,
+    }
+
+
+def get_client_overview(key_id: str, days: int = 14) -> Dict[str, Any]:
+    """Overview for a single client's own key (the /cliente panel): balance,
+    today/total usage, daily limit, and the time series of their consumption."""
+    key = next((k for k in list_api_keys() if k["id"] == key_id), None)
+    if not key:
+        return {"kpis": {}, "series": _usage_series_for_keys([], days), "days": days}
+    series = _usage_series_for_keys([key_id], days)
+    return {
+        "kpis": {
+            "tokens_remaining": key.get("tokens_remaining"),
+            "token_limit": int(key["token_limit"]) if key.get("token_limit") else 0,
+            "tokens_today": int(key.get("tokens_today") or 0),
+            "tokens_total": int(key.get("tokens_total") or 0),
+            "daily_limit": int(key["daily_limit"]) if key.get("daily_limit") else 0,
+        },
+        "series": series,
+        "plan": key.get("name", ""),
         "days": days,
     }
 
