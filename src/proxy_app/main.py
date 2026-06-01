@@ -292,15 +292,27 @@ console_handler.setFormatter(formatter)
 info_file_handler = logging.FileHandler(LOG_DIR / "proxy.log", encoding="utf-8")
 info_file_handler.setLevel(logging.INFO)
 info_file_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging.Formatter(
+        "%(asctime)s [req=%(request_id)s client=%(client_id)s] %(name)s - %(levelname)s - %(message)s"
+    )
 )
 
 # Configure a dedicated file handler for all DEBUG-level logs
 debug_file_handler = logging.FileHandler(LOG_DIR / "proxy_debug.log", encoding="utf-8")
 debug_file_handler.setLevel(logging.DEBUG)
 debug_file_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging.Formatter(
+        "%(asctime)s [req=%(request_id)s client=%(client_id)s] %(name)s - %(levelname)s - %(message)s"
+    )
 )
+
+# Stamp every record with request_id/client_id (see request_context.py)
+from proxy_app.request_context import RequestContextFilter  # noqa: E402
+
+_req_ctx_filter = RequestContextFilter()
+console_handler.addFilter(_req_ctx_filter)
+info_file_handler.addFilter(_req_ctx_filter)
+debug_file_handler.addFilter(_req_ctx_filter)
 
 
 # Create a filter to ensure the debug handler ONLY gets DEBUG messages from the rotator_library
@@ -659,12 +671,51 @@ async def lifespan(app: FastAPI):
         logging.info("RotatingClient closed.")
 
 
-# --- Thinking mode global state ---
+# --- Thinking mode persistido em SQLite (multi-worker safe) ---
 # "off" = desabilitado | "on" = habilitado | "auto" = só opus
-_thinking_mode: str = "off"
+# Antes era um global em memória; com gunicorn -w N o /think on só pegava em 1
+# dos N workers e ficava intermitente. Agora cada leitura/escrita vai pro DB.
+from proxy_app.admin_db import (  # noqa: E402
+    get_thinking_mode as _db_get_thinking_mode,
+    set_thinking_mode as _db_set_thinking_mode,
+)
+
+
+class _ThinkingModeProxy:
+    """Mantém `_thinking_mode` como atributo do módulo (translator.py lê via
+    sys.modules), mas toda leitura/escrita passa pelo SQLite agora."""
+
+    def __get__(self, *_):
+        return _db_get_thinking_mode()
+
+    def __set__(self, *_):
+        # módulo-level set é raro; ignorado — use _set_thinking_mode().
+        pass
+
+
+def _set_thinking_mode(mode: str) -> str:
+    return _db_set_thinking_mode(mode)
+
+
+def _get_thinking_mode() -> str:
+    return _db_get_thinking_mode()
+
+
+# Aliases pra compatibilidade com o translator (lê _thinking_mode via getattr).
+def __getattr__(name: str):
+    if name == "_thinking_mode":
+        return _db_get_thinking_mode()
+    raise AttributeError(name)
 
 # --- FastAPI App Setup ---
 app = FastAPI(lifespan=lifespan)
+
+# Per-request context (request_id + client_id) → propaga via contextvars pra
+# todo log do processo. `grep req=<id> logs/proxy.log` mostra TUDO de uma
+# request única, mesmo sob carga concorrente.
+from proxy_app.request_context import RequestContextMiddleware  # noqa: E402
+
+app.add_middleware(RequestContextMiddleware)
 
 # Add CORS middleware to allow all origins, methods, and headers
 app.add_middleware(
@@ -1110,15 +1161,22 @@ def _verify_proxy_api_key_value(raw_key: Optional[str]) -> Optional[Dict[str, An
 
 
 async def verify_api_key(request: Request):
-    """Dependency to verify the proxy API key."""
+    """Dependency to verify the proxy API key + enforce rate limit."""
+    from proxy_app.request_context import set_client_id
+    from proxy_app.rate_limit import enforce_rate_limit
     for raw_key in _candidate_api_keys_from_request(request):
         verified = _verify_proxy_api_key_value(raw_key)
         if verified:
+            cid = verified.get("app_name") or verified.get("type")
+            set_client_id(cid)
+            await enforce_rate_limit(request, cid)
             return verified
 
     # If no root key and no managed apps exist, keep the original open-access behavior.
     from proxy_app import admin_db as _admin_db
     if not PROXY_API_KEY and not _load_admin_data().get("apps") and not _admin_db.has_api_keys():
+        set_client_id("open")
+        await enforce_rate_limit(request, "open")
         return {"type": "open", "app_name": "open"}
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
@@ -1134,13 +1192,20 @@ async def verify_anthropic_api_key(
     Dependency to verify API key for Anthropic endpoints.
     Accepts x-api-key, api-key, anthropic-api-key, Authorization Bearer, or raw Authorization.
     """
+    from proxy_app.request_context import set_client_id
+    from proxy_app.rate_limit import enforce_rate_limit
     for raw_key in _candidate_api_keys_from_request(request):
         verified = _verify_proxy_api_key_value(raw_key)
         if verified:
+            cid = verified.get("app_name") or verified.get("type")
+            set_client_id(cid)
+            await enforce_rate_limit(request, cid)
             return verified
 
     from proxy_app import admin_db as _admin_db
     if not PROXY_API_KEY and not _load_admin_data().get("apps") and not _admin_db.has_api_keys():
+        set_client_id("open")
+        await enforce_rate_limit(request, "open")
         return {"type": "open", "app_name": "open"}
     raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
@@ -1596,7 +1661,6 @@ async def anthropic_messages(
     This endpoint is compatible with Claude Code and other Anthropic API clients.
     """
     # --- Interceptar slash commands de thinking mode ---
-    global _thinking_mode
     _last_user_text = ""
     if body.messages:
         for _msg in reversed(body.messages):
@@ -1613,17 +1677,17 @@ async def anthropic_messages(
 
     _think_cmd = _last_user_text.lower()
     if _think_cmd in ("/think", "/think on"):
-        _thinking_mode = "on"
+        _set_thinking_mode("on")
         return JSONResponse(content={"id": "msg_think", "type": "message", "role": "assistant",
             "model": body.model or "assistant", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 10},
             "content": [{"type": "text", "text": "💭 **Thinking mode ATIVADO** — vou pensar profundamente nas próximas respostas."}]})
     elif _think_cmd in ("/think off", "/think off"):
-        _thinking_mode = "off"
+        _set_thinking_mode("off")
         return JSONResponse(content={"id": "msg_think", "type": "message", "role": "assistant",
             "model": body.model or "assistant", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 10},
             "content": [{"type": "text", "text": "⚡ **Thinking mode DESATIVADO** — respostas rápidas sem raciocínio estendido."}]})
     elif _think_cmd == "/auto":
-        _thinking_mode = "auto"
+        _set_thinking_mode("auto")
         return JSONResponse(content={"id": "msg_think", "type": "message", "role": "assistant",
             "model": body.model or "assistant", "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 10},
             "content": [{"type": "text", "text": "🔄 **Thinking mode AUTO** — pensa profundamente só para tarefas complexas (opus)."}]})

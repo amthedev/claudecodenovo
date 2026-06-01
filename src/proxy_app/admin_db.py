@@ -236,6 +236,36 @@ def get_root_key_preview() -> Optional[str]:
             return None
 
 
+# Thinking mode persistido (sobrevive a multi-worker; o global em memória do main
+# divergia entre workers do gunicorn — flag "/think on" só funcionava em 1/N).
+_VALID_THINKING_MODES = {"on", "off", "auto"}
+
+
+def get_thinking_mode() -> str:
+    with _db() as c:
+        try:
+            _ensure_settings_table(c)
+            r = c.execute(
+                "SELECT value FROM app_settings WHERE key='thinking_mode'"
+            ).fetchone()
+            v = r["value"] if r else None
+            return v if v in _VALID_THINKING_MODES else "off"
+        except Exception:
+            return "off"
+
+
+def set_thinking_mode(mode: str) -> str:
+    if mode not in _VALID_THINKING_MODES:
+        mode = "off"
+    with _db() as c:
+        _ensure_settings_table(c)
+        c.execute(
+            "INSERT OR REPLACE INTO app_settings(key,value) VALUES('thinking_mode',?)",
+            (mode,),
+        )
+    return mode
+
+
 # ── Admin auth ────────────────────────────────────────────────────────────────
 
 def admin_exists() -> bool:
