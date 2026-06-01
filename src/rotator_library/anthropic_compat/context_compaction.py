@@ -4,7 +4,8 @@
 """
 Intelligent context compaction for text-only backends with a hard context ceiling.
 
-Qwen3-32B has a 40960-token ceiling shared by input AND output. In long
+Qwen3-Coder hosted via vLLM defaults to a 43008-token ceiling shared by input
+AND output. In long
 conversations the input grows until little room is left for the output — and
 since the model emits its <think> reasoning BEFORE the tool call, that little
 room gets eaten by reasoning and the model stops (finish_reason=length) before
@@ -522,13 +523,13 @@ async def compact_context_if_needed(
     if os.getenv("VLLM_CONTEXT_COMPACTION", "on").lower() in {"off", "0", "false", "no"}:
         return request
 
-    model_context = _env_int("VLLM_MODEL_CONTEXT", 40960)
+    model_context = _env_int("VLLM_MODEL_CONTEXT", 43008)
     # OUTPUT_RESERVE is what we save for the response (think + tool call). Used
     # only as the EMERGENCY trigger now — we no longer pre-emptively compact.
-    output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 4000)
+    output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 12288)
     # KEEP_TAIL: keep this much of the recent conversation INTACT (no summary,
-    # no truncation). 16k = roughly the last ~25 messages of a typical session.
-    keep_tail_tokens = _env_int("VLLM_CONTEXT_KEEP_TAIL_TOKENS", 16000)
+    # no truncation). 20k leaves plenty of recent file/tool context for coding.
+    keep_tail_tokens = _env_int("VLLM_CONTEXT_KEEP_TAIL_TOKENS", 20000)
     margin = 1024
     input_budget = max(2000, model_context - output_reserve - margin)
 

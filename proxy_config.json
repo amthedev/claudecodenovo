@@ -3,7 +3,19 @@
     "PROXY_API_KEY": "troque-essa-chave",
     "SKIP_OAUTH_INIT_CHECK": "true",
     "OPENAI_API_KEY": "",
-    "GEMINI_API_KEY_1": ""
+    "GEMINI_API_KEY_1": "",
+    "HOSTED_VLLM_API_BASE": "https://j5f5v175qntmw7-8001.proxy.runpod.net/v1",
+    "HOSTED_VLLM_API_KEY": "EMPTY",
+    "HOSTED_VLLM_MODELS": "[\"qwen3-coder-30b\"]",
+    "WHITELIST_MODELS_HOSTED_VLLM": "hosted_vllm/qwen3-coder-30b",
+    "PROXY_DEFAULT_MODEL": "hosted_vllm/qwen3-coder-30b",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "hosted_vllm/qwen3-coder-30b",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "hosted_vllm/qwen3-coder-30b",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "hosted_vllm/qwen3-coder-30b",
+    "HOSTED_VLLM_NATIVE_TOOLS": "true",
+    "HOSTED_VLLM_FORCE_TOOL_FALLBACK": "false",
+    "VLLM_DEFAULT_THINKING": "off",
+    "PROXY_RESPONSE_LANGUAGE": "pt-BR"
   },
 
   "_comment_model_list": "Opcional: declare credenciais explicitamente aqui em vez de usar env vars numeradas. Entradas com o mesmo model_name formam um grupo de load-balancing automaticamente.",

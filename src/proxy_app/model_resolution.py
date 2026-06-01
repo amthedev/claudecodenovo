@@ -126,11 +126,11 @@ def virtual_claude_models() -> List[str]:
 
 
 def virtual_model_context_window() -> int:
-    return 32768
+    return 43008
 
 
 def virtual_model_max_output_tokens() -> int:
-    return 4096
+    return 12288
 
 
 def apply_virtual_model_limits(model_cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

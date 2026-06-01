@@ -42,16 +42,18 @@ THINKING_BUDGET_THRESHOLDS = {
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
 
-# Hosted vLLM defaults, sized for Qwen3-32B's real context ceiling of 40960
-# tokens (max_position_embeddings in config.json — vLLM refuses higher). Budget:
-# ~40k total -> reserve 12k for output, leaving ~28k tokens (~95k chars) for
-# input. Every value is overridable via env to match your own --max-model-len.
+# Hosted vLLM defaults, sized for Qwen3-Coder-30B-A3B on a single RTX 6000 Ada.
+# The model supports larger native context, but 43k is the stable single-GPU
+# target for AWQ + tool calls on this RTX 6000 Ada pod. Budget: reserve 12k
+# for output, leaving roughly 30k tokens for input.
 # Too-low values truncate history/file-reads and make the agent look
 # "superficial" or loop on large edits.
+VLLM_MODEL_CONTEXT = 43008
+VLLM_CONTEXT_OUTPUT_RESERVE = 12288
 VLLM_MAX_OUTPUT_TOKENS = 12288
-VLLM_MAX_INPUT_CHARS = 95000
-VLLM_MAX_MESSAGE_CHARS = 40000
-VLLM_MAX_TOOL_RESULT_CHARS = 20000
+VLLM_MAX_INPUT_CHARS = 105000
+VLLM_MAX_MESSAGE_CHARS = 52000
+VLLM_MAX_TOOL_RESULT_CHARS = 40000
 # Was 16000. Doubled because long technical analyses (code review, multi-file
 # explanation) legitimately go above 16k chars and the truncation message in
 # the middle of a perfectly valid answer makes the model look broken.
@@ -1071,8 +1073,8 @@ def _vllm_max_input_chars() -> int:
     # bigger model without raising this), the blind guard would chop the recent
     # tail that compaction just preserved. Derive a floor from the token budget so
     # they never cross, regardless of model size.
-    model_context = _env_int(["VLLM_MODEL_CONTEXT"], 40960)
-    output_reserve = _env_int(["VLLM_CONTEXT_OUTPUT_RESERVE"], 12288)
+    model_context = _env_int(["VLLM_MODEL_CONTEXT"], VLLM_MODEL_CONTEXT)
+    output_reserve = _env_int(["VLLM_CONTEXT_OUTPUT_RESERVE"], VLLM_CONTEXT_OUTPUT_RESERVE)
     input_budget_tokens = max(2000, model_context - output_reserve - 1024)
     # ~2.8 chars/token + 20% headroom so the guard sits above compaction's output.
     floor_chars = int(input_budget_tokens * 2.8 * 1.2)
