@@ -102,6 +102,14 @@ async def maybe_critique_response(
     if not original_text:
         return anthropic_response  # tool_use, empty, or unsupported shape
 
+    # Skip self-critique for SHORT responses — they're typically simple answers
+    # ("the file is at X", "yes", a single command output) where critiquing
+    # doubles the wall-clock for no quality gain. The model gives the same
+    # answer the second time. Threshold tunable; 400 chars ≈ ~80 words.
+    min_chars = max(0, int(os.getenv("VLLM_SELF_CRITIQUE_MIN_CHARS", "400")))
+    if len(original_text) < min_chars:
+        return anthropic_response
+
     question = _user_question(request)
     if not question.strip():
         return anthropic_response

@@ -523,14 +523,20 @@ def _restore_tool_name(
 
 
 def _vllm_response_language_instruction() -> str:
-    # Default is empty: let the model follow the user's language naturally.
-    # Set PROXY_RESPONSE_LANGUAGE=pt-BR (or any locale) in env to force a language.
-    language = os.getenv("PROXY_RESPONSE_LANGUAGE", "").strip()
-    if not language:
+    # Default is pt-BR — most of the customer base is Brazilian. The instruction
+    # is BIDIRECTIONAL: if the user writes in another language, match THAT
+    # language. So pt-BR is just the fallback when there's no signal.
+    # To disable entirely, set PROXY_RESPONSE_LANGUAGE=off.
+    language = os.getenv("PROXY_RESPONSE_LANGUAGE", "pt-BR").strip()
+    if not language or language.lower() == "off":
         return ""
     return (
-        f"Write normal user-facing responses in {language} unless the user "
-        "explicitly requests another language."
+        f"Default response language: {language}. "
+        "BUT match the user's language: if they write in English, answer in "
+        "English; if Spanish, answer in Spanish; if another language, answer "
+        f"in that language. Only fall back to {language} when there's no clear "
+        "signal from the user (e.g., a single command like 'ls' or an empty "
+        "message with an attachment)."
     )
 
 
@@ -1948,6 +1954,29 @@ def _existing_system_text(content: Any) -> str:
     return str(content)
 
 
+_LANGUAGE_MARKER = "Default response language:"
+
+
+def _inject_language_instruction(openai_request: Dict[str, Any]) -> None:
+    """Inject the language instruction unconditionally (not gated on tools).
+
+    Default behaviour: respond in pt-BR but match the user's language when
+    they write in another language. The actual text lives in
+    _vllm_response_language_instruction() and respects PROXY_RESPONSE_LANGUAGE.
+    Idempotent across multi-turn conversations.
+    """
+    instruction = _vllm_response_language_instruction()
+    if not instruction:
+        return
+    messages = openai_request.setdefault("messages", [])
+    if messages and messages[0].get("role") == "system":
+        existing = _existing_system_text(messages[0].get("content"))
+        if _LANGUAGE_MARKER not in existing:
+            messages[0]["content"] = f"{existing}\n\n{instruction}".strip()
+        return
+    messages.insert(0, {"role": "system", "content": instruction})
+
+
 def _inject_sensitive_workspace_boundary(openai_request: Dict[str, Any]) -> None:
     """Always present the secrets boundary, regardless of tool/intent heuristics."""
     messages = openai_request.setdefault("messages", [])
@@ -2043,6 +2072,7 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
     _inject_sensitive_workspace_boundary(openai_request)
+    _inject_language_instruction(openai_request)
     openai_request.pop("top_k", None)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)

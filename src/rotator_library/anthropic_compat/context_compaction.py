@@ -378,6 +378,14 @@ async def compact_context_if_needed(
     margin = 1024
     input_budget = max(2000, model_context - output_reserve - margin)
 
+    # Fast-path: do a CHEAP char-based estimate first. If the request is
+    # clearly under-budget (with 30% margin to account for chars/token
+    # variance), skip the expensive token_count call entirely. This shaves
+    # ~50-200ms off every short conversation, which is the common case.
+    estimate = _estimate_request_tokens(request)
+    if estimate < input_budget * 0.7:
+        return request  # safely fits — common path, ZERO model calls
+
     total = _count_request_tokens(request, client, log)
     if total <= input_budget:
         return request  # fits — common path, no model call
