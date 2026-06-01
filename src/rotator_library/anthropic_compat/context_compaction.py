@@ -418,7 +418,12 @@ async def _produce_summary(
     Serialized through the summary semaphore so concurrent summaries don't pile
     onto the single GPU. The slot wait is OUTSIDE wait_for so queue time doesn't
     eat the generation timeout."""
-    summary_timeout = max(1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 60))
+    # 90s default (was 60): the summary runs in the background and blocks no
+    # response, so we can afford to wait longer for it to finish on a busy GPU
+    # rather than timing out and falling into the 30s cooldown that prevents the
+    # cache from ever warming. Combined with the smaller input/output, this lets
+    # the summary actually complete.
+    summary_timeout = max(1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 90))
     summary_sem = await _get_summary_semaphore()
     async with summary_sem:
         response = await asyncio.wait_for(
@@ -534,7 +539,7 @@ async def compact_context_if_needed(
     # Plus reserve room for the summary itself (~3k by default) so the final
     # request = system + tools + summary + tail still fits the input budget.
     tools_reserve = _estimate_tools_tokens(request)
-    summary_reserve = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 3000))
+    summary_reserve = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 1500))
     tail_budget = max(2000, input_budget - tools_reserve - summary_reserve)
 
     messages = list(request.messages or [])
@@ -613,7 +618,7 @@ async def compact_context_if_needed(
             return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
         return request
 
-    summary_tokens = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 3000))
+    summary_tokens = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 1500))
     refresh_min_tokens = max(
         summary_tokens,
         _env_int("VLLM_CONTEXT_REFRESH_MIN_TOKENS", 2500),
@@ -628,7 +633,18 @@ async def compact_context_if_needed(
         return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
 
     # Cap what we feed the summarizer so the summary call itself fits comfortably.
-    max_summary_input_chars = int(input_budget * _CHARS_PER_TOKEN * 0.7)
+    # Cap the summarizer's INPUT so the call completes within the timeout. The
+    # summary runs in the background now, but a busy single GPU still chokes on
+    # ~25k input tokens (the old budget-derived cap), so it timed out every turn
+    # and never cached. A tighter cap (~12k tok) cuts the prefill roughly in half
+    # so the summary actually finishes and warms the cache. The middle is already
+    # head/tail-trimmed by _summary_input_text, so we keep the most informative
+    # parts. Env: VLLM_CONTEXT_SUMMARY_INPUT_TOKENS.
+    summary_input_tokens = max(2000, _env_int("VLLM_CONTEXT_SUMMARY_INPUT_TOKENS", 12000))
+    max_summary_input_chars = min(
+        int(input_budget * _CHARS_PER_TOKEN * 0.7),
+        int(summary_input_tokens * _CHARS_PER_TOKEN),
+    )
     messages_to_summarize = (
         [previous_summary_msg, *new_middle]
         if previous_summary_msg

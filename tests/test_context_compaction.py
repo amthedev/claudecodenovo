@@ -94,8 +94,9 @@ class ContextCompactionTests(unittest.IsolatedAsyncioTestCase):
             compacted = await compact_context_if_needed(request, client)
 
         self.assertEqual(len(client.calls), 1)
-        # Default restored to 3000 (detailed summary preserves more old context).
-        self.assertEqual(client.calls[0]["max_tokens"], 3000)
+        # 1500: lighter summary so the (background) call completes within the
+        # timeout on a busy GPU instead of timing out and never caching.
+        self.assertEqual(client.calls[0]["max_tokens"], 1500)
         self.assertEqual(len(compacted.messages), 2)
         self.assertIn(_SUMMARY_MARKER, _content(compacted.messages[0]))
 
