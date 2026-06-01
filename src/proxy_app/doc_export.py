@@ -105,6 +105,13 @@ def _render_chart_png(chart: Dict[str, Any]) -> Optional[bytes]:
     values = chart.get("values") or []
     if not labels or not values or len(labels) != len(values):
         return None
+    # Cap to prevent DoS: a malicious request with 100k labels would blow up
+    # matplotlib memory + render time. 200 categories is more than any human
+    # chart and beyond what the figure can render legibly.
+    MAX_POINTS = 200
+    if len(labels) > MAX_POINTS:
+        labels = labels[:MAX_POINTS]
+        values = values[:MAX_POINTS]
     try:
         import matplotlib
         matplotlib.use("Agg")  # no display, server-safe

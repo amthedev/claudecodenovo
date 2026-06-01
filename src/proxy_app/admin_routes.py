@@ -506,11 +506,19 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
 
     @app.post("/admin/setup")
     async def setup_post(req: Request):
+        # If an admin already exists, /admin/setup is closed — the original
+        # version ignored create_admin's False return and went on to mint a
+        # session for an arbitrary username (privilege escalation).
+        if admin_db.admin_exists():
+            return RedirectResponse("/admin/login", 302)
         f = await _form(req)
         u,p,c = f.get("username","").strip(), f.get("password",""), f.get("confirm","")
         if not u or not p or p!=c:
             return RedirectResponse("/admin/setup?err=1", 302)
-        admin_db.create_admin(u, p)
+        if not admin_db.create_admin(u, p):
+            # Race: another setup beat us. Send to login instead of issuing a
+            # session for a username that may not own the account.
+            return RedirectResponse("/admin/login", 302)
         tok = admin_db.create_session(u)
         r = RedirectResponse("/admin/dashboard", 302)
         r.set_cookie(COOKIE, tok, httponly=True, secure=_secure_cookie(req), samesite="lax", max_age=admin_db.SESSION_TTL)
@@ -533,6 +541,8 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
 
     @app.post("/admin/login")
     async def login_post(req: Request):
+        from proxy_app.rate_limit import enforce_login_rate_limit
+        await enforce_login_rate_limit(req)
         f = await _form(req)
         u,p = f.get("username",""), f.get("password","")
         if not admin_db.verify_admin(u, p):
@@ -1171,6 +1181,8 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
 
     @app.post("/reseller/login")
     async def reseller_login(req: Request):
+        from proxy_app.rate_limit import enforce_login_rate_limit
+        await enforce_login_rate_limit(req)
         f = await _form(req)
         # New email/password login.
         email = f.get("email", "").strip()

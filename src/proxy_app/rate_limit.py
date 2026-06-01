@@ -96,3 +96,22 @@ async def enforce_rate_limit(request: Request, client_id: Optional[str]) -> None
     if client_id in (None, "root"):
         return
     await _LIMITER.check(client_id or "anonymous", per_minute, burst)
+
+
+_LOGIN_LIMITER = _RateLimiter()
+
+
+async def enforce_login_rate_limit(request: Request) -> None:
+    """Per-IP brute-force protection for /admin/login, /reseller/login, /web/api/login.
+
+    Tighter than the API rate limit because failed logins should be rare.
+    Default: 10 attempts/minute per IP, max 3 in any 1-second slice. Adjust via
+    PROXY_LOGIN_RATE_LIMIT_PER_MINUTE / PROXY_LOGIN_RATE_LIMIT_BURST. 0 disables."""
+    per_minute = _env_int("PROXY_LOGIN_RATE_LIMIT_PER_MINUTE", 10)
+    burst = _env_int("PROXY_LOGIN_RATE_LIMIT_BURST", 3)
+    if per_minute <= 0:
+        return
+    # FastAPI fills request.client; behind a proxy the trust comes from X-Forwarded-For.
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown"))
+    await _LOGIN_LIMITER.check(f"login:{ip}", per_minute, burst)

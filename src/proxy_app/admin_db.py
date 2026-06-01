@@ -316,6 +316,16 @@ def validate_session(token: str) -> Optional[str]:
             if r:
                 c.execute("DELETE FROM sessions WHERE token=?", (token,))
             return None
+        # Defense-in-depth: the session must point at a real admin row. The
+        # previous version trusted any (token, username) tuple — if a session
+        # was minted for an arbitrary string (the setup_post escalation),
+        # _need accepted it. Cross-check against the admins table here.
+        admin_row = c.execute(
+            "SELECT 1 FROM admins WHERE username=?", (r["username"],)
+        ).fetchone()
+        if not admin_row:
+            c.execute("DELETE FROM sessions WHERE token=?", (token,))
+            return None
         return r["username"]
 
 

@@ -1630,6 +1630,10 @@ async def embeddings(
             inputs = request_data.get("input", [])
             if isinstance(inputs, str):
                 inputs = [inputs]
+            if not inputs:
+                raise HTTPException(
+                    status_code=400, detail="'input' must be a non-empty string or list."
+                )
 
             tasks = []
             for single_input in inputs:
@@ -1638,6 +1642,13 @@ async def embeddings(
                 tasks.append(batcher.add_request(individual_request))
 
             results = await asyncio.gather(*tasks)
+
+            if not results:
+                # Defensive — shouldn't happen if tasks is non-empty, but
+                # results[0] would IndexError below. Fail loud instead of crash.
+                raise HTTPException(
+                    status_code=502, detail="Embedding batcher returned no results."
+                )
 
             all_data = []
             total_prompt_tokens = 0
@@ -2180,10 +2191,18 @@ async def cost_estimate(request: Request, _=Depends(verify_api_key)):
     try:
         data = await request.json()
         model = data.get("model")
-        prompt_tokens = data.get("prompt_tokens", 0)
-        completion_tokens = data.get("completion_tokens", 0)
-        cache_read_tokens = data.get("cache_read_tokens", 0)
-        cache_creation_tokens = data.get("cache_creation_tokens", 0)
+        # Sanitize: reject negatives (would produce nonsense costs) and clamp
+        # absurd values (prevent denominator/overflow surprises downstream).
+        def _clean_count(v):
+            try:
+                n = int(v or 0)
+            except (TypeError, ValueError):
+                return 0
+            return max(0, min(n, 10_000_000))
+        prompt_tokens = _clean_count(data.get("prompt_tokens", 0))
+        completion_tokens = _clean_count(data.get("completion_tokens", 0))
+        cache_read_tokens = _clean_count(data.get("cache_read_tokens", 0))
+        cache_creation_tokens = _clean_count(data.get("cache_creation_tokens", 0))
 
         if not model:
             raise HTTPException(status_code=400, detail="'model' is required.")

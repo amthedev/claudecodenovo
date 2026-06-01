@@ -25,13 +25,20 @@ UNIVERSAL_KEY_NAME = "universal"
 DAILY_LIMIT = 500_000_000  # 500 milhões de requisições/dia (efetivamente ilimitado)
 
 
-def _hash_api_key(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+# Use the canonical helpers from auth_helpers/admin_db. Previously this file
+# had its own copies which drifted from the originals — same bug shape, two
+# places to fix. Re-export the shared ones to keep call sites unchanged.
+try:
+    from proxy_app.auth_helpers import hash_api_key as _hash_api_key
+    from proxy_app.auth_helpers import generate_proxy_key as _generate_sk_key
+except ImportError:
+    # Fallback: this script is sometimes run before the package is fully
+    # importable (initial bootstrap). Keep local definitions as a safety net.
+    def _hash_api_key(api_key: str) -> str:
+        return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
-
-def _generate_sk_key() -> str:
-    """Gera chave no formato sk-xxxx (igual ao _generate_proxy_key do main.py)."""
-    return "sk-" + secrets.token_urlsafe(32).replace("_", "").replace("-", "")[:42]
+    def _generate_sk_key() -> str:
+        return "sk-" + secrets.token_urlsafe(32).replace("_", "").replace("-", "")[:42]
 
 
 def _load_admin_data() -> dict:

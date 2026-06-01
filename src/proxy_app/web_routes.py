@@ -360,6 +360,8 @@ def register_web_routes(app: FastAPI) -> None:
 
     @app.post("/web/api/login")
     async def login(request: Request) -> JSONResponse:
+        from proxy_app.rate_limit import enforce_login_rate_limit
+        await enforce_login_rate_limit(request)
         body = await request.json()
         try:
             result = admin_db.login_web_account(

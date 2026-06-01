@@ -374,8 +374,14 @@ class GoogleOAuthBase:
                 lib_logger.debug(
                     f"Loading {self.ENV_PREFIX} credentials from file: {path}"
                 )
-                with open(path, "r") as f:
-                    creds = json.load(f)
+                # Off-thread the blocking disk I/O so high-concurrency request
+                # bursts don't pile up on the event loop. The lock above
+                # already serializes per-path, so this only affects scaling
+                # across distinct credentials.
+                def _read():
+                    with open(path, "r") as f:
+                        return json.load(f)
+                creds = await asyncio.to_thread(_read)
                 # Handle gcloud-style creds file which nest tokens under "credential"
                 if "credential" in creds:
                     creds = creds["credential"]
@@ -427,7 +433,20 @@ class GoogleOAuthBase:
         if not expiry:  # gemini-cli format
             expiry_timestamp = creds.get("expiry_date", 0) / 1000
         else:
-            expiry_timestamp = time.mktime(time.strptime(expiry, "%Y-%m-%dT%H:%M:%SZ"))
+            # Robust parsing: gcloud-style timestamps SHOULD be
+            # "%Y-%m-%dT%H:%M:%SZ" but credential files can arrive with timezone
+            # suffixes, fractional seconds, or other ISO variants depending on
+            # how they were generated. A ValueError here would break the
+            # rotation loop entirely. Treat unparseable as "expired" so we
+            # refresh instead of crashing.
+            try:
+                expiry_timestamp = time.mktime(time.strptime(expiry, "%Y-%m-%dT%H:%M:%SZ"))
+            except (ValueError, TypeError):
+                lib_logger.warning(
+                    "Unrecognized token_expiry format %r — treating as expired",
+                    expiry,
+                )
+                return True
         return expiry_timestamp < time.time() + self.REFRESH_EXPIRY_BUFFER_SECONDS
 
     async def _refresh_token(
