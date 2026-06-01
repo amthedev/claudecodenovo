@@ -130,7 +130,16 @@ with _console.status("[dim]Loading core dependencies...", spinner="dots"):
     from pydantic import BaseModel, ConfigDict, Field
 
     # --- Early Log Level Configuration ---
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    # LiteLLM at WARNING was spamming "could not pre-load bedrock-runtime …
+    # botocore" on every startup — we don't use AWS providers, so those
+    # warnings are noise. ERROR keeps real failures visible without the chatter.
+    logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+
+    # Some environments (Docker/Square Cloud) don't export TERM, which makes
+    # rich/colorlog print "TERM environment variable not set." to stderr.
+    # Set a safe default so the warning disappears without breaking color.
+    import os as _os
+    _os.environ.setdefault("TERM", "xterm-256color")
 
 print("  → Loading LiteLLM library...")
 with _console.status("[dim]Loading LiteLLM library...", spinner="dots"):
@@ -358,9 +367,24 @@ root_logger.addHandler(info_file_handler)
 root_logger.addHandler(console_handler)
 root_logger.addHandler(debug_file_handler)
 
-# Silence other noisy loggers by setting their level higher than root
-logging.getLogger("uvicorn").setLevel(logging.WARNING)
+# Silence noisy generic loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# Funnel uvicorn logs through our formatter so request_id/client_id show up
+# in the access lines too. Previously `INFO: 172.20.0.1:...` lines used
+# uvicorn's default handler and bypassed our filter entirely — debugging a
+# real incident meant correlating timestamps by hand.
+def _route_uvicorn_to_root(name: str, level: int) -> None:
+    lg = logging.getLogger(name)
+    lg.handlers = []          # drop uvicorn's own handler
+    lg.propagate = True        # send records up to the root (which has our format)
+    lg.setLevel(level)
+    lg.addFilter(_req_ctx_filter)
+
+# uvicorn writes access logs at INFO; keep that. Error/main can stay INFO too.
+_route_uvicorn_to_root("uvicorn", logging.INFO)
+_route_uvicorn_to_root("uvicorn.error", logging.INFO)
+_route_uvicorn_to_root("uvicorn.access", logging.INFO)
 
 # Isolate LiteLLM's logger to prevent it from reaching the console.
 # We will capture its logs via the logger_fn callback in the client instead.
@@ -2379,4 +2403,8 @@ if __name__ == "__main__":
 
         import uvicorn
 
-        uvicorn.run(app, host=args.host, port=args.port)
+        # log_config=None tells uvicorn NOT to reconfigure logging on startup
+        # (otherwise it would overwrite our handlers/filters and access logs
+        # would lose the [req=... client=...] prefix). We've already set up
+        # the loggers above.
+        uvicorn.run(app, host=args.host, port=args.port, log_config=None)
