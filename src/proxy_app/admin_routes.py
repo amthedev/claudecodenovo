@@ -91,7 +91,7 @@ def _root_test_key(proxy_api_key: str, root_is_rotated: bool, reveal_data: Optio
         return str(reveal_data.get("key_value") or "")
     return ""
 
-def _svg_bars(data, color="#6366f1", height=60):
+def _svg_bars(data, color="#d97757", height=60):
     if not data: return ""
     mx = max(d["count"] for d in data) or 1
     w = 100 / len(data)
@@ -106,7 +106,7 @@ def _svg_bars(data, color="#6366f1", height=60):
     )
     return f'<svg width="100%" height="{height+20}" xmlns="http://www.w3.org/2000/svg">{bars}{labels}</svg>'
 
-def _svg_line(data, color="#6366f1", height=88):
+def _svg_line(data, color="#d97757", height=88):
     if not data: return ""
     mx = max(d["count"] for d in data) or 1
     width = 700
@@ -127,17 +127,17 @@ def _svg_line(data, color="#6366f1", height=88):
 # ── CSS / HTML base ───────────────────────────────────────────────────────────
 CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#080c14;--s1:#0f1623;--s2:#151c2c;--border:#1e2a3d;
-  --accent:#6366f1;--accent2:#8b5cf6;--green:#22c55e;--red:#ef4444;
-  --yellow:#f59e0b;--blue:#3b82f6;--text:#e2e8f0;--muted:#64748b;
-  --card-bg:rgba(15,22,35,.8)}
+:root{--bg:#14100c;--s1:#1f1813;--s2:#2a201a;--border:#3a2c20;
+  --accent:#d97757;--accent2:#e8915b;--green:#22c55e;--red:#ef4444;
+  --yellow:#f59e0b;--blue:#e8915b;--text:#f1e8e0;--muted:#9a8678;
+  --card-bg:rgba(31,24,19,.8)}
 body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
-  min-height:100vh;background-image:radial-gradient(ellipse at 20% 50%,rgba(99,102,241,.05) 0%,transparent 60%),
-  radial-gradient(ellipse at 80% 20%,rgba(139,92,246,.05) 0%,transparent 60%)}
+  min-height:100vh;background-image:radial-gradient(ellipse at 20% 50%,rgba(217,119,87,.07) 0%,transparent 60%),
+  radial-gradient(ellipse at 80% 20%,rgba(232,145,91,.06) 0%,transparent 60%)}
 a{color:var(--accent);text-decoration:none}
-input,select,textarea{background:#0a1020;border:1px solid var(--border);color:var(--text);
+input,select,textarea{background:#1a130d;border:1px solid var(--border);color:var(--text);
   border-radius:8px;padding:10px 14px;width:100%;font-size:14px;outline:none;transition:.2s}
-input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(217,119,87,.18)}
 button{cursor:pointer;border:none;border-radius:8px;padding:10px 20px;font-size:14px;
   font-weight:600;transition:.15s;white-space:nowrap}
 .btn{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff}
@@ -161,7 +161,7 @@ button{cursor:pointer;border:none;border-radius:8px;padding:10px 20px;font-size:
 nav{background:rgba(8,12,20,.9);border-bottom:1px solid var(--border);
   padding:0 32px;display:flex;align-items:center;height:60px;gap:24px;
   backdrop-filter:blur(12px);position:sticky;top:0;z-index:50}
-.logo{font-weight:800;font-size:17px;background:linear-gradient(135deg,#6366f1,#8b5cf6,#06b6d4);
+.logo{font-weight:800;font-size:17px;background:linear-gradient(135deg,#d97757,#e8915b,#f0a868);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .nav-item{color:var(--muted);font-size:13px;font-weight:500;padding:6px 12px;
   border-radius:8px;transition:.15s}
@@ -173,14 +173,14 @@ nav{background:rgba(8,12,20,.9);border-bottom:1px solid var(--border);
 @media(max-width:500px){.grid-stats{grid-template-columns:1fr}}
 .stat{position:relative;overflow:hidden}
 .stat::before{content:'';position:absolute;inset:0;border-radius:16px;
-  background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(139,92,246,.04));pointer-events:none}
+  background:linear-gradient(135deg,rgba(217,119,87,.1),rgba(232,145,91,.05));pointer-events:none}
 .stat-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;
   justify-content:center;font-size:20px;margin-bottom:14px}
 .stat-num{font-size:2rem;font-weight:800;line-height:1;margin-bottom:4px}
 .stat-label{font-size:12px;color:var(--muted);font-weight:500;text-transform:uppercase;letter-spacing:.06em}
 .stat-change{font-size:12px;margin-top:6px}
 .key-row{transition:.15s}
-.key-row:hover{background:rgba(99,102,241,.04)}
+.key-row:hover{background:rgba(217,119,87,.05)}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:10px 14px;color:var(--muted);font-size:11px;
   text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);
@@ -360,7 +360,7 @@ _DASH_JS = """
   const fmt=n=>{ if(n==null)return '∞'; n=+n;
     if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M';
     if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return n.toLocaleString('pt-BR'); };
-  const C={green:'#22c55e',blue:'#3b82f6',violet:'#6366f1',amber:'#f59e0b'};
+  const C={green:'#c98a3a',blue:'#e8915b',violet:'#d97757',amber:'#f0a868'};
   let area, donut, bar;
   function render(d){
     const k=d.kpis||{};
@@ -383,7 +383,7 @@ _DASH_JS = """
     }
     const ctxA=document.getElementById('cArea').getContext('2d');
     const grad=ctxA.createLinearGradient(0,0,0,200);
-    grad.addColorStop(0,'rgba(99,102,241,.45)');grad.addColorStop(1,'rgba(99,102,241,0)');
+    grad.addColorStop(0,'rgba(217,119,87,.45)');grad.addColorStop(1,'rgba(217,119,87,0)');
     if(area){area.destroy();area=null;}
     area=new Chart(ctxA,{type:'line',data:{labels,datasets:[
       {label:'Tokens',data:toks,borderColor:C.violet,backgroundColor:grad,fill:true,tension:.4,borderWidth:2,pointRadius:0,yAxisID:'y'},
@@ -403,7 +403,7 @@ _DASH_JS = """
     if(donutCanvas && top.length){
       donutCanvas.style.display='';
       donut=new Chart(donutCanvas.getContext('2d'),{type:'doughnut',data:{labels:top.map(r=>r.name),
-        datasets:[{data:top.map(r=>r.tokens_used),backgroundColor:[C.violet,C.green,C.blue,C.amber,'#ec4899','#14b8a6'],borderWidth:0}]},
+        datasets:[{data:top.map(r=>r.tokens_used),backgroundColor:[C.violet,C.amber,C.blue,C.green,'#b85c3a','#8a4f2a'],borderWidth:0}]},
         options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
           plugins:{legend:{position:'bottom',labels:{color:'#9ca3af',usePointStyle:true,boxWidth:8,font:{size:11}}}}}});
     }else if(donutCanvas){ donutCanvas.style.display='none'; }
@@ -428,16 +428,16 @@ _DASH_JS = """
 
 def _page(title, body, logged=False, proxy_key=""):
     nav = f"""<nav>
-      <span class="logo">&#9670; ProxyAdmin</span>
+      <span class="logo">&#9670; Claude Proxy</span>
       {'<a class="nav-item active" href="/admin/dashboard">Dashboard</a>' if logged else ''}
       <span class="spacer"></span>
       {'<span class="mono" style="font-size:11px;color:var(--muted)">Root auth configurada</span>' if proxy_key and logged else ''}
       {'<form method="post" action="/admin/logout" style="margin:0"><button class="btn-ghost btn-sm">Sair</button></form>' if logged else ''}
-    </nav>""" if logged else f'<nav><span class="logo">&#9670; ProxyAdmin</span></nav>'
+    </nav>""" if logged else f'<nav><span class="logo">&#9670; Claude Proxy</span></nav>'
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} — ProxyAdmin</title>
+<title>{title} — Claude Proxy</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>{CSS}</style></head>
 <body>{nav}{body}
@@ -1278,7 +1278,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
               </div></div>""")
         # Logged in: show the premium client dashboard + actions.
         plan = (admin_db.get_client_overview(kid, 1) or {}).get("plan", "")
-        header = f"""<nav><span class="logo">&#9670; Meu painel</span>
+        header = f"""<nav><span class="logo">&#9670; Claude Proxy</span>
           <span class="spacer"></span>
           {f'<span class="mono" style="font-size:11px;color:var(--muted)">{_e(plan)}</span>' if plan else ''}
           <a class="btn-ghost btn-sm" href="/reseller/signup" style="margin-right:8px">Quero revender</a>
@@ -1287,7 +1287,7 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         dash = _premium_dashboard_html("client")
         return HTMLResponse(f"""<!DOCTYPE html><html lang="pt-BR"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Meu painel</title>
+<title>Meu painel — Claude Proxy</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>{CSS}</style></head><body>{header}
 <div class="container" style="padding-top:24px">{dash}</div></body></html>""")
