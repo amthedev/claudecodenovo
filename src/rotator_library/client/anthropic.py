@@ -28,12 +28,19 @@ from ..anthropic_compat.streaming import _model_text_to_write_tool_call
 from ..anthropic_compat.image_captioning import caption_images_in_request
 from ..anthropic_compat.context_compaction import compact_context_if_needed
 from ..anthropic_compat.self_critique import maybe_critique_response
+from ..anthropic_compat import web_search as _ws
 from ..transaction_logger import TransactionLogger
 
 if TYPE_CHECKING:
     from .rotating_client import RotatingClient
 
 lib_logger = logging.getLogger("rotator_library")
+
+
+def _json_dump_str(s: str) -> str:
+    """JSON-encode a string with surrounding quotes (used to build tool_call
+    arguments inline). e.g. _json_dump_str('hi"x') == '"hi\\"x"'."""
+    return json.dumps(s, ensure_ascii=False)
 
 
 def _raise_if_error_response(response: Any) -> None:
@@ -183,6 +190,14 @@ class AnthropicHandler:
             request = await compact_context_if_needed(
                 request, self._client, log=lib_logger
             )
+            # Inject WebSearch tool when configured. The client (Claude Code/
+            # Cursor) doesn't ship it to non-Claude models, and our /web chat
+            # benefits from having search. We execute the search ourselves
+            # below; client never sees WebSearch is being run server-side.
+            if _ws.is_enabled():
+                new_tools = _ws.inject_tool(request.tools)
+                if new_tools is not request.tools:
+                    request = request.model_copy(update={"tools": new_tools})
 
         # Translate Anthropic request to OpenAI format
         openai_request = translate_anthropic_request(request)
@@ -291,6 +306,23 @@ class AnthropicHandler:
                 anthropic_response, forced_tool_call
             )
 
+            # Server-side WebSearch loop: when the model emitted ONLY WebSearch
+            # tool_use blocks, run the searches here and re-invoke until the
+            # model produces a final answer (or we hit a sanity cap). Client
+            # never sees WebSearch — it just gets the final synthesized reply.
+            anthropic_response = await self._run_web_search_loop(
+                anthropic_response,
+                request,
+                openai_request,
+                raw_request,
+                pre_request_callback,
+                original_model,
+                tool_name_mapping,
+                allowed_tool_names,
+                forced_tool_call,
+                request_id,
+            )
+
             # Optional self-critique pass (VLLM_SELF_CRITIQUE=on). Doubles cost
             # and latency; off by default. Skips automatically if the response
             # contains tool_use blocks or is empty.
@@ -306,6 +338,96 @@ class AnthropicHandler:
                 )
 
             return anthropic_response
+
+    async def _run_web_search_loop(
+        self,
+        anthropic_response: dict,
+        request: AnthropicMessagesRequest,
+        openai_request: dict,
+        raw_request,
+        pre_request_callback,
+        original_model: str,
+        tool_name_mapping,
+        allowed_tool_names,
+        forced_tool_call,
+        request_id: str,
+    ) -> dict:
+        """When the model emits WebSearch tool_use, run the search server-side
+        and feed the result back in. Loop until model gives a final answer or
+        we hit max_iters. The client never sees WebSearch tool calls."""
+        if not _ws.is_enabled():
+            return anthropic_response
+
+        import os, asyncio  # noqa: E401
+        max_iters = max(1, int(os.getenv("WEB_SEARCH_MAX_ITERS", "3")))
+        iters = 0
+        # We'll mutate this list of OpenAI-format messages across iterations.
+        msgs = list(openai_request.get("messages") or [])
+
+        while (
+            iters < max_iters
+            and _ws.has_only_websearch_tool_calls(anthropic_response)
+        ):
+            iters += 1
+            calls = _ws.extract_search_calls(anthropic_response)
+            if not calls:
+                break
+
+            # Run searches in parallel (usually 1, occasionally 2-3).
+            search_outputs = await asyncio.gather(
+                *(_ws.search(c["query"]) for c in calls),
+                return_exceptions=True,
+            )
+            results = []
+            for call, out in zip(calls, search_outputs):
+                text = out if isinstance(out, str) else f"[web search] error: {out!r}"
+                results.append({"id": call["id"], "result": text})
+
+            # Append assistant-with-tool_calls and tool results to the OpenAI
+            # message history, then call the model again.
+            assistant_msg = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": c["id"],
+                        "type": "function",
+                        "function": {
+                            "name": _ws.WEB_SEARCH_TOOL_NAME,
+                            "arguments": '{"query": ' + _json_dump_str(c["query"]) + "}",
+                        },
+                    }
+                    for c in calls
+                ],
+            }
+            msgs.append(assistant_msg)
+            for r in results:
+                msgs.append({"role": "tool", "tool_call_id": r["id"], "content": r["result"]})
+
+            next_req = dict(openai_request)
+            next_req["messages"] = msgs
+            next_req["stream"] = False
+            response = await self._client.acompletion(
+                request=raw_request,
+                pre_request_callback=pre_request_callback,
+                **next_req,
+            )
+            openai_response = (
+                response.model_dump() if hasattr(response, "model_dump") else dict(response)
+            )
+            _raise_if_error_response(openai_response)
+            anthropic_response = openai_to_anthropic_response(
+                openai_response,
+                original_model,
+                tool_name_mapping=tool_name_mapping,
+                allowed_tool_names=allowed_tool_names,
+            )
+            anthropic_response["id"] = request_id
+            anthropic_response = _force_tool_use_response(
+                anthropic_response, forced_tool_call
+            )
+
+        return anthropic_response
 
     async def count_tokens(
         self,

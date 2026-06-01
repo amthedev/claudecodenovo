@@ -8,6 +8,7 @@ import csv
 import html
 import io
 import json
+import logging
 import re
 import urllib.parse
 import urllib.request
@@ -234,6 +235,49 @@ def _extract_file(filename: str, raw: bytes) -> dict[str, Any]:
 
 
 def _search_web(query: str) -> list[dict[str, str]]:
+    # Prefer Tavily when configured (better quality + summarized results); fall
+    # back to DuckDuckGo HTML scraping which works without an API key but is
+    # fragile and rate-limited.
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    if tavily_key:
+        try:
+            return _tavily_search_sync(query, tavily_key)
+        except Exception:
+            logging.exception("Tavily failed; falling back to DuckDuckGo")
+    return _duckduckgo_search(query)
+
+
+def _tavily_search_sync(query: str, api_key: str) -> list[dict[str, str]]:
+    """Synchronous Tavily call (this module's existing pattern is sync)."""
+    body = json.dumps({
+        "api_key": api_key,
+        "query": query,
+        "max_results": 6,
+        "include_answer": True,
+        "search_depth": "basic",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.tavily.com/search",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as response:
+        payload = json.loads(response.read(2_000_000))
+    out = []
+    answer = (payload.get("answer") or "").strip()
+    if answer:
+        # First entry is Tavily's pre-summarized answer (no URL — it's a synthesis).
+        out.append({"title": "Resumo da pesquisa", "url": "", "snippet": answer})
+    for r in payload.get("results") or []:
+        out.append({
+            "title": (r.get("title") or "").strip(),
+            "url": (r.get("url") or "").strip(),
+            "snippet": (r.get("content") or "")[:500].strip(),
+        })
+    return out
+
+
+def _duckduckgo_search(query: str) -> list[dict[str, str]]:
     url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({"q": query})
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(request, timeout=8) as response:
