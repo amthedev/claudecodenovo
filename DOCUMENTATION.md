@@ -1084,7 +1084,11 @@ TIMEOUT_POOL=60
 
 # Read timeout between chunks for streaming requests (seconds)
 # If no data arrives for this duration, the connection is considered stalled
-TIMEOUT_READ_STREAMING=180
+TIMEOUT_READ_STREAMING=300
+
+# Maximum total lifetime for a streaming response (seconds)
+# Prevents a provider from keeping a client request open indefinitely
+TIMEOUT_TOTAL_STREAMING=300
 
 # Read timeout for non-streaming responses (seconds)
 # Longer to accommodate models that take time to generate full responses
@@ -1094,9 +1098,10 @@ TIMEOUT_READ_NON_STREAMING=600
 #### Streaming vs Non-Streaming Behavior
 
 **Streaming Requests** (`TimeoutConfig.streaming()`):
-- Uses shorter read timeout (default 3 minutes)
+- Uses shorter read timeout (default 5 minutes)
+- Enforces a maximum total stream lifetime (default 5 minutes)
 - Timer resets every time a chunk arrives
-- If no data for 3 minutes → connection considered dead → failover to next credential
+- If no data for 5 minutes → connection considered dead → failover to next credential
 - Appropriate for chat completions where tokens should arrive periodically
 
 **Non-Streaming Requests** (`TimeoutConfig.non_streaming()`):
@@ -1119,7 +1124,7 @@ The following providers use `TimeoutConfig`:
 
 | Use Case | Recommendation |
 |----------|----------------|
-| **Long thinking tasks** | Increase `TIMEOUT_READ_STREAMING` to 300-360s |
+| **Long thinking tasks** | Increase `TIMEOUT_READ_STREAMING` and `TIMEOUT_TOTAL_STREAMING` |
 | **Unstable network** | Increase `TIMEOUT_CONNECT` to 60s |
 | **High concurrency** | Increase `TIMEOUT_POOL` if seeing pool exhaustion |
 | **Large context/output** | Increase `TIMEOUT_READ_NON_STREAMING` to 900s+ |
@@ -1129,6 +1134,7 @@ The following providers use `TimeoutConfig`:
 ```env
 # For environments with complex reasoning tasks
 TIMEOUT_READ_STREAMING=300
+TIMEOUT_TOTAL_STREAMING=600
 TIMEOUT_READ_NON_STREAMING=900
 
 # For unstable network conditions
@@ -1492,4 +1498,3 @@ The GUI modifies the same environment variables that the `RotatingClient` reads:
 3. **Proxy applies rules** → `get_available_models()` filters based on rules
 
 **Note**: The proxy must be restarted to pick up rule changes made via the GUI (or use the Launcher TUI's reload functionality if available).
-

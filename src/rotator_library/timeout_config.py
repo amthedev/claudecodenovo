@@ -9,7 +9,8 @@ All values can be overridden via environment variables:
     TIMEOUT_CONNECT - Connection establishment timeout (default: 30s)
     TIMEOUT_WRITE - Request body send timeout (default: 30s)
     TIMEOUT_POOL - Connection pool acquisition timeout (default: 60s)
-    TIMEOUT_READ_STREAMING - Read timeout between chunks for streaming (default: 180s / 3 min)
+    TIMEOUT_READ_STREAMING - Read timeout between chunks for streaming (default: 300s / 5 min)
+    TIMEOUT_TOTAL_STREAMING - Maximum lifetime for a streaming response (default: 300s / 5 min)
     TIMEOUT_READ_NON_STREAMING - Read timeout for non-streaming responses (default: 600s / 10 min)
 """
 
@@ -32,6 +33,7 @@ class TimeoutConfig:
     _WRITE = 30.0
     _POOL = 60.0
     _READ_STREAMING = 300.0  # 5 minutes between chunks
+    _TOTAL_STREAMING = 300.0  # 5 minutes for the full streamed response
     _READ_NON_STREAMING = 600.0  # 10 minutes for full response
 
     @classmethod
@@ -68,6 +70,11 @@ class TimeoutConfig:
         return cls._get_env_float("TIMEOUT_READ_STREAMING", cls._READ_STREAMING)
 
     @classmethod
+    def total_streaming(cls) -> float:
+        """Maximum lifetime for a streaming response."""
+        return cls._get_env_float("TIMEOUT_TOTAL_STREAMING", cls._TOTAL_STREAMING)
+
+    @classmethod
     def read_non_streaming(cls) -> float:
         """Read timeout for non-streaming responses."""
         return cls._get_env_float("TIMEOUT_READ_NON_STREAMING", cls._READ_NON_STREAMING)
@@ -77,7 +84,7 @@ class TimeoutConfig:
         """
         Timeout configuration for streaming LLM requests.
 
-        Uses a shorter read timeout (default 3 min) since we expect
+        Uses a shorter read timeout (default 5 min) since we expect
         periodic chunks. If no data arrives for this duration, the
         connection is considered stalled.
         """

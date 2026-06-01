@@ -619,13 +619,14 @@ Fine-grained control over HTTP timeouts:
 TIMEOUT_CONNECT=30              # Connection establishment
 TIMEOUT_WRITE=30                # Request body send
 TIMEOUT_POOL=60                 # Connection pool acquisition
-TIMEOUT_READ_STREAMING=180      # Between streaming chunks (3 min)
+TIMEOUT_READ_STREAMING=300      # Between streaming chunks (5 min)
+TIMEOUT_TOTAL_STREAMING=300     # Maximum streamed response lifetime (5 min)
 TIMEOUT_READ_NON_STREAMING=600  # Full response wait (10 min)
 ```
 
 **Recommendations:**
 
-- Long thinking tasks: Increase `TIMEOUT_READ_STREAMING` to 300-360s
+- Long thinking tasks: Increase `TIMEOUT_READ_STREAMING` and `TIMEOUT_TOTAL_STREAMING`
 - Unstable network: Increase `TIMEOUT_CONNECT` to 60s
 - Large outputs: Increase `TIMEOUT_READ_NON_STREAMING` to 900s+
 

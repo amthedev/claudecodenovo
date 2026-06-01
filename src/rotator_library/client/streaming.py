@@ -13,10 +13,12 @@ Handles:
 - Client disconnect handling
 """
 
+import asyncio
 import codecs
 import json
 import logging
 import re
+import time
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Optional, TYPE_CHECKING
 
 import litellm
@@ -24,6 +26,7 @@ import litellm
 from ..core.errors import StreamedAPIError, CredentialNeedsReauthError
 from ..core.types import ProcessedChunk
 from ..core.utils import normalize_usage_for_response
+from ..timeout_config import TimeoutConfig
 
 if TYPE_CHECKING:
     from ..usage.manager import CredentialContext
@@ -78,6 +81,8 @@ class StreamingHandler:
         prompt_tokens_uncached = 0
         completion_tokens = 0
         thinking_tokens = 0
+        total_timeout = TimeoutConfig.total_streaming()
+        stream_started_at = time.monotonic()
 
         # Use manual iteration to allow continue after partial JSON errors
         stream_iterator = stream.__aiter__()
@@ -92,7 +97,24 @@ class StreamingHandler:
                         )
                         break
 
-                    chunk = await stream_iterator.__anext__()
+                    remaining_time = total_timeout - (
+                        time.monotonic() - stream_started_at
+                    )
+                    if remaining_time <= 0:
+                        raise StreamedAPIError(
+                            f"Stream exceeded total timeout of {total_timeout:g}s"
+                        )
+
+                    try:
+                        chunk = await asyncio.wait_for(
+                            stream_iterator.__anext__(),
+                            timeout=remaining_time,
+                        )
+                    except asyncio.TimeoutError as e:
+                        raise StreamedAPIError(
+                            f"Stream exceeded total timeout of {total_timeout:g}s",
+                            data=e,
+                        ) from e
 
                     # Clear error buffer on successful chunk receipt
                     error_buffer.reset()
@@ -174,6 +196,9 @@ class StreamingHandler:
 
                         cred_context.mark_failure(classify_error(e))
                     raise StreamedAPIError("Credential needs re-authentication", data=e)
+
+                except StreamedAPIError:
+                    raise
 
                 except json.JSONDecodeError as e:
                     # Partial JSON - accumulate and continue
