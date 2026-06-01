@@ -45,6 +45,14 @@ if TYPE_CHECKING:
 _SUMMARY_SEMAPHORE: Optional[asyncio.Semaphore] = None
 _SUMMARY_SEMAPHORE_LOCK = asyncio.Lock()
 
+# Strong refs to in-flight background summary tasks. asyncio only keeps a weak
+# reference to tasks, so without this set a fire-and-forget summary could be
+# garbage-collected mid-run. We discard each task from the set when it finishes.
+_BACKGROUND_SUMMARY_TASKS: set = set()
+# Fingerprints of middles that already have a background summary in flight, so
+# repeated turns don't spawn duplicate summaries of the same content.
+_BACKGROUND_SUMMARY_INFLIGHT: set = set()
+
 
 async def _get_summary_semaphore() -> asyncio.Semaphore:
     global _SUMMARY_SEMAPHORE
@@ -382,6 +390,101 @@ def _summary_input_text(messages: List[Any], max_chars: int) -> str:
     )
 
 
+_SUMMARY_PROMPT_HEADER = (
+    "Você é um arquivista técnico. Resuma a conversa abaixo de forma DETALHADA e "
+    "ESTRUTURADA, para que outro agente possa continuar a tarefa sem ter visto o "
+    "original. Não seja econômico com informação importante — prefira preservar "
+    "demais a perder. Organize em seções com estes títulos (omita os que não se "
+    "aplicarem):\n"
+    "## Objetivo — o que o usuário quer no geral.\n"
+    "## Arquivos — cada arquivo criado/editado/lido, com caminho e o que mudou.\n"
+    "## Decisões técnicas — escolhas feitas e o porquê (libs, abordagens, nomes).\n"
+    "## Valores e configs — números, chaves, parâmetros, comandos exatos usados.\n"
+    "## Estado atual — o que já está pronto e funcionando.\n"
+    "## Pendências — o que falta fazer / próximos passos combinados.\n"
+    "Não invente nada; registre só o que realmente aconteceu na conversa. "
+    "Responda apenas com o resumo estruturado.\n\n"
+)
+
+
+async def _produce_summary(
+    client: "RotatingClient",
+    model: str,
+    summary_prompt: str,
+    summary_tokens: int,
+    log: logging.Logger,
+) -> str:
+    """Run the actual summarization model call. Raises on failure/timeout.
+    Serialized through the summary semaphore so concurrent summaries don't pile
+    onto the single GPU. The slot wait is OUTSIDE wait_for so queue time doesn't
+    eat the generation timeout."""
+    summary_timeout = max(1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 60))
+    summary_sem = await _get_summary_semaphore()
+    async with summary_sem:
+        response = await asyncio.wait_for(
+            client.acompletion(
+                model=model,
+                messages=[{"role": "user", "content": summary_prompt}],
+                stream=False,
+                max_tokens=summary_tokens,
+            ),
+            timeout=summary_timeout,
+        )
+    if isinstance(response, dict) and "choices" not in response:
+        raise RuntimeError(f"summary error payload: {response.get('error')}")
+    choices = response["choices"] if isinstance(response, dict) else response.choices
+    msg = choices[0]["message"] if isinstance(choices[0], dict) else choices[0].message
+    summary = (msg.get("content") if isinstance(msg, dict) else msg.content) or ""
+    summary = summary.strip()
+    if not summary:
+        raise RuntimeError("empty summary")
+    return summary
+
+
+def _spawn_background_summary(
+    client: "RotatingClient",
+    model: str,
+    summary_prompt: str,
+    summary_tokens: int,
+    cache_messages: List[Any],
+    fingerprint_messages: List[Any],
+    log: logging.Logger,
+) -> None:
+    """Fire-and-forget: produce the summary off the critical path and cache it
+    for the NEXT turn. The current turn already responded via the fast tail
+    fallback — this just warms the cache so long conversations regain full
+    memory without ever blocking a response on the summary call."""
+    key = tuple(_message_fingerprint(m) for m in fingerprint_messages)
+    if not key or key in _BACKGROUND_SUMMARY_INFLIGHT:
+        return  # already summarizing this exact middle; don't duplicate
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    _BACKGROUND_SUMMARY_INFLIGHT.add(key)
+
+    async def _runner():
+        try:
+            summary = await _produce_summary(
+                client, model, summary_prompt, summary_tokens, log
+            )
+            _cache_summary(cache_messages, summary)
+            log.info(
+                "Context compaction: background summary cached (%d msgs) — "
+                "next turn will reuse it",
+                len(cache_messages),
+            )
+        except Exception as e:
+            log.warning("Context compaction background summary failed (%r)", e)
+            _cache_summary_failure(fingerprint_messages)
+        finally:
+            _BACKGROUND_SUMMARY_INFLIGHT.discard(key)
+
+    task = loop.create_task(_runner())
+    _BACKGROUND_SUMMARY_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_SUMMARY_TASKS.discard)
+
+
 async def compact_context_if_needed(
     request: AnthropicMessagesRequest,
     client: "RotatingClient",
@@ -541,56 +644,48 @@ async def compact_context_if_needed(
             summary_message=previous_summary_msg,
         )
     convo_text = _summary_input_text(messages_to_summarize, max_summary_input_chars)
+    summary_prompt = f"{_SUMMARY_PROMPT_HEADER}=== CONVERSA ===\n{convo_text}"
+    model = request.model
 
-    summary_prompt = (
-        "Você é um arquivista técnico. Resuma a conversa abaixo de forma DETALHADA e "
-        "ESTRUTURADA, para que outro agente possa continuar a tarefa sem ter visto o "
-        "original. Não seja econômico com informação importante — prefira preservar "
-        "demais a perder. Organize em seções com estes títulos (omita os que não se "
-        "aplicarem):\n"
-        "## Objetivo — o que o usuário quer no geral.\n"
-        "## Arquivos — cada arquivo criado/editado/lido, com caminho e o que mudou.\n"
-        "## Decisões técnicas — escolhas feitas e o porquê (libs, abordagens, nomes).\n"
-        "## Valores e configs — números, chaves, parâmetros, comandos exatos usados.\n"
-        "## Estado atual — o que já está pronto e funcionando.\n"
-        "## Pendências — o que falta fazer / próximos passos combinados.\n"
-        "Não invente nada; registre só o que realmente aconteceu na conversa. "
-        "Responda apenas com o resumo estruturado.\n\n"
-        f"=== CONVERSA ===\n{convo_text}"
-    )
-    try:
-        model = request.model
-        # Was 15s default — but summarizing ~25k tokens of input on Qwen3-32B
-        # easily takes 20-40s (model has to read everything + generate 3k tokens
-        # of output). 15s timed out silently, poisoned the cooldown cache (now
-        # 30s instead of 5min after recent fix), and dropped the next handful
-        # of turns into the brutal recent-context fallback. 60s gives the
-        # model real time to produce a useful summary.
-        summary_timeout = max(
-            1, _env_int("VLLM_CONTEXT_SUMMARY_TIMEOUT_SECONDS", 60)
+    # CRITICAL-PATH DECISION: the summary model call costs 20-60s on a busy
+    # single GPU. Running it inline here blocks the user's response for that
+    # whole time BEFORE the first token — which is the real "demora >2min" the
+    # client reported (it's the proxy adding latency, not the GPU being slow;
+    # swapping L40S->A40 didn't change it because this wait is serial overhead).
+    # Default behaviour: respond NOW with the fast tail fallback, and produce
+    # the summary in the BACKGROUND so it's cached for the next turn. Long
+    # conversations have many turns, so the cache warms up within one round and
+    # full memory is restored without ever blocking a response.
+    # Opt out (old synchronous behaviour): VLLM_CONTEXT_SUMMARY_BACKGROUND=off.
+    background = os.getenv("VLLM_CONTEXT_SUMMARY_BACKGROUND", "on").lower() not in {
+        "off", "0", "false", "no"
+    }
+    if background:
+        # Cache key uses `middle` (matches _find_cached_summary on the next turn);
+        # fingerprint/cooldown uses messages_to_summarize (matches the failure
+        # cache check above). Only spawn when there's no prior summary to lean on
+        # — if there is one, we already returned it / the tail fallback carries it.
+        cache_target = middle if not has_previous_summary else messages_to_summarize
+        _spawn_background_summary(
+            client, model, summary_prompt, summary_tokens,
+            cache_messages=list(cache_target),
+            fingerprint_messages=list(messages_to_summarize),
+            log=log,
         )
-        # Wait for a summary slot OUTSIDE the wait_for so queue time doesn't
-        # eat the generation timeout — the timeout should cover the model call,
-        # not the wait for a free GPU slot.
-        summary_sem = await _get_summary_semaphore()
-        async with summary_sem:
-            response = await asyncio.wait_for(
-                client.acompletion(
-                    model=model,
-                    messages=[{"role": "user", "content": summary_prompt}],
-                    stream=False,
-                    max_tokens=summary_tokens,
-                ),
-                timeout=summary_timeout,
-            )
-        if isinstance(response, dict) and "choices" not in response:
-            raise RuntimeError(f"summary error payload: {response.get('error')}")
-        choices = response["choices"] if isinstance(response, dict) else response.choices
-        msg = choices[0]["message"] if isinstance(choices[0], dict) else choices[0].message
-        summary = (msg.get("content") if isinstance(msg, dict) else msg.content) or ""
-        summary = summary.strip()
-        if not summary:
-            raise RuntimeError("empty summary")
+        log.info(
+            "Context compaction: responding via fast tail fallback now; summary "
+            "running in background for next turn (%d msgs over budget)",
+            len(messages_to_summarize),
+        )
+        return _fallback_to_recent_context(
+            request, tail, tail_budget, log, summary_message=previous_summary_msg,
+        )
+
+    # Synchronous path (opt-in): block on the summary as before.
+    try:
+        summary = await _produce_summary(
+            client, model, summary_prompt, summary_tokens, log
+        )
     except Exception as e:
         log.warning("Context compaction summary failed (%r); using recent-context fallback.", e)
         _cache_summary_failure(messages_to_summarize)
