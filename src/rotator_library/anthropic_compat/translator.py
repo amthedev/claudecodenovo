@@ -63,6 +63,8 @@ VLLM_MAX_TOOLS = 16
 # helpers in this file (e.g. _inject_workspace_path_prompt) consume them.
 from .prompts import (  # noqa: E402
     VLLM_SENSITIVE_WORKSPACE_PROMPT,
+    VLLM_QUALITY_PROMPT,
+    VLLM_QUALITY_MARKER,
     VLLM_TOOL_USE_SYSTEM_PROMPT,
     VLLM_TEXTUAL_TOOL_PROMPT,
     VLLM_NATIVE_AGENT_PROMPT,
@@ -2053,6 +2055,19 @@ def _inject_native_agent_prompt(openai_request: Dict[str, Any]) -> None:
     messages.insert(0, {"role": "system", "content": VLLM_NATIVE_AGENT_PROMPT})
 
 
+def _inject_quality_prompt(openai_request: Dict[str, Any]) -> None:
+    """Append the universal quality/'Opus-style' behavior prompt once. Applies to
+    EVERY scenario (coding and content) — behavior-only, no tool format, so it's
+    safe everywhere and idempotent across multi-turn."""
+    messages = openai_request.setdefault("messages", [])
+    if messages and messages[0].get("role") == "system":
+        existing = _existing_system_text(messages[0].get("content"))
+        if VLLM_QUALITY_MARKER not in existing:
+            messages[0]["content"] = f"{existing}\n\n{VLLM_QUALITY_PROMPT}".strip()
+        return
+    messages.insert(0, {"role": "system", "content": VLLM_QUALITY_PROMPT})
+
+
 def _inject_workspace_path_prompt(openai_request: Dict[str, Any]) -> None:
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
@@ -2139,6 +2154,10 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     }:
         _inject_sensitive_workspace_boundary(openai_request)
     _inject_language_instruction(openai_request)
+    # Universal quality/"Opus-style" behavior for EVERY scenario (coding+content).
+    # Opt-out: VLLM_QUALITY_PROMPT=off.
+    if os.getenv("VLLM_QUALITY_PROMPT", "on").lower() not in {"off", "0", "false", "no"}:
+        _inject_quality_prompt(openai_request)
     openai_request.pop("top_k", None)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)

@@ -23,6 +23,26 @@ VLLM_WORKSPACE_PATH_MARKER = "Workspace path contract:"
 VLLM_NATIVE_TOOL_ALLOWLIST_MARKER = "Current tool allowlist (exact names):"
 VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
 
+# ── Quality / "Opus-style" behavior (UNIVERSAL: coding AND content) ──────────
+# Behavior-only, scenario-agnostic. Contains NO tool-call format and NO
+# code-specific wording, so it is safe to inject for chat/content requests too
+# (won't push a content bot into "coder mode") and won't conflict with the
+# native/textual tool-calling prompts (no flip-flop). Marker keeps it idempotent
+# across multi-turn (Claude Code resends history). Opt-out: VLLM_QUALITY_PROMPT=off.
+VLLM_QUALITY_MARKER = "Work to a high standard on every reply"
+VLLM_QUALITY_PROMPT = (
+    "Work to a high standard on every reply. Before answering, make sure you "
+    "actually understood what the user is asking and what outcome they want; if "
+    "they gave a format, template, style, or example, FOLLOW IT FAITHFULLY — match "
+    "their structure and tone, don't impose your own. Be thorough and complete: "
+    "fully do the task instead of a shallow or partial version, and don't drop "
+    "requirements they listed. Think it through step by step internally, but reply "
+    "with the result, not your scratch work. Ground everything in what was actually "
+    "given — never invent facts, files, names, or details; if something required is "
+    "missing or you are unsure, say so plainly and ask one specific question rather "
+    "than guessing. Keep the user's language and stay on task."
+)
+
 VLLM_FAILURE_PERSISTENCE_PROMPT = (
     "After a failed tool call or command, do not switch to a tutorial or tell "
     "the user to do it themselves. Read the error, adjust the command or inputs, "

@@ -1178,5 +1178,53 @@ class SecretsBoundaryGatingTests(unittest.TestCase):
         self.assertIn("Sensitive workspace boundary", sys_text)
 
 
+class QualityPromptTests(unittest.TestCase):
+    """The universal 'Opus-style' quality prompt is injected for ALL scenarios
+    (coding and content), idempotently, and can be turned off."""
+
+    _MARK = "Work to a high standard"
+
+    def _sys(self, req):
+        m = req["messages"]
+        return m[0]["content"] if m and m[0]["role"] == "system" else ""
+
+    def test_injected_for_content(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b",
+               "messages": [{"role": "system", "content": "Você é copywriter."},
+                            {"role": "user", "content": "oi"}]}
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VLLM_QUALITY_PROMPT", None)
+            _sanitize_openai_request_for_vllm(req)
+        self.assertIn(self._MARK, self._sys(req))
+        self.assertIn("copywriter", self._sys(req))  # user's system kept
+
+    def test_injected_for_coding(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b",
+               "messages": [{"role": "user", "content": "edita"}],
+               "_vllm_allowed_tool_names": ["Edit"]}
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VLLM_QUALITY_PROMPT", None)
+            _sanitize_openai_request_for_vllm(req)
+        self.assertIn(self._MARK, self._sys(req))
+
+    def test_idempotent_multiturn(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b",
+               "messages": [{"role": "user", "content": "oi"}]}
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VLLM_QUALITY_PROMPT", None)
+            _sanitize_openai_request_for_vllm(req)
+            _sanitize_openai_request_for_vllm(req)
+        self.assertEqual(self._sys(req).count(self._MARK), 1)
+
+    def test_opt_out(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b",
+               "messages": [{"role": "user", "content": "oi"}]}
+        with mock.patch.dict(os.environ, {"VLLM_QUALITY_PROMPT": "off"}, clear=False):
+            _sanitize_openai_request_for_vllm(req)
+        joined = " ".join(m.get("content", "") for m in req["messages"]
+                          if isinstance(m.get("content"), str))
+        self.assertNotIn(self._MARK, joined)
+
+
 if __name__ == "__main__":
     unittest.main()
