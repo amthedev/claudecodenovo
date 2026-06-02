@@ -934,6 +934,24 @@ def _verify_proxy_api_key_value(raw_key: Optional[str]) -> Optional[Dict[str, An
     return _verify_managed_api_key(raw_key)
 
 
+async def _enforce_usage_window_for(cid: str, verified: dict) -> None:
+    """Fair-usage window load shedding. Looks up how much of the daily limit the
+    client already used, then lets usage_window decide if their window is closed
+    under overload. Safe no-op when USAGE_WINDOW is off. Never blocks on errors."""
+    try:
+        from proxy_app.usage_window import enforce_usage_window, _enabled
+        if not _enabled():
+            return
+        from proxy_app import admin_db as _admin_db
+        app_name = verified.get("app_name") or ""
+        frac = _admin_db.daily_usage_fraction(app_name) if app_name else 0.0
+        await enforce_usage_window(cid, frac)
+    except HTTPException:
+        raise  # the 429 must propagate
+    except Exception:
+        return  # any other failure → don't block the request
+
+
 async def verify_api_key(request: Request):
     """Dependency to verify the proxy API key + enforce rate limit."""
     from proxy_app.request_context import set_client_id
@@ -944,6 +962,7 @@ async def verify_api_key(request: Request):
             cid = verified.get("app_name") or verified.get("type")
             set_client_id(cid)
             await enforce_rate_limit(request, cid)
+            await _enforce_usage_window_for(cid, verified)
             return verified
 
     # If no root key and no managed apps exist, keep the original open-access behavior.
@@ -974,6 +993,7 @@ async def verify_anthropic_api_key(
             cid = verified.get("app_name") or verified.get("type")
             set_client_id(cid)
             await enforce_rate_limit(request, cid)
+            await _enforce_usage_window_for(cid, verified)
             return verified
 
     from proxy_app import admin_db as _admin_db

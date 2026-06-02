@@ -817,6 +817,41 @@ def _period_tokens(c: sqlite3.Connection, row: sqlite3.Row, date_pattern: str) -
     return used
 
 
+def daily_usage_fraction(app_name: str) -> float:
+    """Fraction (0.0–1.0+) of today's DAILY token limit already used by this key,
+    by display name. Used by the usage-window load shedding to decide who gets
+    paused first under overload. Returns 0.0 when there's no daily limit or the
+    key is unknown (so a missing limit never causes a pause). Cheap: one indexed
+    SUM over today's key_usage."""
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    try:
+        with _db() as c:
+            row = c.execute(
+                "SELECT id, daily_limit, key_type FROM api_keys WHERE name=?",
+                (app_name,),
+            ).fetchone()
+            if not row:
+                return 0.0
+            limit = int(row["daily_limit"] or 0)
+            if limit <= 0:
+                return 0.0
+            used = int(c.execute(
+                "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage "
+                "WHERE key_id=? AND date=?",
+                (row["id"], today),
+            ).fetchone()[0])
+            if (row["key_type"] or "client") == "reseller":
+                used += int(c.execute(
+                    """SELECT COALESCE(SUM(ku.total_tokens),0)
+                       FROM key_usage ku JOIN api_keys child ON child.id=ku.key_id
+                       WHERE child.parent_key_id=? AND ku.date=?""",
+                    (row["id"], today),
+                ).fetchone()[0])
+            return used / limit
+    except Exception:
+        return 0.0
+
+
 def _remaining_tokens_for_row(c: sqlite3.Connection, row: sqlite3.Row,
                               seen: Optional[set[str]] = None) -> Optional[int]:
     seen = set(seen or ())
