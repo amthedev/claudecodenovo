@@ -335,6 +335,15 @@ def _fallback_to_recent_context(
     return request.model_copy(update={"messages": candidate})
 
 
+def _strip_summary_marker(text: str) -> str:
+    """Remove the leading '[Resumo da conversa anterior]' marker (and the role
+    prefix _message_text adds) so the prior summary can be fed back to the
+    evolving-summary prompt as clean text."""
+    if _SUMMARY_MARKER in text:
+        return text.split(_SUMMARY_MARKER, 1)[1].strip()
+    return text.strip()
+
+
 def _message_fingerprint(message: Any) -> str:
     return hashlib.sha256(_message_text(message).encode("utf-8")).hexdigest()
 
@@ -411,20 +420,50 @@ def _summary_input_text(messages: List[Any], max_chars: int) -> str:
     )
 
 
+_SUMMARY_SECTIONS = (
+    "## Objetivo — o que o usuário quer no geral.\n"
+    "## Ordens do usuário — pedidos/instruções EXPLÍCITOS do usuário, citados o mais "
+    "fielmente possível. NUNCA omita uma ordem do usuário, mesmo antiga.\n"
+    "## Arquivos — cada arquivo criado/editado/lido, com caminho e o que mudou.\n"
+    "## Decisões técnicas — escolhas feitas e o porquê (libs, abordagens, nomes).\n"
+    "## Valores e configs — números, chaves, parâmetros, comandos exatos AINDA em uso.\n"
+    "## Tentativas que falharam — caminhos abandonados e erros já enfrentados, para "
+    "não repetir. Mantenha curto mas não apague.\n"
+    "## Estado atual — o que já está pronto e funcionando.\n"
+    "## Pendências — o que falta fazer / próximos passos combinados.\n"
+)
+
+# First-pass summary: there is no prior summary yet, summarize raw messages.
 _SUMMARY_PROMPT_HEADER = (
     "Você é um arquivista técnico. Resuma a conversa abaixo de forma DETALHADA e "
     "ESTRUTURADA, para que outro agente possa continuar a tarefa sem ter visto o "
     "original. Não seja econômico com informação importante — prefira preservar "
     "demais a perder. Organize em seções com estes títulos (omita os que não se "
     "aplicarem):\n"
-    "## Objetivo — o que o usuário quer no geral.\n"
-    "## Arquivos — cada arquivo criado/editado/lido, com caminho e o que mudou.\n"
-    "## Decisões técnicas — escolhas feitas e o porquê (libs, abordagens, nomes).\n"
-    "## Valores e configs — números, chaves, parâmetros, comandos exatos usados.\n"
-    "## Estado atual — o que já está pronto e funcionando.\n"
-    "## Pendências — o que falta fazer / próximos passos combinados.\n"
+    f"{_SUMMARY_SECTIONS}"
     "Não invente nada; registre só o que realmente aconteceu na conversa. "
     "Responda apenas com o resumo estruturado.\n\n"
+)
+
+# Evolving summary: there IS a prior summary. Fold it together with the newer
+# messages into a TIGHTER summary, actively forgetting what no longer matters.
+# This is what keeps the summary from growing without bound across a long
+# conversation — each pass distills further instead of re-summarizing from zero.
+_SUMMARY_EVOLVE_HEADER = (
+    "Você é um arquivista técnico mantendo um resumo VIVO de uma conversa longa. "
+    "Abaixo está o RESUMO ATUAL seguido das MENSAGENS NOVAS que aconteceram depois "
+    "dele. Produza um RESUMO ATUALIZADO ÚNICO que funda os dois, com estas regras:\n"
+    "1. ENXUGUE: tarefas JÁ CONCLUÍDAS viram uma linha curta (ex: 'Feito: criado X'). "
+    "Não repita o detalhe completo do que já terminou e está funcionando.\n"
+    "2. ESQUEÇA o obsoleto: valores/configs/detalhes técnicos de etapas que já foram "
+    "SUPERADAS por decisões mais novas devem sair. Mantenha só o que ainda vale.\n"
+    "3. NUNCA esqueça: as 'Ordens do usuário' (pedidos explícitos), nem o 'Objetivo' "
+    "geral. Carregue-os adiante mesmo que antigos.\n"
+    "4. PRESERVE 'Tentativas que falharam' de forma curta, para não repetir erros.\n"
+    "5. Seja mais CURTO que a soma das partes — o objetivo é destilar, não acumular.\n"
+    "Use as mesmas seções:\n"
+    f"{_SUMMARY_SECTIONS}"
+    "Não invente nada. Responda apenas com o resumo atualizado.\n\n"
 )
 
 
@@ -511,6 +550,125 @@ def _spawn_background_summary(
     task.add_done_callback(_BACKGROUND_SUMMARY_TASKS.discard)
 
 
+def _split_tail_and_middle(
+    messages: List[Any], effective_keep_tail: int
+) -> tuple[List[Any], List[Any]]:
+    """Walk from the end accumulating tokens until effective_keep_tail; the rest
+    is the 'middle'. Stops before swallowing ALL messages so there's always at
+    least one middle message to summarize. Shared by the red (apply) and yellow
+    (warm) paths so they never diverge."""
+    tail: List[Any] = []
+    tail_tokens = 0
+    split_idx = len(messages)
+    for i in range(len(messages) - 1, -1, -1):
+        t = _estimate_tokens(_message_text(messages[i]))
+        if tail and (tail_tokens + t > effective_keep_tail or i == 0):
+            break
+        tail.insert(0, messages[i])
+        tail_tokens += t
+        split_idx = i
+    return tail, messages[:split_idx]
+
+
+def _resolve_prior_summary(
+    middle: List[Any],
+) -> tuple[bool, Optional[Any], int]:
+    """Detect a prior summary for `middle`, either embedded as middle[0] (sync
+    mode) or via the cache by longest matching prefix (background mode). Returns
+    (has_embedded, previous_summary_msg, cached_prefix_len)."""
+    has_embedded = bool(middle and _SUMMARY_MARKER in _message_text(middle[0]))
+    if has_embedded:
+        return True, middle[0], 0
+    cached_prefix_len, cached_summary = _find_cached_summary(middle)
+    if cached_summary:
+        return False, {
+            "role": "user",
+            "content": f"{_SUMMARY_MARKER}\n{cached_summary}",
+        }, cached_prefix_len
+    return False, None, 0
+
+
+def _build_summary_prompt(
+    previous_summary_msg: Optional[Any],
+    new_middle: List[Any],
+    messages_to_summarize: List[Any],
+    input_budget: int,
+) -> str:
+    """First-pass vs evolving summary prompt. Shared so warm and apply paths
+    produce IDENTICAL prompts (and thus the same cached summary)."""
+    summary_input_tokens = max(2000, _env_int("VLLM_CONTEXT_SUMMARY_INPUT_TOKENS", 12000))
+    max_chars = min(
+        int(input_budget * _CHARS_PER_TOKEN * 0.7),
+        int(summary_input_tokens * _CHARS_PER_TOKEN),
+    )
+    if previous_summary_msg is not None:
+        prior = _strip_summary_marker(_message_text(previous_summary_msg))
+        new_text = _summary_input_text(list(new_middle), max_chars)
+        return (
+            f"{_SUMMARY_EVOLVE_HEADER}"
+            f"=== RESUMO ATUAL ===\n{prior}\n\n"
+            f"=== MENSAGENS NOVAS (depois do resumo) ===\n{new_text}"
+        )
+    convo_text = _summary_input_text(messages_to_summarize, max_chars)
+    return f"{_SUMMARY_PROMPT_HEADER}=== CONVERSA ===\n{convo_text}"
+
+
+def _maybe_warm_summary_cache(
+    request: AnthropicMessagesRequest,
+    client: "RotatingClient",
+    input_budget: int,
+    log: logging.Logger,
+) -> None:
+    """YELLOW ZONE: the request still fits, but we're within the proactive
+    margin of overflowing. Compute the summary in the BACKGROUND now and cache
+    it, so the eventual overflow compacts instantly and losslessly. Best-effort:
+    on any structural mismatch we simply do nothing (the red zone will handle
+    it). NEVER mutates the request."""
+    if os.getenv("VLLM_CONTEXT_SUMMARY_BACKGROUND", "on").lower() in {
+        "off", "0", "false", "no"
+    }:
+        return  # proactive warming only makes sense with background summaries
+    messages = list(request.messages or [])
+    if len(messages) <= 2:
+        return  # single-oversized-message case has no middle to warm
+    tools_reserve = _estimate_tools_tokens(request)
+    summary_reserve = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 1500))
+    tail_budget = max(2000, input_budget - tools_reserve - summary_reserve)
+    keep_tail_tokens = _env_int("VLLM_CONTEXT_KEEP_TAIL_TOKENS", 20000)
+    effective_keep_tail = max(2000, min(keep_tail_tokens, tail_budget))
+    _tail, middle = _split_tail_and_middle(messages, effective_keep_tail)
+    if not middle:
+        return
+    _has_embedded, previous_summary_msg, cached_prefix_len = _resolve_prior_summary(middle)
+    new_middle = middle[1:] if _has_embedded else middle[cached_prefix_len:]
+    if not new_middle:
+        return  # nothing new to summarize; cache already covers it
+    summary_tokens = max(256, _env_int("VLLM_CONTEXT_SUMMARY_TOKENS", 1500))
+    refresh_min_tokens = max(summary_tokens, _env_int("VLLM_CONTEXT_REFRESH_MIN_TOKENS", 2500))
+    new_middle_tokens = sum(_estimate_tokens(_message_text(m)) for m in new_middle)
+    if previous_summary_msg is not None and new_middle_tokens < refresh_min_tokens:
+        return  # not enough new content to be worth a refresh yet
+    messages_to_summarize = (
+        [previous_summary_msg, *new_middle] if previous_summary_msg else new_middle
+    )
+    if _has_cached_summary_failure(messages_to_summarize):
+        return
+    summary_prompt = _build_summary_prompt(
+        previous_summary_msg, new_middle, messages_to_summarize, input_budget
+    )
+    log.info(
+        "Context compaction: proactive warm — summarizing %d msg(s) in background "
+        "before overflow (yellow zone)",
+        len(new_middle),
+    )
+    _spawn_background_summary(
+        client, request.model, summary_prompt, summary_tokens,
+        cache_messages=list(middle),
+        fingerprint_messages=list(messages_to_summarize),
+        log=log,
+    )
+
+
 async def compact_context_if_needed(
     request: AnthropicMessagesRequest,
     client: "RotatingClient",
@@ -532,18 +690,33 @@ async def compact_context_if_needed(
     keep_tail_tokens = _env_int("VLLM_CONTEXT_KEEP_TAIL_TOKENS", 20000)
     margin = 1024
     input_budget = max(2000, model_context - output_reserve - margin)
+    # PROACTIVE MARGIN ("yellow zone"): start preparing the summary in the
+    # background this many tokens BEFORE the conversation actually overflows.
+    # In the yellow zone the request still FITS, so we respond with it UNCHANGED
+    # (no quality loss) and only warm the summary cache. When it finally crosses
+    # input_budget (red zone), the summary is already cached → the compaction is
+    # instant and lossless. 0 disables the proactive behaviour (old eager mode).
+    proactive_margin = max(0, _env_int("VLLM_CONTEXT_PROACTIVE_MARGIN", 10000))
+    yellow_threshold = max(2000, input_budget - proactive_margin)
 
-    # Fast-path: do a CHEAP char-based estimate first. If the request is
-    # clearly under-budget (with 30% margin to account for chars/token
-    # variance), skip the expensive token_count call entirely. This shaves
-    # ~50-200ms off every short conversation, which is the common case.
+    # Fast-path: do a CHEAP char-based estimate first. If the request is clearly
+    # below the yellow zone (with margin for chars/token variance), skip the
+    # expensive token_count call entirely. NOTE: gate on yellow_threshold, not
+    # input_budget, so the proactive zone is never skipped by the fast-path.
     estimate = _estimate_request_tokens(request)
-    if estimate < input_budget * 0.7:
-        return request  # safely fits — common path, ZERO model calls
+    if estimate < yellow_threshold * 0.7:
+        return request  # safely fits, well below yellow zone — zero model calls
 
     total = _count_request_tokens(request, client, log)
+
     if total <= input_budget:
-        return request  # fits — common path, no model call
+        # Fits today. But if we're in the yellow zone, warm the summary cache in
+        # the BACKGROUND now (lossless: we still return the full request) so the
+        # eventual overflow compacts instantly instead of dropping the next turns
+        # into the brutal fallback while the first summary is computed.
+        if proactive_margin > 0 and total > yellow_threshold:
+            _maybe_warm_summary_cache(request, client, input_budget, log)
+        return request
 
     # If we got here, the request really doesn't fit. Log it so you can spot
     # when compaction is firing on real customers — if it's frequent, the
@@ -594,40 +767,13 @@ async def compact_context_if_needed(
     # kept showing "keeping N/N recent msgs" with no "summary applied" line.
     effective_keep_tail = max(2000, min(keep_tail_tokens, tail_budget))
 
-    # Keep the recent tail intact (current task). Walk from the end accumulating
-    # tokens until we hit effective_keep_tail; everything before that is the "middle".
-    # CRITICAL: stop accumulating BEFORE consuming all messages — we need at
-    # least ONE message left in the middle to have something to summarize.
-    tail: List[Any] = []
-    tail_tokens = 0
-    split_idx = len(messages)
-    for i in range(len(messages) - 1, -1, -1):
-        t = _estimate_tokens(_message_text(messages[i]))
-        # Stop if adding would overflow tail budget AND tail isn't empty.
-        # Also stop if we'd swallow ALL but the first message — we need at
-        # least one middle message to summarize, otherwise this whole pass
-        # is wasted and we degrade to the brutal fallback.
-        if tail and (tail_tokens + t > effective_keep_tail or i == 0):
-            break
-        tail.insert(0, messages[i])
-        tail_tokens += t
-        split_idx = i
-    middle = messages[:split_idx]
+    # Split tail/middle via the shared helper (same logic the yellow-zone warm
+    # path uses, so the two never diverge).
+    tail, middle = _split_tail_and_middle(messages, effective_keep_tail)
     if not middle:
         return _fallback_to_recent_context(request, tail, tail_budget, log)
 
-    has_previous_summary = bool(
-        middle and _SUMMARY_MARKER in _message_text(middle[0])
-    )
-    previous_summary_msg = middle[0] if has_previous_summary else None
-    cached_prefix_len = 0
-    if not has_previous_summary:
-        cached_prefix_len, cached_summary = _find_cached_summary(middle)
-        if cached_summary:
-            previous_summary_msg = {
-                "role": "user",
-                "content": f"{_SUMMARY_MARKER}\n{cached_summary}",
-            }
+    has_previous_summary, previous_summary_msg, cached_prefix_len = _resolve_prior_summary(middle)
     new_middle = (
         middle[1:]
         if has_previous_summary
@@ -653,19 +799,6 @@ async def compact_context_if_needed(
         )
         return request.model_copy(update={"messages": [previous_summary_msg, *tail]})
 
-    # Cap what we feed the summarizer so the summary call itself fits comfortably.
-    # Cap the summarizer's INPUT so the call completes within the timeout. The
-    # summary runs in the background now, but a busy single GPU still chokes on
-    # ~25k input tokens (the old budget-derived cap), so it timed out every turn
-    # and never cached. A tighter cap (~12k tok) cuts the prefill roughly in half
-    # so the summary actually finishes and warms the cache. The middle is already
-    # head/tail-trimmed by _summary_input_text, so we keep the most informative
-    # parts. Env: VLLM_CONTEXT_SUMMARY_INPUT_TOKENS.
-    summary_input_tokens = max(2000, _env_int("VLLM_CONTEXT_SUMMARY_INPUT_TOKENS", 12000))
-    max_summary_input_chars = min(
-        int(input_budget * _CHARS_PER_TOKEN * 0.7),
-        int(summary_input_tokens * _CHARS_PER_TOKEN),
-    )
     messages_to_summarize = (
         [previous_summary_msg, *new_middle]
         if previous_summary_msg
@@ -680,8 +813,11 @@ async def compact_context_if_needed(
             log,
             summary_message=previous_summary_msg,
         )
-    convo_text = _summary_input_text(messages_to_summarize, max_summary_input_chars)
-    summary_prompt = f"{_SUMMARY_PROMPT_HEADER}=== CONVERSA ===\n{convo_text}"
+    # Build the summary prompt via the shared helper (first-pass vs evolving).
+    # Identical to what the yellow-zone warm path builds → same cache key.
+    summary_prompt = _build_summary_prompt(
+        previous_summary_msg, new_middle, messages_to_summarize, input_budget
+    )
     model = request.model
 
     # CRITICAL-PATH DECISION: the summary model call costs 20-60s on a busy
@@ -698,14 +834,19 @@ async def compact_context_if_needed(
         "off", "0", "false", "no"
     }
     if background:
-        # Cache key uses `middle` (matches _find_cached_summary on the next turn);
-        # fingerprint/cooldown uses messages_to_summarize (matches the failure
-        # cache check above). Only spawn when there's no prior summary to lean on
-        # — if there is one, we already returned it / the tail fallback carries it.
-        cache_target = middle if not has_previous_summary else messages_to_summarize
+        # Cache key MUST be the RAW messages the new summary covers, so that
+        # _find_cached_summary matches it as a prefix on the next turn. That is
+        # ALWAYS `middle` here: in the evolving case the prior summary came from
+        # the cache (has_previous_summary is False) and `middle` already holds
+        # all the raw messages [old prefix + new]; the new (evolved) summary
+        # supersedes the shorter cached one under a longer prefix key. Using
+        # `messages_to_summarize` would key on the summarized text (whose
+        # fingerprint never reappears as a raw message), so the cache would
+        # never hit. fingerprint/cooldown still uses messages_to_summarize to
+        # match the failure-cache check above.
         _spawn_background_summary(
             client, model, summary_prompt, summary_tokens,
-            cache_messages=list(cache_target),
+            cache_messages=list(middle),
             fingerprint_messages=list(messages_to_summarize),
             log=log,
         )
