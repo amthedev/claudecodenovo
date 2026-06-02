@@ -23,6 +23,14 @@ VLLM_WORKSPACE_PATH_MARKER = "Workspace path contract:"
 VLLM_NATIVE_TOOL_ALLOWLIST_MARKER = "Current tool allowlist (exact names):"
 VLLM_MANDATORY_TOOL_MARKER = "CURRENT REQUEST REQUIRES TOOL USE"
 
+VLLM_FAILURE_PERSISTENCE_PROMPT = (
+    "After a failed tool call or command, do not switch to a tutorial or tell "
+    "the user to do it themselves. Read the error, adjust the command or inputs, "
+    "and try the next reasonable fix with tools. Stop only when the task is "
+    "complete, a required external detail or permission is missing, or the "
+    "evidence shows it is technically impossible; then report the blocker clearly."
+)
+
 # ── Boundaries (security / scope) ────────────────────────────────────────────
 VLLM_SENSITIVE_WORKSPACE_PROMPT = (
     "Sensitive workspace boundary: Do not inspect, grep, read, print, summarize, "
@@ -42,7 +50,7 @@ VLLM_TOOL_USE_SYSTEM_PROMPT = (
     "printing code for the user to copy. Use only the tools and argument schemas "
     "provided in this request, preserve the user's requested scope, and continue "
     "from tool results until the task is complete. Do not expose private "
-    "reasoning or <think> blocks. "
+    f"reasoning or <think> blocks. {VLLM_FAILURE_PERSISTENCE_PROMPT} "
 )
 
 VLLM_TEXTUAL_TOOL_PROMPT = (
@@ -90,7 +98,7 @@ VLLM_NATIVE_AGENT_PROMPT = (
     "user, port, password or key path), ask the user for ONLY the missing "
     "fields in one short message, then run the connection command and report "
     "what happened. Once the user provides the data, USE it and execute right "
-    "away — do not re-explain. The ONLY things worth "
+    f"away — do not re-explain. {VLLM_FAILURE_PERSISTENCE_PROMPT} The ONLY things worth "
     "confirming first are destructive and irreversible operations the user did "
     "not authorize (force-push to main, rm -rf, drop database)."
 )
@@ -157,5 +165,7 @@ VLLM_INSPECT_PROJECT_TOOL_PROMPT = (
 VLLM_RUN_COMMAND_TOOL_PROMPT = (
     "This is a run/test request. Use Bash to execute the relevant command "
     "instead of explaining how the user can run it. If the command fails, "
-    "inspect and retry when the fix is obvious."
+    "inspect the error and retry the next reasonable fix. Stop only when a "
+    "required detail or permission is missing, or the command cannot be made "
+    "to work with the available tools."
 )

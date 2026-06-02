@@ -483,6 +483,133 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
             if message.get("role") == "system"
         )
         self.assertIn("Use Bash to execute the relevant command", system_text)
+        self.assertIn("retry the next reasonable fix", system_text)
+
+    def test_hosted_vllm_textual_tools_persist_after_failed_command(self):
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Configure o nginx na VPS via SSH.",
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_ssh",
+                            "name": "Bash",
+                            "input": {
+                                "command": (
+                                    "ssh root@203.0.113.10 "
+                                    "'sudo systemctl status nginx'"
+                                )
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_ssh",
+                            "content": (
+                                "ssh: connect to host 203.0.113.10 "
+                                "port 22: Connection refused"
+                            ),
+                        }
+                    ],
+                },
+            ],
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                }
+            ],
+        )
+
+        with mock.patch.dict("os.environ", {"HOSTED_VLLM_NATIVE_TOOLS": "false"}):
+            openai_request = translate_anthropic_request(request)
+
+        system_text = "\n".join(
+            message.get("content", "")
+            for message in openai_request["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("After a failed tool call or command", system_text)
+        self.assertIn("try the next reasonable fix with tools", system_text)
+        self.assertIn("Stop only when the task is complete", system_text)
+
+    def test_hosted_vllm_native_tools_persist_after_failed_command(self):
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Configure o nginx na VPS via SSH.",
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_ssh",
+                            "name": "Bash",
+                            "input": {
+                                "command": (
+                                    "ssh root@203.0.113.10 "
+                                    "'sudo systemctl status nginx'"
+                                )
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_ssh",
+                            "content": (
+                                "ssh: connect to host 203.0.113.10 "
+                                "port 22: Connection refused"
+                            ),
+                        }
+                    ],
+                },
+            ],
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                }
+            ],
+        )
+
+        with mock.patch.dict("os.environ", {"HOSTED_VLLM_NATIVE_TOOLS": "true"}):
+            openai_request = translate_anthropic_request(request)
+
+        system_text = "\n".join(
+            message.get("content", "")
+            for message in openai_request["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("After a failed tool call or command", system_text)
+        self.assertIn("try the next reasonable fix with tools", system_text)
+        self.assertIn("Stop only when the task is complete", system_text)
 
     def test_parses_malformed_textual_tool_call_without_closing_tags(self):
         text = (
