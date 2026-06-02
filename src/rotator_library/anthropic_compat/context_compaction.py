@@ -424,12 +424,16 @@ _SUMMARY_SECTIONS = (
     "## Objetivo — o que o usuário quer no geral.\n"
     "## Ordens do usuário — pedidos/instruções EXPLÍCITOS do usuário, citados o mais "
     "fielmente possível. NUNCA omita uma ordem do usuário, mesmo antiga.\n"
-    "## Arquivos — cada arquivo criado/editado/lido, com caminho e o que mudou.\n"
+    "## Arquivos — cada arquivo criado/editado/lido, com caminho. Para CADA um, deixe "
+    "claro se a alteração foi REALMENTE APLICADA (houve tool_result de sucesso) ou "
+    "apenas DESCRITA/planejada mas ainda NÃO confirmada. Não registre como feito o que "
+    "o assistente só disse que faria sem o resultado da ferramenta.\n"
     "## Decisões técnicas — escolhas feitas e o porquê (libs, abordagens, nomes).\n"
     "## Valores e configs — números, chaves, parâmetros, comandos exatos AINDA em uso.\n"
     "## Tentativas que falharam — caminhos abandonados e erros já enfrentados, para "
     "não repetir. Mantenha curto mas não apague.\n"
-    "## Estado atual — o que já está pronto e funcionando.\n"
+    "## Estado atual — o que está CONFIRMADO pronto e funcionando (com evidência de "
+    "tool_result), separado do que ainda é só intenção.\n"
     "## Pendências — o que falta fazer / próximos passos combinados.\n"
 )
 
