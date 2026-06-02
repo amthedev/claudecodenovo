@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import types
 import unittest
@@ -21,6 +22,7 @@ from rotator_library.anthropic_compat.streaming import anthropic_streaming_wrapp
 from rotator_library.anthropic_compat.models import AnthropicMessagesRequest
 from rotator_library.anthropic_compat.translator import (
     _build_vllm_forced_tool_call,
+    _compact_tools_for_vllm,
     _parse_textual_tool_calls,
     anthropic_to_openai_messages,
     openai_to_anthropic_response,
@@ -860,6 +862,46 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
             response["content"][0]["input"],
             {"file_path": "src/app.py", "old_string": "a", "new_string": "b"},
         )
+
+
+class BlockedToolsTests(unittest.TestCase):
+    """Tools the local setup can't use (Task/subagents, NotebookEdit) are dropped
+    to free context, while essentials and the Tavily-backed WebSearch are kept."""
+
+    @staticmethod
+    def _tool(name):
+        return {"type": "function", "function": {
+            "name": name, "description": "x",
+            "parameters": {"type": "object", "properties": {}}}}
+
+    def _names(self, tools):
+        return [t["function"]["name"] for t in tools]
+
+    def test_default_blocks_task_and_notebook(self):
+        tools = [self._tool(n) for n in
+                 ["Read", "Edit", "Bash", "WebSearch", "Task", "NotebookEdit"]]
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VLLM_BLOCKED_TOOLS", None)
+            out = self._names(_compact_tools_for_vllm(tools))
+        self.assertNotIn("Task", out)
+        self.assertNotIn("NotebookEdit", out)
+        self.assertIn("WebSearch", out)  # Tavily — must stay
+        self.assertIn("Read", out)
+        self.assertIn("Edit", out)
+
+    def test_empty_env_blocks_nothing(self):
+        tools = [self._tool(n) for n in ["Read", "Task", "NotebookEdit"]]
+        with mock.patch.dict(os.environ, {"VLLM_BLOCKED_TOOLS": ""}, clear=False):
+            out = self._names(_compact_tools_for_vllm(tools))
+        self.assertIn("Task", out)
+        self.assertIn("NotebookEdit", out)
+
+    def test_custom_block_list(self):
+        tools = [self._tool(n) for n in ["Read", "Edit", "Bash"]]
+        with mock.patch.dict(os.environ, {"VLLM_BLOCKED_TOOLS": "bash"}, clear=False):
+            out = self._names(_compact_tools_for_vllm(tools))
+        self.assertNotIn("Bash", out)
+        self.assertIn("Read", out)
 
 
 if __name__ == "__main__":

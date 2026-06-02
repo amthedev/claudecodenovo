@@ -1378,6 +1378,22 @@ def _vllm_max_tools() -> int:
     )
 
 
+# Tools the local vLLM/Qwen setup can't usefully run, dropped to free context for
+# the actual conversation (each tool schema costs ~hundreds of tokens). Default:
+# Task (subagents — multiplies load on a single GPU, rarely works) and
+# NotebookEdit (Jupyter — most coding clients don't use it). NOT WebSearch: the
+# proxy injects its own Tavily-backed WebSearch, so keep it. Comma-separated,
+# case-insensitive. Override via VLLM_BLOCKED_TOOLS (empty string = block none).
+_DEFAULT_BLOCKED_TOOLS = "task,notebookedit"
+
+
+def _vllm_blocked_tool_names() -> set:
+    raw = os.getenv("VLLM_BLOCKED_TOOLS")
+    if raw is None:
+        raw = _DEFAULT_BLOCKED_TOOLS
+    return {name.strip().lower() for name in raw.split(",") if name.strip()}
+
+
 def _tool_name(tool: Dict[str, Any]) -> str:
     function = tool.get("function") or {}
     return str(function.get("name") or "").lower()
@@ -1414,6 +1430,12 @@ def _compact_tools_for_vllm(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     max_tools = _vllm_max_tools()
     if max_tools == 0:
         return []
+
+    # Drop tools this setup can't use (frees context). Applied BEFORE the
+    # priority/limit cut so blocked tools never take a slot.
+    blocked = _vllm_blocked_tool_names()
+    if blocked:
+        tools = [t for t in tools if _tool_name(t) not in blocked]
 
     compacted_tools = []
     for tool in _prioritize_tools_for_vllm(tools)[:max_tools]:
