@@ -683,6 +683,34 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
           </div>
         </div>"""
 
+        # --- Cartão: endpoint do backend vLLM (atualizável sem reiniciar) ---
+        _dyn_path = os.getenv("VLLM_ENDPOINT_FILE", "").strip()
+        _cur_backend = ""
+        if _dyn_path and os.path.exists(_dyn_path):
+            try:
+                with open(_dyn_path, "r", encoding="utf-8") as _fh:
+                    _cur_backend = _fh.read().strip()
+            except Exception:
+                _cur_backend = ""
+        if not _cur_backend:
+            _cur_backend = os.getenv("HOSTED_VLLM_API_BASE", "") or os.getenv("VLLM_API_BASE", "")
+        if _dyn_path:
+            backend_html = f"""<div class="card" style="margin-bottom:24px">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Endpoint do modelo (vLLM)</div>
+              <p style="color:var(--muted);font-size:13px;margin-bottom:10px">Trocou de máquina (RunPod/Vast) e a URL mudou? Cole a nova aqui — vale na hora, sem reiniciar. Vazio = volta pra variável de ambiente.</p>
+              <form method="post" action="/admin/set-endpoint" style="display:flex;gap:10px;flex-wrap:wrap">
+                <input name="endpoint_url" placeholder="https://xxxxx-8001.proxy.runpod.net/v1" value="{_e(_cur_backend)}" style="flex:1;min-width:260px">
+                <button class="btn">Atualizar</button>
+              </form>
+            </div>"""
+        else:
+            backend_html = f"""<div class="card" style="margin-bottom:24px">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Endpoint do modelo (vLLM)</div>
+              <div class="mono" style="padding:8px 12px">{_e(_cur_backend or '—')}</div>
+              <p style="color:var(--yellow);font-size:12px;margin-top:8px">Para trocar a URL sem reiniciar, defina a variável <span class="mono">VLLM_ENDPOINT_FILE</span> (ex: /application/usage/vllm_endpoint.txt) e reinicie uma vez.</p>
+            </div>"""
+        conn_html = conn_html + backend_html
+
         error_html = f'<div class="reveal-banner" style="border-color:rgba(239,68,68,.4);color:var(--red)">{_e(err)}</div>' if err else ""
         # Tabela de chaves
         rows = ""
@@ -1000,6 +1028,34 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
         _, rev_tok = admin_db.create_api_key(name, desc, dlim, mlim, vdays, price, notes,
                                               token_limit=token_limit)
         return RedirectResponse(f"/admin/dashboard?reveal={rev_tok}", 302)
+
+    @app.post("/admin/set-endpoint")
+    async def set_endpoint(req: Request):
+        """Update the live vLLM endpoint URL WITHOUT editing env / restarting.
+        Writes the URL to VLLM_ENDPOINT_FILE, which provider_config reads (with a
+        few-seconds cache). Use this when you swap the RunPod/Vast machine and the
+        URL changes — paste the new URL here instead of hunting for the 404."""
+        _need(req)
+        f = await _form(req)
+        url = (f.get("endpoint_url", "") or "").strip().rstrip("/")
+        path = os.getenv("VLLM_ENDPOINT_FILE", "").strip()
+        if not path:
+            return _with_error("/admin/dashboard",
+                               "Defina a variável VLLM_ENDPOINT_FILE primeiro.")
+        if url and not (url.startswith("http://") or url.startswith("https://")):
+            return _with_error("/admin/dashboard",
+                               "URL inválida — precisa começar com http:// ou https://")
+        try:
+            if url:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(url + "\n")
+            else:
+                # Empty submission clears the override → falls back to env.
+                if os.path.exists(path):
+                    os.remove(path)
+        except Exception as exc:
+            return _with_error("/admin/dashboard", f"Falha ao salvar endpoint: {exc}")
+        return RedirectResponse("/admin/dashboard", 302)
 
     @app.post("/admin/create-reseller")
     async def create_reseller(req: Request):

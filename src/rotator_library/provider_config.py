@@ -12,6 +12,7 @@ This module handl- Known LiteLLM provider definitions (from scraped data)
 """
 
 import os
+import time
 import logging
 from typing import Dict, Any, Set, Optional
 
@@ -652,6 +653,16 @@ class ProviderConfig:
         self._api_bases: Dict[str, str] = {}
         self._custom_providers: Set[str] = set()
         self._load_api_bases()
+        # Dynamic endpoint override: a file whose contents (a URL) take priority
+        # over the env-based api_base for hosted_vllm. Lets you point the proxy
+        # at a NEW pod/machine URL WITHOUT editing env vars and restarting — just
+        # write the file. Re-read at most every few seconds (cheap). Empty/missing
+        # file → fall back to the env value (current behaviour). This is what
+        # makes swapping RunPod/Vast machines painless (no more stale-URL 404s).
+        self._dyn_path = os.getenv("VLLM_ENDPOINT_FILE", "").strip()
+        self._dyn_cache: Optional[str] = None
+        self._dyn_cache_at = 0.0
+        self._dyn_ttl = 5.0
 
     def _load_api_bases(self) -> None:
         """
@@ -685,9 +696,40 @@ class ProviderConfig:
         """Check if provider is a custom OpenAI-compatible provider."""
         return provider.lower() in self._custom_providers
 
+    def _read_dynamic_override(self) -> Optional[str]:
+        """Read the dynamic endpoint file (cached for a few seconds). Returns a
+        clean URL or None. Never raises — a bad/missing file just means 'no
+        override'."""
+        if not self._dyn_path:
+            return None
+        now = time.time()
+        if now - self._dyn_cache_at < self._dyn_ttl:
+            return self._dyn_cache
+        value: Optional[str] = None
+        try:
+            with open(self._dyn_path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            # Accept only a plausible http(s) URL; ignore junk/empty.
+            if raw.startswith("http://") or raw.startswith("https://"):
+                value = raw.rstrip("/")
+        except FileNotFoundError:
+            value = None
+        except Exception as e:
+            lib_logger.warning("Dynamic endpoint file unreadable (%r); using env.", e)
+            value = None
+        self._dyn_cache = value
+        self._dyn_cache_at = now
+        return value
+
     def get_api_base(self, provider: str) -> Optional[str]:
-        """Get configured API base for a provider, if any."""
-        return self._api_bases.get(provider.lower())
+        """Get configured API base for a provider. The dynamic override file
+        wins for hosted_vllm/vllm, else fall back to the env-based value."""
+        p = provider.lower()
+        if p in {"hosted_vllm", "vllm"}:
+            dyn = self._read_dynamic_override()
+            if dyn:
+                return dyn
+        return self._api_bases.get(p)
 
     def get_custom_providers(self) -> Set[str]:
         """Get the set of detected custom provider names."""
@@ -714,7 +756,9 @@ class ProviderConfig:
 
         # Extract provider from model string (e.g., "openai/gpt-4" → "openai")
         provider = model.split("/")[0].lower()
-        api_base = self._api_bases.get(provider)
+        # Use get_api_base so the dynamic endpoint-file override is honored for
+        # hosted_vllm/vllm (lets you swap machine URLs without a restart).
+        api_base = self.get_api_base(provider)
 
         if not api_base:
             # No override configured for this provider
