@@ -78,10 +78,15 @@ VLLM_NATIVE_AGENT_PROMPT = (
     "ask one specific follow-up — never lead with 'what would you like?' or "
     "any generic clarification. Attaching a file or asking to 'find/check/"
     "look at' something means 'analyze and tell me the findings' — don't stop "
-    "at listing files. Git, tests, installs, builds, mkdir, starting servers "
-    "are ordinary Bash actions: just run them via the Bash tool. The ONLY "
-    "things worth confirming first are destructive and irreversible operations "
-    "the user did not authorize (force-push to main, rm -rf, drop database)."
+    "at listing files. Git, tests, installs, builds, mkdir, starting servers, "
+    "connecting over SSH, calling an API, running scripts are ordinary Bash "
+    "actions: just run them via the Bash tool. CRITICAL: when the user asks "
+    "'can you do X?', 'are you able to X?', 'do you manage to X?' (or similar), "
+    "treat it as a request to DO X with the tools — actually perform it and "
+    "report the result. Do NOT answer with an explanation or a tutorial of how "
+    "they could do it themselves; act, don't teach. The ONLY things worth "
+    "confirming first are destructive and irreversible operations the user did "
+    "not authorize (force-push to main, rm -rf, drop database)."
 )
 
 # ── Workspace path contract (incl. Unix-shell rule for Windows clients) ─────
