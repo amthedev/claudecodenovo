@@ -21,6 +21,7 @@ sys.modules.setdefault("rotator_library.anthropic_compat", anthropic_package)
 from rotator_library.anthropic_compat.streaming import anthropic_streaming_wrapper
 from rotator_library.anthropic_compat.models import AnthropicMessagesRequest
 from rotator_library.anthropic_compat.translator import (
+    _apply_vllm_sampling,
     _build_vllm_forced_tool_call,
     _compact_tools_for_vllm,
     _parse_textual_tool_calls,
@@ -1176,6 +1177,48 @@ class SecretsBoundaryGatingTests(unittest.TestCase):
             _sanitize_openai_request_for_vllm(req)
         sys_text = req["messages"][0]["content"]
         self.assertIn("Sensitive workspace boundary", sys_text)
+
+
+class SamplingParamsTests(unittest.TestCase):
+    """Qwen-recommended sampling is applied so the model doesn't sample too
+    randomly (Claude Code sends temperature=1.0; proxy used to also drop top_k)."""
+
+    _ENVS = ["VLLM_TEMPERATURE", "VLLM_TOP_P", "VLLM_TOP_K",
+             "VLLM_REPETITION_PENALTY", "VLLM_RESPECT_CLIENT_SAMPLING"]
+
+    def _clear(self):
+        for k in self._ENVS:
+            os.environ.pop(k, None)
+
+    def test_overrides_high_client_temperature(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b", "temperature": 1.0,
+               "top_k": 100, "messages": [{"role": "user", "content": "oi"}]}
+        with mock.patch.dict(os.environ, {}, clear=False):
+            self._clear()
+            _apply_vllm_sampling(req)
+        self.assertEqual(req["temperature"], 0.7)
+        self.assertEqual(req["top_p"], 0.8)
+        self.assertNotIn("top_k", req)  # OpenAI schema rejects top-level top_k
+        self.assertEqual(req["extra_body"]["top_k"], 20)
+        self.assertEqual(req["extra_body"]["repetition_penalty"], 1.05)
+
+    def test_respect_client_optout(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b", "temperature": 1.0,
+               "top_k": 100, "messages": [{"role": "user", "content": "oi"}]}
+        with mock.patch.dict(os.environ, {"VLLM_RESPECT_CLIENT_SAMPLING": "on"}, clear=False):
+            _apply_vllm_sampling(req)
+        self.assertEqual(req["temperature"], 1.0)  # client's kept
+        self.assertNotIn("top_k", req)  # still stripped (vLLM-incompatible top-level)
+
+    def test_env_override(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b",
+               "messages": [{"role": "user", "content": "oi"}]}
+        with mock.patch.dict(os.environ, {"VLLM_TEMPERATURE": "0.3"}, clear=False):
+            for k in self._ENVS:
+                if k != "VLLM_TEMPERATURE":
+                    os.environ.pop(k, None)
+            _apply_vllm_sampling(req)
+        self.assertEqual(req["temperature"], 0.3)
 
 
 class QualityPromptTests(unittest.TestCase):

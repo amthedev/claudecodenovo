@@ -2130,6 +2130,52 @@ def _inject_native_tool_allowlist(
     messages.insert(0, {"role": "system", "content": prompt})
 
 
+def _vllm_sampling_value(env_name: str, default: float) -> Optional[float]:
+    """Resolve a sampling param: env override → built-in default. Empty/"off"
+    env disables that param (returns None = don't set it)."""
+    raw = os.getenv(env_name)
+    if raw is None:
+        return default
+    raw = raw.strip().lower()
+    if raw in {"", "off", "none", "client"}:
+        return None  # leave it to the client / vLLM default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _apply_vllm_sampling(openai_request: Dict[str, Any]) -> None:
+    """Apply Qwen-recommended sampling so the model uses its capacity well,
+    instead of the client's (often temperature=1.0) values that make it sample
+    too randomly. Defaults follow Qwen3-Coder guidance: temp 0.7 / top_p 0.8 /
+    top_k 20 / repetition_penalty 1.05. Each is overridable via env. With
+    VLLM_RESPECT_CLIENT_SAMPLING=on we don't touch what the client sent."""
+    if os.getenv("VLLM_RESPECT_CLIENT_SAMPLING", "off").lower() in {
+        "1", "true", "yes", "on"
+    }:
+        openai_request.pop("top_k", None)  # vLLM-incompatible top_k still stripped
+        return
+
+    temp = _vllm_sampling_value("VLLM_TEMPERATURE", 0.7)
+    top_p = _vllm_sampling_value("VLLM_TOP_P", 0.8)
+    top_k = _vllm_sampling_value("VLLM_TOP_K", 20.0)
+    rep = _vllm_sampling_value("VLLM_REPETITION_PENALTY", 1.05)
+
+    if temp is not None:
+        openai_request["temperature"] = temp
+    if top_p is not None:
+        openai_request["top_p"] = top_p
+    # top_k goes via extra_body (OpenAI schema has no top_k; vLLM reads it there).
+    if top_k is not None and top_k > 0:
+        eb = openai_request.setdefault("extra_body", {})
+        eb["top_k"] = int(top_k)
+    openai_request.pop("top_k", None)  # remove any top-level top_k (OpenAI rejects it)
+    if rep is not None:
+        eb = openai_request.setdefault("extra_body", {})
+        eb["repetition_penalty"] = rep
+
+
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
@@ -2158,7 +2204,14 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # Opt-out: VLLM_QUALITY_PROMPT=off.
     if os.getenv("VLLM_QUALITY_PROMPT", "on").lower() not in {"off", "0", "false", "no"}:
         _inject_quality_prompt(openai_request)
-    openai_request.pop("top_k", None)
+    # SAMPLING: apply Qwen's RECOMMENDED params instead of whatever the client
+    # sent. Claude Code defaults to temperature=1.0 and the proxy used to DROP
+    # top_k entirely — both make Qwen3-Coder sample too randomly and "act dumber
+    # than it is" (wastes the model's real capacity). Qwen's own guidance for
+    # Qwen3-Coder is ~temp 0.7 / top_p 0.8 / top_k 20 / repetition_penalty 1.05.
+    # We apply these for vLLM unless the operator overrides via env, or unless
+    # VLLM_RESPECT_CLIENT_SAMPLING=on (then we keep whatever the client sent).
+    _apply_vllm_sampling(openai_request)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
     # Thinking mode: defaults to ON now (was OFF). Customer feedback: turning
