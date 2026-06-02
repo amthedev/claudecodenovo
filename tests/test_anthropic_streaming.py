@@ -24,6 +24,7 @@ from rotator_library.anthropic_compat.translator import (
     _build_vllm_forced_tool_call,
     _compact_tools_for_vllm,
     _parse_textual_tool_calls,
+    _sanitize_openai_request_for_vllm,
     anthropic_to_openai_messages,
     openai_to_anthropic_response,
     translate_anthropic_request,
@@ -1131,6 +1132,50 @@ class BlockedToolsTests(unittest.TestCase):
             out = self._names(_compact_tools_for_vllm(tools))
         self.assertNotIn("Bash", out)
         self.assertIn("Read", out)
+
+
+class SecretsBoundaryGatingTests(unittest.TestCase):
+    """The 'sensitive workspace boundary' (a coding/repo prompt) must only be
+    injected for coding requests (with tools), not plain content/chat requests —
+    where it's noise that pollutes the user's system prompt and pushes the model
+    into 'technical repo assistant' mode."""
+
+    def test_content_request_no_boundary(self):
+        req = {
+            "model": "hosted_vllm/qwen3-coder-30b",
+            "messages": [
+                {"role": "system", "content": "Você é copywriter. Crie no estilo X."},
+                {"role": "user", "content": "cria um post"},
+            ],
+        }
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VLLM_SECRETS_BOUNDARY_ALWAYS", None)
+            _sanitize_openai_request_for_vllm(req)
+        sys_text = req["messages"][0]["content"]
+        self.assertNotIn("Sensitive workspace boundary", sys_text)
+        self.assertIn("copywriter", sys_text)  # user's system preserved
+
+    def test_coding_request_keeps_boundary(self):
+        req = {
+            "model": "hosted_vllm/qwen3-coder-30b",
+            "messages": [{"role": "user", "content": "edita o arquivo"}],
+            "_vllm_allowed_tool_names": ["Read", "Edit"],  # survives tools pop
+        }
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VLLM_SECRETS_BOUNDARY_ALWAYS", None)
+            _sanitize_openai_request_for_vllm(req)
+        sys_text = req["messages"][0]["content"]
+        self.assertIn("Sensitive workspace boundary", sys_text)
+
+    def test_always_flag_forces_boundary(self):
+        req = {
+            "model": "hosted_vllm/qwen3-coder-30b",
+            "messages": [{"role": "user", "content": "oi"}],
+        }
+        with mock.patch.dict(os.environ, {"VLLM_SECRETS_BOUNDARY_ALWAYS": "on"}, clear=False):
+            _sanitize_openai_request_for_vllm(req)
+        sys_text = req["messages"][0]["content"]
+        self.assertIn("Sensitive workspace boundary", sys_text)
 
 
 if __name__ == "__main__":

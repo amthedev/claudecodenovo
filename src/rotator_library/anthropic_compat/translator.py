@@ -2118,7 +2118,26 @@ def _inject_native_tool_allowlist(
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # OpenAI-compatible local/vLLM servers commonly reject Anthropic-only
     # sampling/thinking fields. Keep the request strict for Claude Code.
-    _inject_sensitive_workspace_boundary(openai_request)
+    #
+    # The "sensitive workspace boundary" prompt is about NOT grepping/reading
+    # .env/secret files during REPO work — it only makes sense for a coding
+    # agent that has file tools. For plain chat / content-generation requests
+    # (no tools — e.g. content bots), it's pure noise that pollutes the user's
+    # system prompt and nudges the model into "technical repo assistant" mode,
+    # hurting how well it follows a content/style prompt. So only inject it when
+    # the request actually carries tools. Opt-out of the gating with
+    # VLLM_SECRETS_BOUNDARY_ALWAYS=on (restores the old unconditional behaviour).
+    # Detect "this is a coding request" robustly: by the time we get here the
+    # fallback path may already have popped `tools`, but it leaves the marker
+    # `_vllm_allowed_tool_names` behind. Check both so it works in native AND
+    # fallback modes.
+    _has_tools = bool(openai_request.get("tools")) or bool(
+        openai_request.get("_vllm_allowed_tool_names")
+    )
+    if _has_tools or os.getenv("VLLM_SECRETS_BOUNDARY_ALWAYS", "off").lower() in {
+        "1", "true", "yes", "on"
+    }:
+        _inject_sensitive_workspace_boundary(openai_request)
     _inject_language_instruction(openai_request)
     openai_request.pop("top_k", None)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
