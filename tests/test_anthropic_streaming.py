@@ -382,6 +382,108 @@ class AnthropicStreamingToolUseTests(unittest.IsolatedAsyncioTestCase):
         # No forced-tool fallback unless explicitly opted in.
         self.assertNotIn("_vllm_forced_tool_call", openai_request)
 
+    def test_hosted_vllm_native_tool_allowlist_maps_ssh_to_bash(self):
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Entre na VPS via SSH e rode uptime.",
+                }
+            ],
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                }
+            ],
+        )
+
+        with mock.patch.dict("os.environ", {"HOSTED_VLLM_NATIVE_TOOLS": "true"}):
+            openai_request = translate_anthropic_request(request)
+
+        system_text = "\n".join(
+            message.get("content", "")
+            for message in openai_request["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("Current tool allowlist (exact names): Bash", system_text)
+        self.assertIn("shell/terminal/exec/execute/run/ssh", system_text)
+
+    def test_hosted_vllm_forced_fallback_runs_explicit_ssh_command(self):
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Automatize a VPS:\nssh root@203.0.113.10 uptime",
+                }
+            ],
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                }
+            ],
+        )
+
+        with mock.patch.dict(
+            "os.environ", {"HOSTED_VLLM_FORCE_TOOL_FALLBACK": "true"}, clear=False
+        ):
+            openai_request = translate_anthropic_request(request)
+
+        forced = openai_request.get("_vllm_forced_tool_call")
+        self.assertIsNotNone(forced)
+        self.assertEqual(forced["name"], "Bash")
+        self.assertEqual(forced["input"]["command"], "ssh root@203.0.113.10 uptime")
+        self.assertEqual(openai_request.get("_vllm_tool_intent"), "run")
+
+    def test_hosted_vllm_ssh_without_command_does_not_force_local_listing(self):
+        request = AnthropicMessagesRequest(
+            model="hosted_vllm/qwen",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Faça uma automação na minha VPS via SSH.",
+                }
+            ],
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                }
+            ],
+        )
+
+        with mock.patch.dict(
+            "os.environ", {"HOSTED_VLLM_FORCE_TOOL_FALLBACK": "true"}, clear=False
+        ):
+            openai_request = translate_anthropic_request(request)
+
+        self.assertEqual(openai_request.get("_vllm_tool_intent"), "run")
+        self.assertNotIn("_vllm_forced_tool_call", openai_request)
+        system_text = "\n".join(
+            message.get("content", "")
+            for message in openai_request["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("Use Bash to execute the relevant command", system_text)
+
     def test_parses_malformed_textual_tool_call_without_closing_tags(self):
         text = (
             "Vou escrever o arquivo agora.\n"

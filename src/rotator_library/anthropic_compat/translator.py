@@ -124,6 +124,8 @@ _FILE_PATH_TOOL_NAMES = {
     "write",
 }
 _THINK_TAG_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+_SSH_TOKEN_RE = re.compile(r"\bssh\b", re.IGNORECASE)
+_SSH_COMMAND_LINE_RE = re.compile(r"(?m)^\s*(ssh\s+[^\r\n]+)")
 # These markers MUST be specific enough to ONLY match Qwen3's leaked reasoning
 # (think-style meta-commentary), NOT normal answers in English. Earlier the list
 # included "i need to ", "let me ", "i'll " — those are perfectly valid response
@@ -1581,6 +1583,8 @@ def _classify_tool_intent(user_text: str) -> Optional[str]:
         return None
 
     lowered = user_text.lower()
+    if _SSH_TOKEN_RE.search(user_text):
+        return "run"
     if _contains_any_marker(lowered, _RUN_COMMAND_MARKERS):
         return "run"
     if _contains_any_marker(lowered, _CREATE_OR_EDIT_MARKERS):
@@ -1588,6 +1592,14 @@ def _classify_tool_intent(user_text: str) -> Optional[str]:
     if _contains_any_marker(lowered, _PROJECT_INSPECTION_MARKERS):
         return "inspect"
     return None
+
+
+def _extract_explicit_ssh_command(user_text: str) -> Optional[str]:
+    match = _SSH_COMMAND_LINE_RE.search(user_text)
+    if not match:
+        return None
+    command = match.group(1).strip()
+    return command if command.startswith("ssh ") else None
 
 
 def _append_system_instruction(
@@ -1828,6 +1840,17 @@ def _build_vllm_forced_tool_call(
             return _tool_call(ls_tool, {"path": "."})
 
     if intent == "run" and bash:
+        ssh_command = _extract_explicit_ssh_command(user_text)
+        if ssh_command:
+            return _tool_call(
+                bash,
+                {
+                    "command": ssh_command,
+                    "description": "Run the requested SSH command",
+                },
+            )
+        if _SSH_TOKEN_RE.search(user_text):
+            return None
         if "calculadora" in lowered or "calculator" in lowered:
             return _tool_call(
                 bash,
@@ -2064,7 +2087,7 @@ def _inject_native_tool_allowlist(
         (("search", "find"), ["Grep"]),
         (("listdir", "list", "dir"), ["LS"]),
         (("filesystem", "fs"), ["Read", "Write"]),
-        (("shell", "terminal", "exec", "execute", "run"), ["Bash"]),
+        (("shell", "terminal", "exec", "execute", "run", "ssh"), ["Bash"]),
         (("editfile", "modify"), ["Edit"]),
         (("createfile", "newfile"), ["Write"]),
     ]
