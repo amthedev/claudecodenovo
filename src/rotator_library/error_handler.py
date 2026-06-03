@@ -23,6 +23,12 @@ from litellm.exceptions import (
 
 lib_logger = logging.getLogger("rotator_library")
 
+_CACHE_ACCESS_DENIED_RE = re.compile(r"\bcache\s+access\s+denied\b", re.IGNORECASE)
+
+
+def _is_cache_access_denied_error(text: str) -> bool:
+    return bool(text and _CACHE_ACCESS_DENIED_RE.search(text))
+
 
 def _parse_duration_string(duration_str: str) -> Optional[int]:
     """
@@ -850,6 +856,12 @@ def classify_error(e: Exception, provider: Optional[str] = None) -> ClassifiedEr
 
     # Generic classification logic
     status_code = getattr(e, "status_code", None)
+    if _is_cache_access_denied_error(error_text):
+        return ClassifiedError(
+            error_type="api_connection",
+            original_exception=e,
+            status_code=503,
+        )
 
     if isinstance(e, httpx.HTTPStatusError):  # [NEW] Handle httpx errors first
         status_code = e.response.status_code
@@ -860,6 +872,12 @@ def classify_error(e: Exception, provider: Optional[str] = None) -> ClassifiedEr
         except Exception:
             error_body = ""
 
+        if _is_cache_access_denied_error(error_body):
+            return ClassifiedError(
+                error_type="api_connection",
+                original_exception=e,
+                status_code=503,
+            )
         if status_code == 401:
             return ClassifiedError(
                 error_type="authentication",
