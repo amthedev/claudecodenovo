@@ -138,6 +138,12 @@ cache/antigravity/thought_signatures.json
 admin_data.json
 admin_data.tmp
 admin.db
+admin.db-shm
+admin.db-wal
+admin.db-journal
+
+# macOS Finder metadata
+.DS_Store
 
 # Local reference clones used for compatibility research
 reference_repos/

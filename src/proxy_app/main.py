@@ -1672,6 +1672,13 @@ async def anthropic_count_tokens(
         raise HTTPException(status_code=500, detail=error_response)
 
 
+@app.get("/v1/support/tickets/current")
+async def support_tickets_stub():
+    """Stub silencioso: claude.ai bate aqui e gerava 404 a cada turno.
+    Retornar lista vazia satisfaz o cliente sem ruído nos logs."""
+    return JSONResponse(content={"data": [], "has_more": False})
+
+
 @app.post("/v1/embeddings")
 async def embeddings(
     request: Request,

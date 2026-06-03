@@ -836,36 +836,44 @@ def _period_tokens(c: sqlite3.Connection, row: sqlite3.Row, date_pattern: str) -
 
 
 def daily_usage_fraction(app_name: str) -> float:
-    """Fraction (0.0–1.0+) of today's DAILY token limit already used by this key,
-    by display name. Used by the usage-window load shedding to decide who gets
-    paused first under overload. Returns 0.0 when there's no daily limit or the
-    key is unknown (so a missing limit never causes a pause). Cheap: one indexed
-    SUM over today's key_usage."""
+    """Fraction (0.0–1.0+) of the key's limit already consumed, used by the
+    usage-window load shedding to decide who gets paused first under overload.
+
+    Priority: daily_limit (resets at midnight local) > token_limit (cumulative
+    package balance, never resets). When neither is set, returns 0.0 — keys
+    without limits are never paused. Reseller keys aggregate children usage."""
     today = _today_str()
     try:
         with _db() as c:
             row = c.execute(
-                "SELECT id, daily_limit, key_type FROM api_keys WHERE name=?",
+                "SELECT id, daily_limit, token_limit, key_type FROM api_keys WHERE name=?",
                 (app_name,),
             ).fetchone()
             if not row:
                 return 0.0
-            limit = int(row["daily_limit"] or 0)
-            if limit <= 0:
-                return 0.0
-            used = int(c.execute(
-                "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage "
-                "WHERE key_id=? AND date=?",
-                (row["id"], today),
-            ).fetchone()[0])
-            if (row["key_type"] or "client") == "reseller":
-                used += int(c.execute(
-                    """SELECT COALESCE(SUM(ku.total_tokens),0)
-                       FROM key_usage ku JOIN api_keys child ON child.id=ku.key_id
-                       WHERE child.parent_key_id=? AND ku.date=?""",
+            is_reseller = (row["key_type"] or "client") == "reseller"
+            daily_limit = int(row["daily_limit"] or 0)
+            if daily_limit > 0:
+                used = int(c.execute(
+                    "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage "
+                    "WHERE key_id=? AND date=?",
                     (row["id"], today),
                 ).fetchone()[0])
-            return used / limit
+                if is_reseller:
+                    used += int(c.execute(
+                        """SELECT COALESCE(SUM(ku.total_tokens),0)
+                           FROM key_usage ku JOIN api_keys child ON child.id=ku.key_id
+                           WHERE child.parent_key_id=? AND ku.date=?""",
+                        (row["id"], today),
+                    ).fetchone()[0])
+                return used / daily_limit
+            token_limit = int(row["token_limit"] or 0)
+            if token_limit > 0:
+                used = _total_tokens(c, row["id"])
+                if is_reseller:
+                    used += _children_tokens(c, row["id"])
+                return used / token_limit
+            return 0.0
     except Exception:
         return 0.0
 

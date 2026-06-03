@@ -707,7 +707,12 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             backend_html = f"""<div class="card" style="margin-bottom:24px">
               <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Endpoint do modelo (vLLM)</div>
               <div class="mono" style="padding:8px 12px">{_e(_cur_backend or '—')}</div>
-              <p style="color:var(--yellow);font-size:12px;margin-top:8px">Para trocar a URL sem reiniciar, defina a variável <span class="mono">VLLM_ENDPOINT_FILE</span> (ex: /application/usage/vllm_endpoint.txt) e reinicie uma vez.</p>
+              <p style="color:var(--yellow);font-size:12px;margin-top:8px">
+                <b>Trocou de pod (RunPod/Vast) e teve que editar o <span class="mono">proxy_config.json</span> na mão?</b>
+                Pra não precisar mais disso, defina a env <span class="mono">VLLM_ENDPOINT_FILE</span>
+                (ex: <span class="mono">/application/usage/vllm_endpoint.txt</span>) e reinicie UMA vez.
+                Depois, este card vira um campo onde você cola a nova URL e vale na hora — sem restart, sem mexer em JSON.
+              </p>
             </div>"""
         window_html = """<div class="card" id="uw-card" style="margin-bottom:24px;display:none">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
