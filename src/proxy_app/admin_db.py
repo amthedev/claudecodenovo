@@ -19,6 +19,24 @@ SESSION_TTL   = int(os.getenv("ADMIN_SESSION_SECONDS", "43200"))
 REVEAL_TTL    = int(os.getenv("KEY_REVEAL_TTL", "600"))   # 10 min para copiar a chave
 PBKDF2_ITERS  = 260_000
 
+# Janela do "dia" para limites diários. Default America/Sao_Paulo (UTC-3, sem
+# horário de verão) — antes era UTC e o reset caía às 21h locais. Configurável
+# via env DAILY_RESET_OFFSET_HOURS (em horas, positivo = oeste de UTC).
+_DAILY_OFFSET_SEC = int(float(os.getenv("DAILY_RESET_OFFSET_HOURS", "3")) * 3600)
+
+
+def _local_struct(ts: Optional[float] = None) -> time.struct_time:
+    """time.struct_time deslocado pro fuso local (default Brasília)."""
+    return time.gmtime((ts if ts is not None else time.time()) - _DAILY_OFFSET_SEC)
+
+
+def _today_str(ts: Optional[float] = None) -> str:
+    return time.strftime("%Y-%m-%d", _local_struct(ts))
+
+
+def _month_str(ts: Optional[float] = None) -> str:
+    return time.strftime("%Y-%m", _local_struct(ts))
+
 
 def _db_path() -> Path:
     return Path.cwd() / os.getenv("ADMIN_DB_FILE", "admin.db")
@@ -404,8 +422,8 @@ def create_api_key(
 
 
 def list_api_keys() -> List[Dict[str, Any]]:
-    today = time.strftime("%Y-%m-%d", time.gmtime())
-    month = time.strftime("%Y-%m", time.gmtime())
+    today = _today_str()
+    month = _month_str()
     with _db() as c:
         rows = c.execute("SELECT * FROM api_keys ORDER BY created_at DESC").fetchall()
         result = []
@@ -554,7 +572,7 @@ def verify_api_key_db(raw: str) -> Optional[Dict[str, Any]]:
     if not raw:
         return None
     kh = hash_api_key(raw)
-    today = time.strftime("%Y-%m-%d", time.gmtime())
+    today = _today_str()
     now = time.time()
     with _db() as c:
         r = c.execute("SELECT * FROM api_keys WHERE key_hash=?", (kh,)).fetchone()
@@ -707,7 +725,7 @@ def verify_api_key_db_by_id(key_id: str) -> Optional[Dict[str, Any]]:
         key = c.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
         if not key:
             return None
-        today = time.strftime("%Y-%m-%d", time.gmtime())
+        today = _today_str()
         error = _row_access_error(c, key, now=time.time(), today=today)
         if error:
             return {"error": error}
@@ -823,7 +841,7 @@ def daily_usage_fraction(app_name: str) -> float:
     paused first under overload. Returns 0.0 when there's no daily limit or the
     key is unknown (so a missing limit never causes a pause). Cheap: one indexed
     SUM over today's key_usage."""
-    today = time.strftime("%Y-%m-%d", time.gmtime())
+    today = _today_str()
     try:
         with _db() as c:
             row = c.execute(
@@ -879,7 +897,7 @@ def _remaining_tokens_for_row(c: sqlite3.Connection, row: sqlite3.Row,
 def _row_access_error(c: sqlite3.Connection, row: sqlite3.Row, now: Optional[float] = None,
                       today: Optional[str] = None, seen: Optional[set[str]] = None) -> Optional[str]:
     now = now or time.time()
-    today = today or time.strftime("%Y-%m-%d", time.gmtime())
+    today = today or _today_str()
     seen = set(seen or ())
     if row["id"] in seen:
         return "disabled"
@@ -911,7 +929,7 @@ def record_api_key_usage(key_id: Optional[str], input_tokens: int = 0,
     input_tokens = max(0, int(input_tokens or 0))
     output_tokens = max(0, int(output_tokens or 0))
     total_tokens = max(0, int(total_tokens or input_tokens + output_tokens))
-    today = time.strftime("%Y-%m-%d", time.gmtime())
+    today = _today_str()
     with _db() as c:
         c.execute(
             """INSERT INTO key_usage(key_id,date,request_count,input_tokens,output_tokens,total_tokens)
@@ -1202,8 +1220,8 @@ def list_unlinked_reseller_keys() -> List[Dict[str, Any]]:
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
 def get_stats() -> Dict[str, Any]:
-    today = time.strftime("%Y-%m-%d", time.gmtime())
-    month = time.strftime("%Y-%m", time.gmtime())
+    today = _today_str()
+    month = _month_str()
     with _db() as c:
         active = c.execute("SELECT COUNT(*) FROM api_keys WHERE active=1").fetchone()[0]
         today_r = c.execute(
@@ -1240,12 +1258,12 @@ def get_usage_chart(days: int = 14) -> List[Dict[str, Any]]:
     result = []
     for i in range(days - 1, -1, -1):
         ts = time.time() - i * 86400
-        d = time.strftime("%Y-%m-%d", time.gmtime(ts))
+        d = _today_str(ts)
         with _db() as c:
             cnt = c.execute(
                 "SELECT COALESCE(SUM(total_tokens),0) FROM key_usage WHERE date=?", (d,)
             ).fetchone()[0]
-        result.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)), "count": cnt})
+        result.append({"date": d, "label": time.strftime("%d/%m", _local_struct(ts)), "count": cnt})
     return result
 
 
@@ -1253,11 +1271,11 @@ def get_key_usage_history(kid: str, days: int = 14) -> List[Dict[str, Any]]:
     result = []
     for i in range(days - 1, -1, -1):
         ts = time.time() - i * 86400
-        d = time.strftime("%Y-%m-%d", time.gmtime(ts))
+        d = _today_str(ts)
         with _db() as c:
             r = c.execute("SELECT total_tokens FROM key_usage WHERE key_id=? AND date=?",
                            (kid, d)).fetchone()
-        result.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)),
+        result.append({"date": d, "label": time.strftime("%d/%m", _local_struct(ts)),
                        "count": r["total_tokens"] if r else 0})
     return result
 
@@ -1267,7 +1285,7 @@ def get_reseller_usage_history(kid: str, days: int = 14) -> List[Dict[str, Any]]
     result = []
     for i in range(days - 1, -1, -1):
         ts = time.time() - i * 86400
-        d = time.strftime("%Y-%m-%d", time.gmtime(ts))
+        d = _today_str(ts)
         with _db() as c:
             total = c.execute(
                 """SELECT COALESCE(SUM(ku.total_tokens),0)
@@ -1275,7 +1293,7 @@ def get_reseller_usage_history(kid: str, days: int = 14) -> List[Dict[str, Any]]
                    WHERE ku.date=? AND (ak.id=? OR ak.parent_key_id=?)""",
                 (d, kid, kid),
             ).fetchone()[0]
-        result.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)),
+        result.append({"date": d, "label": time.strftime("%d/%m", _local_struct(ts)),
                        "count": total})
     return result
 
@@ -1332,8 +1350,8 @@ def _usage_series_for_keys(key_ids: list, days: int) -> List[Dict[str, Any]]:
     """Daily total_tokens + request_count summed over the given key ids."""
     if not key_ids:
         return [
-            {"date": time.strftime("%Y-%m-%d", time.gmtime(time.time() - i * 86400)),
-             "label": time.strftime("%d/%m", time.gmtime(time.time() - i * 86400)),
+            {"date": _today_str(time.time() - i * 86400),
+             "label": time.strftime("%d/%m", _local_struct(time.time() - i * 86400)),
              "tokens": 0, "requests": 0}
             for i in range(days - 1, -1, -1)
         ]
@@ -1342,13 +1360,13 @@ def _usage_series_for_keys(key_ids: list, days: int) -> List[Dict[str, Any]]:
     with _db() as c:
         for i in range(days - 1, -1, -1):
             ts = time.time() - i * 86400
-            d = time.strftime("%Y-%m-%d", time.gmtime(ts))
+            d = _today_str(ts)
             row = c.execute(
                 f"""SELECT COALESCE(SUM(total_tokens),0) AS t, COALESCE(SUM(request_count),0) AS r
                     FROM key_usage WHERE date=? AND key_id IN ({placeholders})""",
                 (d, *key_ids),
             ).fetchone()
-            out.append({"date": d, "label": time.strftime("%d/%m", time.gmtime(ts)),
+            out.append({"date": d, "label": time.strftime("%d/%m", _local_struct(ts)),
                         "tokens": int(row["t"]), "requests": int(row["r"])})
     return out
 

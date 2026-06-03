@@ -1435,6 +1435,8 @@ async def chat_completions(
         err_str = str(e)
         if "BadGateway" in err_str or "bad gateway" in err_str.lower() or "502" in err_str:
             raise HTTPException(status_code=503, detail="Servidor de IA iniciando. Tente em 1-2 minutos.")
+        if "cache access denied" in err_str.lower():
+            raise HTTPException(status_code=529, detail="Upstream vLLM rejeitou o cache de prefixo (transitório). Tente novamente.")
         raise HTTPException(status_code=500, detail=err_str)
 
 
@@ -1652,10 +1654,20 @@ async def anthropic_count_tokens(
         }
         raise HTTPException(status_code=401, detail=error_response)
     except Exception as e:
+        err_str = str(e)
         logging.error(f"Anthropic count_tokens endpoint error: {e}")
+        if "cache access denied" in err_str.lower():
+            error_response = {
+                "type": "error",
+                "error": {
+                    "type": "overloaded_error",
+                    "message": "Upstream vLLM rejeitou o cache de prefixo (transitório). Tente novamente.",
+                },
+            }
+            raise HTTPException(status_code=529, detail=error_response)
         error_response = {
             "type": "error",
-            "error": {"type": "api_error", "message": str(e)},
+            "error": {"type": "api_error", "message": err_str},
         }
         raise HTTPException(status_code=500, detail=error_response)
 

@@ -112,6 +112,28 @@ class _UsageWindow:
             ),
         )
 
+    def snapshot(self) -> Dict[str, object]:
+        """Read-only view of the window state for the admin UI."""
+        now = time.monotonic()
+        active_window_s = _env_float("USAGE_WINDOW_ACTIVE_SECONDS", 60.0)
+        overload_clients = _env_int("USAGE_WINDOW_MAX_CLIENTS", 4)
+        active = sum(1 for ts in self._active.values() if now - ts <= active_window_s)
+        paused = [
+            {"client_id": cid, "seconds_left": max(0, int(until - now))}
+            for cid, until in self._paused_until.items()
+            if until > now
+        ]
+        return {
+            "enabled": _enabled(),
+            "active_clients": active,
+            "max_clients": overload_clients,
+            "overloaded": active > overload_clients,
+            "paused": paused,
+            "active_window_seconds": int(active_window_s),
+            "heavy_fraction": _env_float("USAGE_WINDOW_HEAVY_FRACTION", 0.5),
+            "pause_minutes": _env_int("USAGE_WINDOW_PAUSE_MINUTES", 60),
+        }
+
 
 window = _UsageWindow()
 
@@ -121,3 +143,7 @@ async def enforce_usage_window(client_id: Optional[str], usage_fraction: float) 
     if not client_id:
         return
     window.check(client_id, usage_fraction)
+
+
+def usage_window_snapshot() -> Dict[str, object]:
+    return window.snapshot()

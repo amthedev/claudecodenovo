@@ -709,7 +709,41 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
               <div class="mono" style="padding:8px 12px">{_e(_cur_backend or '—')}</div>
               <p style="color:var(--yellow);font-size:12px;margin-top:8px">Para trocar a URL sem reiniciar, defina a variável <span class="mono">VLLM_ENDPOINT_FILE</span> (ex: /application/usage/vllm_endpoint.txt) e reinicie uma vez.</p>
             </div>"""
-        conn_html = conn_html + backend_html
+        window_html = """<div class="card" id="uw-card" style="margin-bottom:24px;display:none">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Janela de uso (load shedding)</span>
+            <span id="uw-state" class="badge"></span>
+          </div>
+          <div id="uw-summary" style="color:var(--muted);font-size:13px;margin-bottom:8px"></div>
+          <div id="uw-paused" style="font-size:13px"></div>
+        </div>
+        <script>
+        async function refreshUsageWindow(){
+          try{
+            const r = await fetch('/admin/api/usage-window');
+            if(!r.ok) return;
+            const d = await r.json();
+            const card = document.getElementById('uw-card');
+            if(!card) return;
+            card.style.display = 'block';
+            const st = document.getElementById('uw-state');
+            if(!d.enabled){ st.textContent='desligada'; st.className='badge'; }
+            else if(d.overloaded){ st.textContent='SOBRECARGA'; st.className='badge badge-yellow'; }
+            else { st.textContent='ativa'; st.className='badge badge-blue'; }
+            document.getElementById('uw-summary').textContent =
+              `Clientes ativos: ${d.active_clients}/${d.max_clients} (janela ${d.active_window_seconds}s). Pausa: ${d.pause_minutes}min para quem usou >= ${Math.round(d.heavy_fraction*100)}% do diário.`;
+            const pausedEl = document.getElementById('uw-paused');
+            if(!d.paused.length){ pausedEl.innerHTML = '<span style="color:var(--muted)">Nenhum cliente pausado.</span>'; }
+            else {
+              pausedEl.innerHTML = '<b>Pausados:</b><ul style="margin:6px 0 0 18px;padding:0">' +
+                d.paused.map(p => `<li class="mono">${p.client_id} — reabre em ${Math.ceil(p.seconds_left/60)}min</li>`).join('') + '</ul>';
+            }
+          }catch(e){}
+        }
+        refreshUsageWindow();
+        setInterval(refreshUsageWindow, 10000);
+        </script>"""
+        conn_html = conn_html + backend_html + window_html
 
         error_html = f'<div class="reveal-banner" style="border-color:rgba(239,68,68,.4);color:var(--red)">{_e(err)}</div>' if err else ""
         # Tabela de chaves
@@ -887,18 +921,23 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
             <button class="x" onclick="closeModal('m-create')">✕</button>
             <h2>🔑 Nova chave de API</h2>
             <p>Crie uma chave para um cliente ou app.</p>
+            <div style="background:rgba(59,130,246,.08);border-left:3px solid var(--blue);padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--muted);border-radius:4px">
+              <b style="color:var(--text)">Diferença dos limites:</b><br>
+              <b>Tokens por dia</b> e <b>por mês</b> resetam automaticamente (meia-noite horário de Brasília).<br>
+              <b>Saldo total</b> é cumulativo — desce a cada uso e <b>não reseta</b>. Bom para venda de pacote.
+            </div>
             <form method="post" action="/admin/create-key">
               <label>Nome do app *</label>
               <input name="name" placeholder="Ex: Claude Code - Cliente A" required>
               <label>Descrição</label>
               <input name="description" placeholder="Opcional">
               <div class="field-row">
-                <div><label>Tokens por dia (0=∞)</label><input name="daily_limit" type="number" value="0" min="0"></div>
-                <div><label>Tokens por mês (0=∞)</label><input name="monthly_limit" type="number" value="0" min="0"></div>
+                <div><label>Tokens por dia (0=∞, reseta)</label><input name="daily_limit" type="number" value="0" min="0"></div>
+                <div><label>Tokens por mês (0=∞, reseta)</label><input name="monthly_limit" type="number" value="0" min="0"></div>
                 <div><label>Validade (dias, 0=∞)</label><input name="validity_days" type="number" value="0" min="0"></div>
               </div>
               <div class="field-row">
-                <div><label>Saldo total tokens (0=∞)</label><input name="token_limit" type="number" value="0" min="0"></div>
+                <div><label>Saldo total (0=∞, NÃO reseta)</label><input name="token_limit" type="number" value="0" min="0"></div>
                 <div><label>Preço por 1K tokens ($)</label><input name="price_per_1k" type="number" value="0" min="0" step="0.0001"></div>
               </div>
               <label>Notas internas</label>
@@ -1197,6 +1236,12 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
     async def api_overview(req: Request, days: int = 14):
         _need(req)
         return JSONResponse(admin_db.get_admin_overview(min(max(days, 1), 90)))
+
+    @app.get("/admin/api/usage-window")
+    async def api_usage_window(req: Request):
+        _need(req)
+        from proxy_app.usage_window import usage_window_snapshot
+        return JSONResponse(usage_window_snapshot())
 
     # ── Painel do revendedor ─────────────────────────────────────────────────
     @app.get("/reseller", response_class=HTMLResponse)
