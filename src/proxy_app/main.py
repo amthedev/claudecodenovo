@@ -937,14 +937,16 @@ def _verify_proxy_api_key_value(raw_key: Optional[str]) -> Optional[Dict[str, An
 async def _enforce_usage_window_for(cid: str, verified: dict) -> None:
     """Fair-usage window load shedding. Looks up how much of the daily limit the
     client already used, then lets usage_window decide if their window is closed
-    under overload. Safe no-op when USAGE_WINDOW is off. Never blocks on errors."""
+    under overload. With USAGE_WINDOW=off the call still runs — it just tracks
+    activity for the admin snapshot without ever pausing anyone. Errors never
+    block the request (only the 429 from a closed window propagates)."""
     try:
         from proxy_app.usage_window import enforce_usage_window, _enabled
-        if not _enabled():
-            return
         from proxy_app import admin_db as _admin_db
         app_name = verified.get("app_name") or ""
-        frac = _admin_db.daily_usage_fraction(app_name) if app_name else 0.0
+        # Only hit the DB when the window is on (uses the fraction to pick who
+        # gets paused under overload). When off, skip the DB and just track.
+        frac = _admin_db.daily_usage_fraction(app_name) if (_enabled() and app_name) else 0.0
         await enforce_usage_window(cid, frac)
     except HTTPException:
         raise  # the 429 must propagate

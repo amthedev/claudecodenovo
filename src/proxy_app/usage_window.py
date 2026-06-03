@@ -62,11 +62,22 @@ class _UsageWindow:
         """Raise HTTP 429 with an honest message if this client's window is
         closed. Closes the window when the server is overloaded AND this client
         has already used a large share of their daily limit. Never raises for
-        clients who used little — they keep priority under load."""
-        if not _enabled() or not client_id:
+        clients who used little — they keep priority under load.
+
+        Always tracks `client_id` in `_active` even when the window is disabled,
+        so the admin snapshot can report "clientes ativos" (observability) without
+        forcing load shedding to be on."""
+        if not client_id:
             return
 
         now = time.monotonic()
+        # Track activity ALWAYS (used by snapshot() in the admin UI). Pausing
+        # logic below only runs when the window is enabled.
+        self._active[client_id] = now
+
+        if not _enabled():
+            return
+
         active_window_s = _env_float("USAGE_WINDOW_ACTIVE_SECONDS", 60.0)
         overload_clients = _env_int("USAGE_WINDOW_MAX_CLIENTS", 4)
         heavy_fraction = _env_float("USAGE_WINDOW_HEAVY_FRACTION", 0.5)
@@ -80,8 +91,7 @@ class _UsageWindow:
             else:
                 self._paused_until.pop(client_id, None)
 
-        # 2. Register this client as active and measure concurrency.
-        self._active[client_id] = now
+        # 2. Measure concurrency (registration already done above).
         active = self._active_count(now, active_window_s)
 
         # 3. Not overloaded → let everyone through (window stays open).
