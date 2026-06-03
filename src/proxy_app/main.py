@@ -1597,6 +1597,16 @@ async def anthropic_messages(
                 },
             }
             raise HTTPException(status_code=529, detail=error_response)
+        # vLLM prefix-cache rejection: transient, retry will usually succeed
+        if "cache access denied" in err_str.lower():
+            error_response = {
+                "type": "error",
+                "error": {
+                    "type": "overloaded_error",
+                    "message": "Upstream vLLM rejeitou o cache de prefixo (transitório). Tente novamente.",
+                },
+            }
+            raise HTTPException(status_code=529, detail=error_response)
         error_response = {
             "type": "error",
             "error": {"type": "api_error", "message": err_str},
