@@ -109,6 +109,46 @@ def test_extract_requested_part_count():
     assert e.extract_requested_part_count("nada aqui", 5) == 5
 
 
+def test_parse_plan_text_with_markdown():
+    """O modelo costuma responder com markdown (**Nome**, ### título) e resumo em
+    sub-rótulos. O parser deve: limpar markdown do título, ler Início/Meio/Fim,
+    extrair o NOME certo do personagem (não a idade) e a idade separada."""
+    raw = (
+        "TITULO: **A Sogra Controladora**\n\n"
+        "RESUMO:\n"
+        "Início: ela recebe mensagens da sogra.\n"
+        "Meio: a sogra interfere no casamento.\n"
+        "Fim: o marido fica do lado dela.\n\n"
+        "PERSONAGENS:\n"
+        "- **Letícia**: 28 anos, protagonista, firme.\n"
+        "- **Mãe de Letícia**: 52 anos, dominadora.\n\n"
+        "PARTE 1: O ataque\n"
+        "Conversa principal: Letícia e a Sogra\n"
+        "Começo/entrada: cadê meu filho?\n"
+        "Acontece: a sogra alfineta.\n"
+        "Objetivo: raiva da sogra.\n"
+    )
+    plan = e.parse_plan_text(raw, 1)
+    assert plan["titulo"] == "A Sogra Controladora"  # sem **
+    assert "mensagens da sogra" in plan["resumo"]["inicio"]
+    assert plan["resumo"]["meio"] and plan["resumo"]["fim"]
+    nomes = [p["nome"] for p in plan["personagens"]]
+    assert "Letícia" in nomes
+    assert "Mãe de Letícia" in nomes
+    assert "52 anos" not in nomes  # não confunde idade com nome
+    # idade extraída
+    let = next(p for p in plan["personagens"] if p["nome"] == "Letícia")
+    assert let["idade"] == "28"
+    p1 = plan["partes"][0]
+    assert p1["conversa_principal"] and p1["objetivo"]
+
+
+def test_strip_md():
+    assert e.strip_md("**Título**") == "Título"
+    assert e.strip_md("### Cabeçalho") == "Cabeçalho"
+    assert e.strip_md("texto normal") == "texto normal"
+
+
 def test_dedupe_looping_lines_cuts_loop():
     """Trava de loop por código: o modelo repete a mesma fala muitas vezes →
     dedupe corta, preservando a parte coerente do início."""

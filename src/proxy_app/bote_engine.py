@@ -763,17 +763,28 @@ def normalize_plan(data: Dict[str, Any], target_parts: int) -> Dict[str, Any]:
     return data
 
 
+def strip_md(text: str) -> str:
+    """Remove marcação markdown que o modelo insiste em usar mesmo quando o prompt
+    pede texto puro (**negrito**, ### títulos, *itálico*, `código`). Sem isso o
+    título virava só '**' e os campos enchiam de lixo."""
+    s = (text or "").strip()
+    s = re.sub(r"^#{1,6}\s*", "", s)          # ### no início
+    s = re.sub(r"\*{1,3}([^*]*)\*{1,3}", r"\1", s)  # **x** *x* -> x
+    s = s.replace("`", "").strip()
+    return s
+
+
 def parse_plan_title(text: str) -> str:
     lines = (text or "").splitlines()
     for index, line in enumerate(lines):
         clean = re.sub(r"[^a-z0-9]+", "", remove_accents(line).lower())
         if clean.startswith("titulo"):
             if ":" in line:
-                value = line.split(":", 1)[1].strip()
+                value = strip_md(line.split(":", 1)[1])
                 if value:
                     return value
             for next_line in lines[index + 1:]:
-                value = next_line.strip()
+                value = strip_md(next_line)
                 if value:
                     return value
     return "Historia de WhatsApp"
@@ -787,7 +798,7 @@ def parse_plan_field(section: str, labels: List[str]) -> str:
         key, value = line.split(":", 1)
         key_clean = re.sub(r"[^a-z0-9]+", "", remove_accents(key).lower())
         if any(key_clean.startswith(label) or label.startswith(key_clean) for label in wanted if key_clean):
-            return value.strip()
+            return strip_md(value)
     return ""
 
 
@@ -803,15 +814,23 @@ def parse_plan_text(raw: str, target_parts: int) -> Dict[str, Any]:
             line = line.strip()
             if not line:
                 continue
-            body = line.lstrip("-0123456789. ").strip()
-            if not body or (":" in body.lower()[:12] and not body.lower().startswith(("nome", "personagem"))):
+            body = strip_md(line.lstrip("-•*0123456789. ").strip())
+            if not body:
                 continue
-            chunks = [chunk.strip() for chunk in re.split(r";|\n", body) if chunk.strip()]
-            for chunk in chunks:
-                name = chunk.split(",", 1)[0].split("-", 1)[0].split(":", 1)[-1].strip()
-                if name and len(name) <= 35:
-                    characters.append({"nome": name, "perfil": chunk, "funcao": "",
-                                       "personalidade": "", "jeito_de_escrever": "", "emojis": ""})
+            # Formatos que o modelo usa: "Nome: descrição" / "Nome - descrição" /
+            # "Nome, 30 anos, traços". O NOME é o que vem ANTES do primeiro ':' ou
+            # '-'; se não houver, é o trecho antes da primeira vírgula. Tira idade
+            # solta ("52 anos") que às vezes aparece colada.
+            head = re.split(r"\s*[:\-–]\s*", body, 1)[0]
+            name = head.split(",", 1)[0].strip()
+            # rejeita "nome" que na verdade é idade/rótulo ("52 anos", "anos")
+            if re.fullmatch(r"(?i)\d+\s*anos?|anos?", name):
+                name = ""
+            if name and 1 < len(name) <= 35:
+                age_m = re.search(r"(\d{1,3})\s*anos?", body)
+                characters.append({"nome": name, "perfil": body, "funcao": "",
+                                   "idade": age_m.group(1) if age_m else "",
+                                   "personalidade": "", "jeito_de_escrever": "", "emojis": ""})
     parts: List[Dict[str, Any]] = []
     part_matches = list(re.finditer(r"(?im)^\s*PARTE\s+(\d+)\s*:?\s*(.*)$", normalized))
     for index, match in enumerate(part_matches):
@@ -833,8 +852,25 @@ def parse_plan_text(raw: str, target_parts: int) -> Dict[str, Any]:
         parts = [{"numero": i, "titulo": f"Parte {i}", "conversa_principal": "",
                   "gancho_inicio": "Comeco impactante." if i == 1 else "",
                   "acontecimentos": "", "objetivo": ""} for i in range(1, target_parts + 1)]
-    return normalize_plan({"titulo": title, "resumo": {"inicio": "", "meio": "", "fim": ""},
+    return normalize_plan({"titulo": title, "resumo": parse_plan_resumo(text),
                            "personagens": characters, "partes": parts}, target_parts)
+
+
+def parse_plan_resumo(text: str) -> Dict[str, str]:
+    """Lê o bloco RESUMO. Se vier com sub-rótulos (Início:/Meio:/Fim:) pega cada
+    um; senão joga o parágrafo inteiro em 'inicio' (melhor que campo vazio)."""
+    normalized = remove_accents(text)
+    m = re.search(r"(?is)RESUMO(?:\s+DA\s+TRAMA)?\s*:?\s*(.*?)(?:PERFIL DOS PERSONAGENS|PERSONAGENS|ESTRUTURA DAS PARTES|PARTE\s+1\s*:|$)", normalized)
+    if not m:
+        return {"inicio": "", "meio": "", "fim": ""}
+    block = text[m.start(1):m.end(1)].strip()
+    inicio = parse_plan_field(block, ["Inicio", "Comeco", "Começo"])
+    meio = parse_plan_field(block, ["Meio"])
+    fim = parse_plan_field(block, ["Fim", "Final"])
+    if inicio or meio or fim:
+        return {"inicio": inicio, "meio": meio, "fim": fim}
+    # sem sub-rótulos: resumo corrido vai inteiro pro início
+    return {"inicio": strip_md(re.sub(r"\s*\n\s*", " ", block)), "meio": "", "fim": ""}
 
 
 def get_part_count(plan: Optional[Dict[str, Any]], default: int) -> int:
@@ -856,7 +892,11 @@ def render_plan(plan: Dict[str, Any]) -> str:
     for person in plan.get("personagens", []):
         if not isinstance(person, dict):
             continue
-        lines.append(f"- {person.get('nome', 'Personagem')}, {person.get('idade', '?')} anos: {person.get('perfil', '')}")
+        nome = person.get('nome') or 'Personagem'
+        idade = str(person.get('idade') or '').strip()
+        perfil = person.get('perfil', '')
+        head = f"- {nome}, {idade} anos:" if idade else f"- {nome}:"
+        lines.append(f"{head} {perfil}")
         if person.get("personalidade"):
             lines.append(f"  Personalidade: {person.get('personalidade')}")
         if person.get("jeito_de_escrever"):
@@ -1000,16 +1040,24 @@ Regras específicas da estrutura:
 - O título precisa sugerir antagonista + injustiça + consequência.
 - A protagonista não deve vencer cedo demais. A virada precisa ser construída.
 
-Formato da resposta:
-TITULO: titulo provisório
-RESUMO: começo, meio e fim em poucas linhas
-PERSONAGENS: nome, função, personalidade, jeito de escrever, gírias/emojis de cada um
-PARTE 1: nome da parte
-Conversa principal: Pessoa A e Pessoa B, ou nome do grupo
-Começo: primeira mensagem impactante
-Acontecimentos: o que acontece
-Objetivo: emoção/revelação que a parte precisa provocar
-Repita esse formato para todas as partes.
+Formato da resposta (use EXATAMENTE estes rótulos, em texto puro, SEM asteriscos,
+SEM ### e SEM markdown; preencha TODOS os campos com conteúdo real — nunca deixe
+em branco e nunca repita o rótulo como se fosse o valor):
+
+TITULO: (um título chamativo de verdade)
+RESUMO:
+Início: (o que abre a história)
+Meio: (a escalada do conflito)
+Fim: (como termina)
+PERSONAGENS:
+- Nome, idade anos: personalidade, jeito de escrever, gírias/emojis
+(uma linha por personagem, começando com o nome real da pessoa)
+PARTE 1: (título curto da parte)
+Conversa principal: quem conversa (Pessoa A e Pessoa B, ou nome do grupo)
+Começo/entrada: a primeira mensagem impactante, escrita por extenso
+Acontece: o que acontece nesta parte
+Objetivo: a emoção/revelação que a parte precisa provocar
+Repita o mesmo formato (PARTE 2, PARTE 3...) para todas as partes.
 """.strip()
 
 
