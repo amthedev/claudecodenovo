@@ -313,18 +313,19 @@ textarea { line-height: 1.5; }
   position: relative; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,.13);
   margin-top: 8px; border-radius: 7.5px;
 }
-.wa-bubble.mine { align-self: flex-end; background: var(--wa-out); color: var(--wa-out-fg); border-top-right-radius: 0; margin-right: 8px; }
-.wa-bubble.theirs { align-self: flex-start; background: var(--wa-in); color: var(--wa-in-fg); border-top-left-radius: 0; margin-left: 8px; }
-/* bico do rabinho (recortado em curva, como no WhatsApp) */
+.wa-bubble.mine { align-self: flex-end; background: var(--wa-out); color: var(--wa-out-fg); border-top-right-radius: 0; margin-right: 9px; }
+.wa-bubble.theirs { align-self: flex-start; background: var(--wa-in); color: var(--wa-in-fg); border-top-left-radius: 0; margin-left: 9px; }
+/* bico do rabinho: triângulo CSS no canto superior, do lado de quem fala.
+   A cor usa o currentColor da bolha via border. */
 .wa-bubble.mine::before {
-  content: ""; position: absolute; top: 0; right: -8px; width: 8px; height: 13px;
-  background: var(--wa-out);
-  border-bottom-left-radius: 16px 14px;
+  content: ""; position: absolute; top: 0; right: -8px; width: 0; height: 0;
+  border-top: 9px solid var(--wa-out);
+  border-right: 9px solid transparent;
 }
 .wa-bubble.theirs::before {
-  content: ""; position: absolute; top: 0; left: -8px; width: 8px; height: 13px;
-  background: var(--wa-in);
-  border-bottom-right-radius: 16px 14px;
+  content: ""; position: absolute; top: 0; left: -8px; width: 0; height: 0;
+  border-top: 9px solid var(--wa-in);
+  border-left: 9px solid transparent;
 }
 /* bolhas consecutivas do mesmo lado: cantos todos arredondados, sem bico */
 .wa-bubble.cont { border-radius: 7.5px; }

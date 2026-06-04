@@ -20,22 +20,27 @@ const ICONS = {
   attach: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5S13.5 3.62 13.5 5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>',
   camera: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><circle cx="12" cy="12" r="3.2"/><path d="M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>',
   mic: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>',
-  // dois traços do "lido" — desenhados juntos pra ficar igual ao WhatsApp
-  checkDouble: '<svg viewBox="0 0 18 12" width="100%" height="100%" fill="currentColor"><path d="M11.07.65 5.46 6.29l-.7-.71L10.36 0l.71.65zM17 .65 11.39 6.29 8.6 3.5l.71-.71 2.08 2.08L16.3 0l.7.65zM6.4 9.04l.71.71-1.06 1.06-3.5-3.5.71-.71 2.79 2.79 5.65-5.65.7.71-6.7 6.59z"/></svg>',
-  checkSingle: '<svg viewBox="0 0 14 12" width="100%" height="100%" fill="currentColor"><path d="M5.5 9.04 2 5.54l.71-.71 2.79 2.79 6.29-6.29.71.71-7 7z"/></svg>',
+  // checks do WhatsApp: traçados (stroke) limpos. Duplo = dois "V" levemente
+  // deslocados; simples = um "V". Stroke arredondado, igual ao app.
+  checkDouble: '<svg viewBox="0 0 20 13" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.2 3.4L11 3.2"/><path d="M8.2 10.4 9 9.6m1.2-1.2L15.6 3.2"/></svg>',
+  checkSingle: '<svg viewBox="0 0 14 13" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7l3.2 3.4L11.5 3.2"/></svg>',
   blocked: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:-2px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z"/></svg>',
 };
 
-// Barra de sinal (4 barras crescentes) e bateria — SVG, não texto.
+// Barra de sinal (4 barras crescentes, espaçamento uniforme) — SVG.
 function signalSvg() {
-  return '<svg viewBox="0 0 22 14" width="20" height="13" fill="currentColor">' +
-    '<rect x="0" y="9" width="3.5" height="5" rx="1"/>' +
-    '<rect x="5.5" y="6" width="3.5" height="8" rx="1"/>' +
-    '<rect x="11" y="3" width="3.5" height="11" rx="1"/>' +
-    '<rect x="16.5" y="0" width="3.5" height="14" rx="1"/></svg>';
+  return '<svg viewBox="0 0 19 14" width="18" height="13" fill="currentColor">' +
+    '<rect x="0" y="9.5" width="3.2" height="4.5" rx="0.8"/>' +
+    '<rect x="5.1" y="6.5" width="3.2" height="7.5" rx="0.8"/>' +
+    '<rect x="10.2" y="3.3" width="3.2" height="10.7" rx="0.8"/>' +
+    '<rect x="15.3" y="0" width="3.2" height="14" rx="0.8"/></svg>';
 }
+// Wifi "leque" cheio (3 arcos + ponto), igual ao ícone de status do celular.
 function wifiSvg() {
-  return '<svg viewBox="0 0 24 18" width="18" height="13" fill="currentColor"><path d="M12 18l3-3.6c-1.6-1.3-4.4-1.3-6 0L12 18zM6 10.8l2 2.4c2.2-1.8 5.8-1.8 8 0l2-2.4c-3.3-2.7-8.7-2.7-12 0zM2 6l2 2.4c4.4-3.6 11.6-3.6 16 0L22 6C16.5 1.5 7.5 1.5 2 6z"/></svg>';
+  return '<svg viewBox="0 0 18 14" width="16" height="13" fill="currentColor">' +
+    '<path d="M9 0C5.6 0 2.5 1.3 0 3.5L1.8 5.6C3.8 3.9 6.3 2.9 9 2.9s5.2 1 7.2 2.7L18 3.5C15.5 1.3 12.4 0 9 0z"/>' +
+    '<path d="M9 4.7c-2.2 0-4.2.8-5.7 2.2l1.9 2.2C6.2 8.2 7.5 7.6 9 7.6s2.8.6 3.8 1.5l1.9-2.2C13.2 5.5 11.2 4.7 9 4.7z"/>' +
+    '<path d="M9 9.4c-1 0-1.9.4-2.6 1L9 13.6l2.6-3.2c-.7-.6-1.6-1-2.6-1z"/></svg>';
 }
 function batterySvg(pct) {
   const p = Math.max(0, Math.min(100, parseInt(pct, 10) || 0));
