@@ -120,3 +120,25 @@ def test_client_explicit_thinking_is_respected(monkeypatch):
     _sanitize_openai_request_for_vllm(req)
     ck = req["extra_body"]["chat_template_kwargs"]
     assert ck.get("enable_thinking") is True
+
+
+# ── Contenção de escopo (modo coding) ─────────────────────────────────────────
+
+def test_coding_mode_has_scope_discipline(monkeypatch):
+    """Request com tools (Claude Code) recebe a regra de conter escopo: alterar só
+    o pedido, confirmar destrutivo, obedecer reverter."""
+    monkeypatch.setenv("VLLM_NATIVE_AGENT_PROMPT", "on")
+    req = _coding_request()
+    _sanitize_openai_request_for_vllm(req)
+    sys_text = _system_text(req)
+    assert "SCOPE DISCIPLINE" in sys_text
+    assert "REVERT" in sys_text or "revert" in sys_text.lower()
+
+
+def test_content_mode_no_coding_agent_prompt(monkeypatch):
+    """Request sem tools (bot de conteúdo) NÃO recebe o prompt de agente de código
+    (nem a contenção de escopo, que é específica de coding)."""
+    monkeypatch.setenv("VLLM_NATIVE_AGENT_PROMPT", "on")
+    req = _content_request()
+    _sanitize_openai_request_for_vllm(req)
+    assert "SCOPE DISCIPLINE" not in _system_text(req)
