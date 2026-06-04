@@ -85,10 +85,30 @@ async function apiPost(path, payload, timeoutMs = 180000) {
   } finally {
     clearTimeout(timer);
   }
-  const data = await response.json().catch(() => ({ detail: "Resposta inválida do servidor." }));
+  // A resposta pode NÃO ser JSON quando o gateway (Square Cloud/Cloudflare)
+  // devolve uma página de erro HTML por timeout/sobrecarga. Tratar por status.
+  let data = null;
+  try { data = await response.json(); } catch (_) { data = null; }
   if (!response.ok) {
-    const msg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
-    throw new Error(msg);
+    if (data && typeof data.detail === "string") throw new Error(data.detail);
+    if (data && data.detail) throw new Error(JSON.stringify(data.detail));
+    // sem JSON → mensagem por código HTTP
+    if (response.status === 502 || response.status === 503) {
+      throw new Error("O servidor de IA está ocupado/iniciando agora. Aguarde 1 min e tente de novo.");
+    }
+    if (response.status === 504 || response.status === 408) {
+      throw new Error("Demorou demais (a GPU está ocupada com outras pessoas). Tente de novo em seguida.");
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("Chave inválida ou sem acesso. Confira a chave em Configurar.");
+    }
+    if (response.status === 429) {
+      throw new Error("Muitas requisições agora. Espere alguns segundos e tente de novo.");
+    }
+    throw new Error(`Erro do servidor (${response.status}). Tente de novo.`);
+  }
+  if (data === null) {
+    throw new Error("O servidor respondeu num formato inesperado. Tente de novo.");
   }
   return data;
 }
