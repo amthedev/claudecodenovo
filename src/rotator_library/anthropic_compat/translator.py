@@ -2195,14 +2195,29 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     _has_tools = bool(openai_request.get("tools")) or bool(
         openai_request.get("_vllm_allowed_tool_names")
     )
+    # "Modo conteúdo": uma request SEM tools é tipicamente um bot de conteúdo
+    # criativo (gerar conversa, texto, roteiro) com um system prompt próprio que
+    # manda exatamente como escrever. As injeções abaixo (quality prompt + sampling
+    # forçado + <think>) ajudam o agente de CÓDIGO mas SABOTAM esse caso: o quality
+    # prompt diz "não invente, pergunte" (o oposto de um bot que precisa inventar),
+    # o sampling forçado tira a variedade criativa, e o <think> gasta tokens/vaza
+    # raciocínio. Claude Code/Cursor SEMPRE mandam tools, então não são afetados.
+    # Cada gate tem override por env caso o operador queira o comportamento antigo.
+    _content_mode = not _has_tools
+    _force_quality = os.getenv("VLLM_QUALITY_PROMPT_ALWAYS", "off").lower() in {"1", "true", "yes", "on"}
+    _force_sampling = os.getenv("VLLM_FORCE_SAMPLING_ALWAYS", "off").lower() in {"1", "true", "yes", "on"}
+    _force_think = os.getenv("VLLM_THINKING_ALWAYS", "off").lower() in {"1", "true", "yes", "on"}
+
     if _has_tools or os.getenv("VLLM_SECRETS_BOUNDARY_ALWAYS", "off").lower() in {
         "1", "true", "yes", "on"
     }:
         _inject_sensitive_workspace_boundary(openai_request)
     _inject_language_instruction(openai_request)
-    # Universal quality/"Opus-style" behavior for EVERY scenario (coding+content).
-    # Opt-out: VLLM_QUALITY_PROMPT=off.
-    if os.getenv("VLLM_QUALITY_PROMPT", "on").lower() not in {"off", "0", "false", "no"}:
+    # Quality/"Opus-style" prompt: bom pra coding, ruim pra conteúdo. Só injeta
+    # quando há tools (coding), a menos que VLLM_QUALITY_PROMPT_ALWAYS=on.
+    # Continua respeitando o opt-out total VLLM_QUALITY_PROMPT=off.
+    _quality_on = os.getenv("VLLM_QUALITY_PROMPT", "on").lower() not in {"off", "0", "false", "no"}
+    if _quality_on and (_has_tools or _force_quality):
         _inject_quality_prompt(openai_request)
     # SAMPLING: apply Qwen's RECOMMENDED params instead of whatever the client
     # sent. Claude Code defaults to temperature=1.0 and the proxy used to DROP
@@ -2211,7 +2226,12 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
     # Qwen3-Coder is ~temp 0.7 / top_p 0.8 / top_k 20 / repetition_penalty 1.05.
     # We apply these for vLLM unless the operator overrides via env, or unless
     # VLLM_RESPECT_CLIENT_SAMPLING=on (then we keep whatever the client sent).
-    _apply_vllm_sampling(openai_request)
+    # Em modo conteúdo (sem tools) respeitamos o sampling do cliente: variedade
+    # criativa importa e o temp 0.7 fixo deixa repetitivo. Só força em modo coding.
+    if _has_tools or _force_sampling:
+        _apply_vllm_sampling(openai_request)
+    else:
+        openai_request.pop("top_k", None)  # vLLM rejeita top_k no nível raiz
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
     # Thinking mode: defaults to ON now (was OFF). Customer feedback: turning
@@ -2235,6 +2255,11 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         _enable_think = False
     elif _mode == "auto":
         _enable_think = _is_opus
+    elif _content_mode and not _force_think:
+        # Modo conteúdo (sem tools): <think> só gasta tokens e às vezes vaza
+        # raciocínio na resposta — desliga por padrão. Override: VLLM_THINKING_ALWAYS=on
+        # ou o slash-command /think on, ou o cliente setar enable_thinking explícito.
+        _enable_think = False
     else:
         # No explicit slash-command setting → follow the env-controlled default.
         _enable_think = _default_think

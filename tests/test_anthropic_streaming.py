@@ -1222,8 +1222,10 @@ class SamplingParamsTests(unittest.TestCase):
 
 
 class QualityPromptTests(unittest.TestCase):
-    """The universal 'Opus-style' quality prompt is injected for ALL scenarios
-    (coding and content), idempotently, and can be turned off."""
+    """The 'Opus-style' quality prompt is injected for CODING scenarios (requests
+    with tools), idempotently, and can be turned off. Content requests (no tools)
+    do NOT get it — the prompt's 'never invent, ask instead' wording sabotages a
+    content/creative bot. Override the gating with VLLM_QUALITY_PROMPT_ALWAYS=on."""
 
     _MARK = "Work to a high standard"
 
@@ -1231,15 +1233,27 @@ class QualityPromptTests(unittest.TestCase):
         m = req["messages"]
         return m[0]["content"] if m and m[0]["role"] == "system" else ""
 
-    def test_injected_for_content(self):
+    def test_not_injected_for_content(self):
+        # Content request (no tools): quality prompt must NOT be injected, so the
+        # user's own system prompt drives the model without the "don't invent" nudge.
         req = {"model": "hosted_vllm/qwen3-coder-30b",
                "messages": [{"role": "system", "content": "Você é copywriter."},
                             {"role": "user", "content": "oi"}]}
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VLLM_QUALITY_PROMPT", None)
+            os.environ.pop("VLLM_QUALITY_PROMPT_ALWAYS", None)
+            _sanitize_openai_request_for_vllm(req)
+        self.assertNotIn(self._MARK, self._sys(req))
+        self.assertIn("copywriter", self._sys(req))  # user's system kept
+
+    def test_content_with_always_override(self):
+        req = {"model": "hosted_vllm/qwen3-coder-30b",
+               "messages": [{"role": "system", "content": "Você é copywriter."},
+                            {"role": "user", "content": "oi"}]}
+        with mock.patch.dict(os.environ, {"VLLM_QUALITY_PROMPT_ALWAYS": "on"}, clear=False):
+            os.environ.pop("VLLM_QUALITY_PROMPT", None)
             _sanitize_openai_request_for_vllm(req)
         self.assertIn(self._MARK, self._sys(req))
-        self.assertIn("copywriter", self._sys(req))  # user's system kept
 
     def test_injected_for_coding(self):
         req = {"model": "hosted_vllm/qwen3-coder-30b",
@@ -1251,8 +1265,10 @@ class QualityPromptTests(unittest.TestCase):
         self.assertIn(self._MARK, self._sys(req))
 
     def test_idempotent_multiturn(self):
+        # Idempotência só é relevante quando o prompt É injetado → request com tools.
         req = {"model": "hosted_vllm/qwen3-coder-30b",
-               "messages": [{"role": "user", "content": "oi"}]}
+               "messages": [{"role": "user", "content": "edita"}],
+               "_vllm_allowed_tool_names": ["Edit"]}
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VLLM_QUALITY_PROMPT", None)
             _sanitize_openai_request_for_vllm(req)
@@ -1260,8 +1276,10 @@ class QualityPromptTests(unittest.TestCase):
         self.assertEqual(self._sys(req).count(self._MARK), 1)
 
     def test_opt_out(self):
+        # Mesmo com tools, VLLM_QUALITY_PROMPT=off desliga totalmente.
         req = {"model": "hosted_vllm/qwen3-coder-30b",
-               "messages": [{"role": "user", "content": "oi"}]}
+               "messages": [{"role": "user", "content": "edita"}],
+               "_vllm_allowed_tool_names": ["Edit"]}
         with mock.patch.dict(os.environ, {"VLLM_QUALITY_PROMPT": "off"}, clear=False):
             _sanitize_openai_request_for_vllm(req)
         joined = " ".join(m.get("content", "") for m in req["messages"]
