@@ -9,6 +9,43 @@ const CFG_STORAGE = "bote_config";
 
 const $ = (sel) => document.querySelector(sel);
 
+// ── Ícones SVG reais (estilo Material/WhatsApp) — substituem emojis ──────────
+// currentColor herda a cor do contexto (header branco, ticks azuis, etc.).
+const ICONS = {
+  back: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>',
+  video: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>',
+  dots: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>',
+  emoji: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>',
+  attach: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5S13.5 3.62 13.5 5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>',
+  camera: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><circle cx="12" cy="12" r="3.2"/><path d="M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>',
+  // dois traços do "lido" — desenhados juntos pra ficar igual ao WhatsApp
+  checkDouble: '<svg viewBox="0 0 18 12" width="100%" height="100%" fill="currentColor"><path d="M11.07.65 5.46 6.29l-.7-.71L10.36 0l.71.65zM17 .65 11.39 6.29 8.6 3.5l.71-.71 2.08 2.08L16.3 0l.7.65zM6.4 9.04l.71.71-1.06 1.06-3.5-3.5.71-.71 2.79 2.79 5.65-5.65.7.71-6.7 6.59z"/></svg>',
+  checkSingle: '<svg viewBox="0 0 14 12" width="100%" height="100%" fill="currentColor"><path d="M5.5 9.04 2 5.54l.71-.71 2.79 2.79 6.29-6.29.71.71-7 7z"/></svg>',
+  blocked: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:-2px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z"/></svg>',
+};
+
+// Barra de sinal (4 barras crescentes) e bateria — SVG, não texto.
+function signalSvg() {
+  return '<svg viewBox="0 0 22 14" width="20" height="13" fill="currentColor">' +
+    '<rect x="0" y="9" width="3.5" height="5" rx="1"/>' +
+    '<rect x="5.5" y="6" width="3.5" height="8" rx="1"/>' +
+    '<rect x="11" y="3" width="3.5" height="11" rx="1"/>' +
+    '<rect x="16.5" y="0" width="3.5" height="14" rx="1"/></svg>';
+}
+function wifiSvg() {
+  return '<svg viewBox="0 0 24 18" width="18" height="13" fill="currentColor"><path d="M12 18l3-3.6c-1.6-1.3-4.4-1.3-6 0L12 18zM6 10.8l2 2.4c2.2-1.8 5.8-1.8 8 0l2-2.4c-3.3-2.7-8.7-2.7-12 0zM2 6l2 2.4c4.4-3.6 11.6-3.6 16 0L22 6C16.5 1.5 7.5 1.5 2 6z"/></svg>';
+}
+function batterySvg(pct) {
+  const p = Math.max(0, Math.min(100, parseInt(pct, 10) || 0));
+  const fillW = Math.round((p / 100) * 18);
+  return '<svg viewBox="0 0 27 14" width="24" height="13">' +
+    '<rect x="0.5" y="0.5" width="22" height="13" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.5"/>' +
+    '<rect x="24" y="4.5" width="2" height="5" rx="1" fill="currentColor" fill-opacity="0.5"/>' +
+    `<rect x="2.5" y="2.5" width="${fillW}" height="9" rx="1.5" fill="currentColor"/></svg>`;
+}
+
 // ── Estado ───────────────────────────────────────────────────────────────────
 const state = {
   apiKey: localStorage.getItem(KEY_STORAGE) || "",
@@ -369,9 +406,25 @@ function renderWaEditor() {
 }
 
 function waTicks(status) {
-  if (status === "read") return '<span class="wa-tick">✓✓</span>';
-  if (status === "delivered") return '<span class="wa-tick sent">✓✓</span>';
-  return '<span class="wa-tick sent">✓</span>';
+  // checks SVG reais: duplo azul (lido), duplo cinza (entregue), simples (enviado)
+  if (status === "read") return '<span class="wa-tick read">' + ICONS.checkDouble + '</span>';
+  if (status === "delivered") return '<span class="wa-tick sent">' + ICONS.checkDouble + '</span>';
+  return '<span class="wa-tick sent">' + ICONS.checkSingle + '</span>';
+}
+
+// Injeta os ícones SVG estáticos do header/input bar uma única vez.
+function injectStaticIcons() {
+  const set = (id, svg) => { const el = $(id); if (el && !el.dataset.iconed) { el.innerHTML = svg; el.dataset.iconed = "1"; } };
+  set("#waBack", ICONS.back);
+  set("#waIcoVideo", ICONS.video);
+  set("#waIcoPhone", ICONS.phone);
+  set("#waIcoDots", ICONS.dots);
+  set("#waIcoEmoji", ICONS.emoji);
+  set("#waIcoAttach", ICONS.attach);
+  set("#waIcoCamera", ICONS.camera);
+  set("#waMic", ICONS.mic);
+  $("#waWifi") && ($("#waWifi").innerHTML = wifiSvg());
+  $("#waSignal") && ($("#waSignal").innerHTML = signalSvg());
 }
 
 function renderWaPhone() {
@@ -381,13 +434,19 @@ function renderWaPhone() {
   phone.className = "wa-phone " + (platform === "ios" ? "wa-ios" : "wa-android") +
     " " + (theme === "light" ? "wa-light" : "wa-dark");
 
+  // ícones estáticos (idempotente) + sinal/wifi
+  injectStaticIcons();
+
   // status bar
   $("#waClockView").textContent = $("#waClock").value || "14:32";
-  $("#waBatteryView").textContent = ($("#waBattery").value || "82") + "%";
+  const batt = $("#waBattery").value || "82";
+  $("#waBatteryView").textContent = batt + "%";
+  if ($("#waBatteryIcon")) $("#waBatteryIcon").innerHTML = batterySvg(batt);
 
-  // header
+  // header — selo verificado como SVG real
+  const verifiedSvg = '<svg viewBox="0 0 24 24" width="15" height="15" fill="#34b7f1" style="vertical-align:-2px"><path d="M12 2 9.5 4.5 6 4l-.5 3.5L2 9.5 4 12l-2 2.5 3.5 1.5L6 20l3.5-.5L12 22l2.5-2.5L18 20l.5-3.5L22 14.5 20 12l2-2.5-3.5-1.5L18 4l-3.5.5L12 2zm-1.2 13.5L7 11.7l1.1-1.1 2.7 2.7 5-5L17 9.4l-6.2 6.1z"/></svg>';
   $("#waNameView").innerHTML = waEscape($("#waName").value || "Contato") +
-    ($("#waVerified").checked ? ' <span class="wa-verified">✔</span>' : "");
+    ($("#waVerified").checked ? " " + verifiedSvg : "");
 
   let statusText = "";
   const st = $("#waStatus").value;
@@ -397,10 +456,13 @@ function renderWaPhone() {
   else if (st === "custom") statusText = $("#waStatusCustom").value || "";
   $("#waStatusView").textContent = statusText;
 
-  // avatar
+  // avatar (foto do usuário OU silhueta SVG padrão do WhatsApp)
   const av = $("#waAvatarView");
-  if (wa.avatarDataUrl) { av.style.backgroundImage = `url(${wa.avatarDataUrl})`; av.textContent = ""; }
-  else { av.style.backgroundImage = "none"; av.textContent = "👤"; }
+  if (wa.avatarDataUrl) { av.style.backgroundImage = `url(${wa.avatarDataUrl})`; av.innerHTML = ""; }
+  else {
+    av.style.backgroundImage = "none";
+    av.innerHTML = '<svg viewBox="0 0 212 212" width="100%" height="100%"><path fill="#dfe5e7" d="M106 0C47.5 0 0 47.5 0 106s47.5 106 106 106 106-47.5 106-106S164.5 0 106 0z"/><path fill="#fff" d="M173.6 196.5c-1.4-25.5-14.6-39.2-43.6-43.3-3.3-.5-6.5 1.6-12.1 5.8-3.6 2.7-7.6 4.1-11.9 4.1s-8.3-1.4-11.9-4.1c-5.6-4.2-8.8-6.3-12.1-5.8-29 4.1-42.2 17.8-43.6 43.3C56.3 207.3 80.4 212 106 212s49.7-4.7 67.6-15.5zM106 36c-19.9 0-36 16.1-36 36s16.1 36 36 36 36-16.1 36-36-16.1-36-36-36z"/></svg>';
+  }
 
   // body
   const body = $("#waBody");
@@ -421,9 +483,13 @@ function renderWaPhone() {
     b.className = "wa-bubble " + m.kind + cont;
     prevKind = m.kind;
     let inner = "";
-    if (m.photo) inner += `<div class="wa-photo">🖼️</div>`;
+    if (m.photo) {
+      // placeholder de imagem com ícone de montanha (SVG), igual quando a imagem
+      // não carregou no WhatsApp. O usuário pode trocar por foto real depois.
+      inner += '<div class="wa-photo"><svg viewBox="0 0 24 24" width="40" height="40" fill="rgba(255,255,255,.55)"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>';
+    }
     if (m.deleted) {
-      inner += `<span class="wa-deleted">🚫 Esta mensagem foi apagada</span>`;
+      inner += '<span class="wa-deleted">' + ICONS.blocked + ' Esta mensagem foi apagada</span>';
     } else if (m.text) {
       inner += waEscape(m.text);
     }
@@ -436,10 +502,16 @@ function renderWaPhone() {
   const inputBar = $("#waInputBar");
   if ($("#waBlocked").checked) {
     inputBar.className = "wa-blocked-bar";
-    inputBar.innerHTML = "🚫 Você bloqueou este contato. Toque para desbloquear.";
+    inputBar.innerHTML = ICONS.blocked + " Você bloqueou este contato. Toque para desbloquear.";
   } else {
     inputBar.className = "wa-inputbar";
-    inputBar.innerHTML = '<span class="wa-input-pill">Mensagem</span><span class="wa-mic">🎤</span>';
+    inputBar.innerHTML =
+      '<span class="wa-input-pill">' +
+        '<span class="wa-ico wa-pill-ico">' + ICONS.emoji + '</span>' +
+        '<span class="wa-pill-text">Mensagem</span>' +
+        '<span class="wa-pill-right"><span class="wa-ico">' + ICONS.attach + '</span><span class="wa-ico">' + ICONS.camera + '</span></span>' +
+      '</span>' +
+      '<span class="wa-mic wa-ico">' + ICONS.mic + '</span>';
   }
 }
 

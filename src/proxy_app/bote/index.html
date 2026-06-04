@@ -228,31 +228,43 @@
           </div>
           <div class="phone-wrap">
             <div id="waPhone" class="wa-phone wa-dark">
-              <!-- barra de status do celular -->
+              <!-- barra de status do celular (ícones SVG preenchidos pelo JS) -->
               <div class="wa-statusbar">
                 <span id="waClockView" class="wa-clock">14:32</span>
                 <span class="wa-sb-right">
-                  <span class="wa-signal">▂▄▆█</span>
+                  <span id="waSignal" class="wa-ico"></span>
+                  <span id="waWifi" class="wa-ico"></span>
                   <span id="waBatteryView" class="wa-battery">82%</span>
-                  <span class="wa-batt-icon">▮</span>
+                  <span id="waBatteryIcon" class="wa-ico"></span>
                 </span>
               </div>
-              <!-- header da conversa -->
+              <!-- header da conversa (ícones SVG preenchidos pelo JS) -->
               <div class="wa-header">
-                <span class="wa-back">‹</span>
+                <span id="waBack" class="wa-back wa-ico"></span>
                 <div id="waAvatarView" class="wa-avatar"></div>
                 <div class="wa-header-info">
                   <div id="waNameView" class="wa-name">Débora</div>
                   <div id="waStatusView" class="wa-substatus">online</div>
                 </div>
-                <span class="wa-header-icons">📹 📞 ⋮</span>
+                <span class="wa-header-icons">
+                  <span id="waIcoVideo" class="wa-ico"></span>
+                  <span id="waIcoPhone" class="wa-ico"></span>
+                  <span id="waIcoDots" class="wa-ico"></span>
+                </span>
               </div>
               <!-- corpo das mensagens -->
               <div id="waBody" class="wa-body"></div>
               <!-- barra de digitar / bloqueado -->
               <div id="waInputBar" class="wa-inputbar">
-                <span class="wa-input-pill">Mensagem</span>
-                <span class="wa-mic">🎤</span>
+                <span class="wa-input-pill">
+                  <span id="waIcoEmoji" class="wa-ico wa-pill-ico"></span>
+                  <span class="wa-pill-text">Mensagem</span>
+                  <span class="wa-pill-right">
+                    <span id="waIcoAttach" class="wa-ico"></span>
+                    <span id="waIcoCamera" class="wa-ico"></span>
+                  </span>
+                </span>
+                <span id="waMic" class="wa-mic wa-ico"></span>
               </div>
             </div>
           </div>
