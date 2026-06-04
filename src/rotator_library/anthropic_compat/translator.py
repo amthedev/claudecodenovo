@@ -2248,25 +2248,27 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         _apply_vllm_sampling(openai_request)
     else:
         openai_request.pop("top_k", None)  # vLLM rejeita top_k no nível raiz
-        # ANTI-LOOP em conteúdo: o Qwen-30B trava repetindo a mesma fala dezenas
-        # de vezes (ex: "Me manda a foto de novo / Tá aqui" em loop). Em coding
-        # não dá pra penalizar repetição forte (variáveis/keywords repetem), mas
-        # em conteúdo é seguro e necessário. Penalidades fortes cortam o loop na
-        # origem. Todas overridáveis por env (vazio/0 = não seta).
+        # ANTI-LOOP em conteúdo. Lição aprendida: empilhar repetition_penalty
+        # forte + frequency + presence SUFOCAVA a geração — um plano estruturado
+        # (que PRECISA repetir rótulos "Começo:", "Objetivo:" em cada parte) saía
+        # como esqueleto vazio. A defesa certa é o no_repeat_ngram_size, que é
+        # cirúrgico (proíbe repetir trinca/quadra de tokens = a MESMA frase, mas
+        # deixa rótulos curtos passarem) + um repetition_penalty LEVE. freq/presence
+        # ficam DESLIGADOS por padrão (0) — eram redundantes e nocivos. Overridáveis.
         eb = openai_request.setdefault("extra_body", {})
-        _rep = _vllm_sampling_value("VLLM_CONTENT_REPETITION_PENALTY", 1.25)
+        _rep = _vllm_sampling_value("VLLM_CONTENT_REPETITION_PENALTY", 1.1)
         if _rep is not None and _rep > 0 and "repetition_penalty" not in eb:
             eb["repetition_penalty"] = _rep
-        _freq = _vllm_sampling_value("VLLM_CONTENT_FREQUENCY_PENALTY", 0.6)
-        if _freq is not None and "frequency_penalty" not in openai_request:
+        _freq = _vllm_sampling_value("VLLM_CONTENT_FREQUENCY_PENALTY", 0.0)
+        if _freq is not None and _freq != 0 and "frequency_penalty" not in openai_request:
             openai_request["frequency_penalty"] = _freq
-        _pres = _vllm_sampling_value("VLLM_CONTENT_PRESENCE_PENALTY", 0.4)
-        if _pres is not None and "presence_penalty" not in openai_request:
+        _pres = _vllm_sampling_value("VLLM_CONTENT_PRESENCE_PENALTY", 0.0)
+        if _pres is not None and _pres != 0 and "presence_penalty" not in openai_request:
             openai_request["presence_penalty"] = _pres
-        # ANTI-LOOP determinístico (mesmo do coding, mais agressivo): N=3 proíbe
-        # repetir qualquer trinca de tokens — mata o loop de frase na origem.
-        # Em texto livre N=3 é seguro. 0 = off. Override: VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE.
-        _ngram = _vllm_sampling_value("VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE", 3.0)
+        # ANTI-LOOP determinístico: N=4 proíbe repetir qualquer sequência de 4
+        # tokens — mata o loop de frase na origem, mas tolera trincas estruturais
+        # curtas do template. 0 = off. Override: VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE.
+        _ngram = _vllm_sampling_value("VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE", 4.0)
         if _ngram is not None and _ngram > 0 and "no_repeat_ngram_size" not in eb:
             eb["no_repeat_ngram_size"] = int(_ngram)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor

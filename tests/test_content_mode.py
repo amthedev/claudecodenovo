@@ -93,29 +93,31 @@ def test_coding_mode_forces_sampling(monkeypatch):
     assert req.get("temperature") == 0.3  # default coding forçado (obediência)
 
 
-def test_content_mode_has_antiloop_penalties(monkeypatch):
-    """Modo conteúdo (sem tools) recebe penalidades anti-repetição fortes, pra
-    cortar o loop do Qwen-30B na origem."""
+def test_content_mode_antiloop_is_gentle(monkeypatch):
+    """Modo conteúdo: anti-loop CIRÚRGICO, não sufocante. repetition_penalty leve
+    (1.1) e frequency/presence DESLIGADOS — penalidades fortes empilhadas faziam
+    o plano estruturado sair vazio (puniam rótulos repetidos legítimos). O
+    no_repeat_ngram_size faz o trabalho de cortar loop sem matar a geração."""
     for v in ("VLLM_CONTENT_REPETITION_PENALTY", "VLLM_CONTENT_FREQUENCY_PENALTY",
               "VLLM_CONTENT_PRESENCE_PENALTY", "VLLM_FORCE_SAMPLING_ALWAYS"):
         monkeypatch.delenv(v, raising=False)
     req = _content_request()
     _sanitize_openai_request_for_vllm(req)
-    assert req.get("extra_body", {}).get("repetition_penalty") == 1.25
-    assert req.get("frequency_penalty") == 0.6
-    assert req.get("presence_penalty") == 0.4
+    assert req.get("extra_body", {}).get("repetition_penalty") == 1.1
+    # freq/presence não devem ser setados por padrão (0 = ausente)
+    assert "frequency_penalty" not in req
+    assert "presence_penalty" not in req
 
 
-def test_coding_mode_no_antiloop_penalties(monkeypatch):
-    """Coding NÃO leva as penalidades FORTES de conteúdo (frequency/presence, que
-    machucam código). Mas leva repetition_penalty próprio (1.1) e o ngram."""
+def test_coding_mode_no_frequency_presence(monkeypatch):
+    """Coding NÃO leva frequency/presence (machucam código). Leva só o
+    repetition_penalty próprio (1.1) e o ngram."""
     monkeypatch.delenv("VLLM_RESPECT_CLIENT_SAMPLING", raising=False)
     monkeypatch.delenv("VLLM_REPETITION_PENALTY", raising=False)
     req = _coding_request()
     _sanitize_openai_request_for_vllm(req)
-    # repetition_penalty do coding é o próprio (1.1), não o forte de conteúdo (1.25)
-    assert req.get("extra_body", {}).get("repetition_penalty") != 1.25
-    assert "frequency_penalty" not in req or req.get("frequency_penalty") != 0.6
+    assert "frequency_penalty" not in req
+    assert "presence_penalty" not in req
 
 
 # ── Anti-loop determinístico (no_repeat_ngram_size) ───────────────────────────
@@ -140,13 +142,13 @@ def test_coding_mode_repetition_penalty_bumped(monkeypatch):
 
 
 def test_content_mode_has_no_repeat_ngram(monkeypatch):
-    """Conteúdo recebe no_repeat_ngram_size mais agressivo (N=3) — mata loop de
-    frase na origem em texto livre."""
+    """Conteúdo recebe no_repeat_ngram_size N=4 — mata loop de frase na origem
+    mas tolera trincas estruturais curtas do template (rótulos de plano)."""
     monkeypatch.delenv("VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE", raising=False)
     monkeypatch.delenv("VLLM_FORCE_SAMPLING_ALWAYS", raising=False)
     req = _content_request()
     _sanitize_openai_request_for_vllm(req)
-    assert req.get("extra_body", {}).get("no_repeat_ngram_size") == 3
+    assert req.get("extra_body", {}).get("no_repeat_ngram_size") == 4
 
 
 def test_no_repeat_ngram_can_be_disabled(monkeypatch):
