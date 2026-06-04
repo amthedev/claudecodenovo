@@ -541,6 +541,13 @@ async function waGeneratePng() {
   const node = $("#waPhone");
   if (typeof htmlToImage === "undefined") { toast("Lib de imagem não carregou."); return; }
   showOverlay("Gerando print...");
+  // A tela tem rolagem (height fixa). Pro print sair com a conversa INTEIRA,
+  // expande o body temporariamente (altura automática) e restaura depois.
+  const body = $("#waBody");
+  const prevHeight = body.style.height;
+  const prevOverflow = body.style.overflowY;
+  body.style.height = "auto";
+  body.style.overflowY = "visible";
   try {
     const dataUrl = await htmlToImage.toPng(node, { pixelRatio: 2, cacheBust: true });
     const a = document.createElement("a");
@@ -550,7 +557,11 @@ async function waGeneratePng() {
     toast("Print gerado!");
   } catch (err) {
     toast("Falha ao gerar print: " + (err.message || err));
-  } finally { hideOverlay(); }
+  } finally {
+    body.style.height = prevHeight;
+    body.style.overflowY = prevOverflow;
+    hideOverlay();
+  }
 }
 
 function waImportFromPart() {
