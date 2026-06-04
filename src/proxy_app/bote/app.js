@@ -657,7 +657,8 @@ function waImportFromPart() {
   const part = n ? state.parts[n] : null;
   const text = (part && part.roteiro) || $("#scriptOutput").value.trim();
   if (!text) { toast("Gere ou abra uma parte primeiro."); return; }
-  const msgs = parseRoteiroToMessages(text, $("#waName").value);
+  const meName = ($("#waMeName") && $("#waMeName").value) || "";
+  const msgs = parseRoteiroToMessages(text, $("#waName").value, meName);
   if (!msgs.length) { toast("Não achei mensagens no formato 'Nome: msg'."); return; }
   wa.messages = msgs;
   waSeq = msgs.length + 1;
@@ -667,25 +668,32 @@ function waImportFromPart() {
 }
 
 // Converte o roteiro "Nome: msg" / "FOTO:" / "[divisor]" em mensagens da tela.
-// O primeiro falante vira "ele(a)" (contato); quem você definir como nome do
-// contato no campo também é tratado como ele(a); todo o resto = você ("mine").
-function parseRoteiroToMessages(text, contactName) {
+// Regra de lado:
+//   - se "meName" (Eu sou) está definido: esse falante = "mine" (direita/verde),
+//     TODO o resto = "theirs" (esquerda). Cada falante diferente do contato vira
+//     uma "etiqueta" no nome pra você saber quem é (ex: "Carlos: ...").
+//   - se meName vazio: 1º falante = contato (theirs), resto = você (mine).
+// Também REMOVE blocos repetidos consecutivos (o modelo 30B às vezes entra em
+// loop repetindo as mesmas falas dezenas de vezes).
+function parseRoteiroToMessages(text, contactName, meName) {
   const lines = (text || "").split(/\r?\n/);
-  const out = [];
+  const raw_out = [];
   let firstSpeaker = null;
   const contact = (contactName || "").trim().toLowerCase();
+  const me = (meName || "").trim().toLowerCase();
   let id = 1;
+
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
     // divisor de tempo [Hoje] / [No dia seguinte]
     const mDate = line.match(/^\[(.+)\]$/);
-    if (mDate) { out.push({ id: id++, kind: "date", text: mDate[1], time: "", status: "read", deleted: false, photo: false }); continue; }
+    if (mDate) { raw_out.push({ id: id++, kind: "date", text: mDate[1], time: "", status: "read", deleted: false, photo: false, quoteName: "", quoteText: "" }); continue; }
     // FOTO: descricao
     const mFoto = line.match(/^foto\s*:\s*(.+)$/i);
     if (mFoto) {
-      const owner = out.length && out[out.length - 1].kind !== "date" ? out[out.length - 1].kind : "theirs";
-      out.push({ id: id++, kind: owner, text: "", time: "", status: "read", deleted: false, photo: true });
+      const owner = raw_out.length && raw_out[raw_out.length - 1].kind !== "date" ? raw_out[raw_out.length - 1].kind : "theirs";
+      raw_out.push({ id: id++, kind: owner, text: "", time: "", status: "read", deleted: false, photo: true, quoteName: "", quoteText: "" });
       continue;
     }
     // Nome: mensagem
@@ -694,13 +702,48 @@ function parseRoteiroToMessages(text, contactName) {
       const speaker = mMsg[1].trim();
       const speakerLow = speaker.toLowerCase();
       if (firstSpeaker === null) firstSpeaker = speakerLow;
-      // contato = quem bate com o nome configurado OU o primeiro falante
-      const isContact = contact ? speakerLow === contact : speakerLow === firstSpeaker;
-      out.push({
-        id: id++, kind: isContact ? "theirs" : "mine",
-        text: mMsg[2].trim(), time: "", status: "read", deleted: false, photo: false,
+      let kind;
+      if (me) {
+        kind = speakerLow === me ? "mine" : "theirs";
+      } else {
+        kind = (contact ? speakerLow === contact : speakerLow === firstSpeaker) ? "theirs" : "mine";
+      }
+      // quando há mais de um "contato" possível (3+ pessoas), prefixa o nome de
+      // quem NÃO é nem você nem o contato principal, pra não confundir.
+      let body = mMsg[2].trim();
+      const isMainContact = contact && speakerLow === contact;
+      const isMe = me && speakerLow === me;
+      if (kind === "theirs" && !isMainContact && !isMe && me) {
+        body = speaker + ": " + body;  // ex: "Carlos: foi um erro"
+      }
+      raw_out.push({
+        id: id++, kind, text: body, time: "", status: "read", deleted: false, photo: false,
+        quoteName: "", quoteText: "",
       });
     }
+  }
+
+  // remove repetições do loop do modelo. Dois casos:
+  //  (a) linha idêntica consecutiva (mesmo kind+texto+foto)
+  //  (b) o modelo alterna falantes repetindo um BLOCO (ex: "foto?"/"é foto"
+  //      várias vezes). Detecto descartando uma mensagem cujo (kind|texto) já
+  //      apareceu antes E cuja anterior também já tinha aparecido — sinal de
+  //      ciclo. Mais simples e robusto: deduplico por assinatura, mantendo a
+  //      1ª ocorrência de cada (kind|texto|photo) não-vazio.
+  const out = [];
+  const seen = new Map();  // assinatura -> nº de vezes já vista
+  for (const m of raw_out) {
+    if (m.kind === "date") { out.push(m); continue; }
+    if (m.text === "" && m.photo) { out.push(m); continue; }  // foto sem legenda passa
+    const sig = m.kind + "|" + (m.photo ? "📷" : "") + m.text;
+    const count = seen.get(sig) || 0;
+    seen.set(sig, count + 1);
+    // Falas curtas comuns ("sim", "kkkk", "ok") podem repetir de verdade →
+    // tolera até 2. Falas mais longas que repetem = loop do modelo → corta a
+    // partir da 1ª repetição.
+    const limit = m.text.trim().length <= 8 ? 2 : 1;
+    if (count >= limit) continue;
+    out.push(m);
   }
   return out;
 }
@@ -710,7 +753,7 @@ if (typeof module !== "undefined" && module.exports) {
 }
 
 function bindWhatsApp() {
-  ["#waName", "#waStatus", "#waStatusCustom", "#waTheme", "#waPlatform", "#waClock", "#waBattery", "#waUnreadCount", "#waVerified", "#waBlocked"]
+  ["#waName", "#waMeName", "#waStatus", "#waStatusCustom", "#waTheme", "#waPlatform", "#waClock", "#waBattery", "#waUnreadCount", "#waVerified", "#waBlocked"]
     .forEach((id) => { const el = $(id); if (el) el.addEventListener("input", renderWaPhone); });
   const plat = $("#waPlatform"); if (plat) plat.addEventListener("change", renderWaPhone);
   $("#waStatus").addEventListener("change", () => {

@@ -46,5 +46,30 @@ assert(m3.length === 1, "linhas vazias ignoradas");
 // 4) roteiro vazio → lista vazia
 assert(parseRoteiroToMessages("", "X").length === 0, "vazio → []");
 
+// 5) "Eu sou" define o lado: o nome em meName = mine, resto = theirs
+const r5 = "Mariana: oi\nCarlos: oi tudo bem\nLarissa: e ai\nMariana: to bem";
+const m5 = parseRoteiroToMessages(r5, "Carlos", "Mariana");
+assert(m5[0].kind === "mine", "Mariana (eu sou) = mine");
+assert(m5[1].kind === "theirs", "Carlos (contato) = theirs");
+assert(m5[2].kind === "theirs", "Larissa (terceiro) = theirs");
+assert(m5[3].kind === "mine", "Mariana de novo = mine");
+// terceiro (Larissa) recebe prefixo do nome pra distinguir
+assert(m5[2].text.startsWith("Larissa:"), "terceiro prefixado com nome");
+// contato principal (Carlos) NÃO recebe prefixo
+assert(!m5[1].text.startsWith("Carlos:"), "contato principal sem prefixo");
+
+// 6) remove repetições do loop. Falas LONGAS que repetem = loop → corta na 1ª
+//    repetição. Falas curtas toleram 2 (pra "sim"/"kkkk" legítimos não sumirem).
+const r6 = "Ana: É só uma foto? kkkkk\nBeto: É, é só uma foto\n" +
+           "Ana: É só uma foto? kkkkk\nBeto: É, é só uma foto\n" +
+           "Ana: É só uma foto? kkkkk\nBeto: É, é só uma foto";
+const m6 = parseRoteiroToMessages(r6, "Beto", "Ana");
+assert(m6.length === 2, "loop de falas longas: 3+3 → 2 (1 de cada)");
+
+// 6b) falas curtas comuns toleram repetir (até 2)
+const r6b = "Ana: sim\nAna: sim\nAna: sim";
+const m6b = parseRoteiroToMessages(r6b, "Ana", "");
+assert(m6b.length === 2, "fala curta repetida tolera 2 (3 → 2)");
+
 if (failures) { console.error(`\n${failures} teste(s) falharam`); process.exit(1); }
 console.log("\nTodos os testes do parser passaram.");
