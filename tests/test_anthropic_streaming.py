@@ -1200,7 +1200,8 @@ class SamplingParamsTests(unittest.TestCase):
         self.assertEqual(req["top_p"], 0.8)
         self.assertNotIn("top_k", req)  # OpenAI schema rejects top-level top_k
         self.assertEqual(req["extra_body"]["top_k"], 20)
-        self.assertEqual(req["extra_body"]["repetition_penalty"], 1.05)
+        self.assertEqual(req["extra_body"]["repetition_penalty"], 1.1)
+        self.assertEqual(req["extra_body"]["no_repeat_ngram_size"], 5)
 
     def test_respect_client_optout(self):
         req = {"model": "hosted_vllm/qwen3-coder-30b", "temperature": 1.0,

@@ -2164,7 +2164,15 @@ def _apply_vllm_sampling(openai_request: Dict[str, Any]) -> None:
     temp = _vllm_sampling_value("VLLM_TEMPERATURE", 0.3)
     top_p = _vllm_sampling_value("VLLM_TOP_P", 0.8)
     top_k = _vllm_sampling_value("VLLM_TOP_K", 20.0)
-    rep = _vllm_sampling_value("VLLM_REPETITION_PENALTY", 1.05)
+    # 1.05 era fraco demais: o modelo loopava (repetia frases/blocos) também em
+    # coding. 1.1 ainda é seguro pra código (tokens normais repetem), mas já
+    # desencoraja loop. Ajustável via VLLM_REPETITION_PENALTY.
+    rep = _vllm_sampling_value("VLLM_REPETITION_PENALTY", 1.1)
+    # ANTI-LOOP determinístico: proíbe o modelo de repetir qualquer sequência de
+    # N tokens — impede o loop na ORIGEM, sem caçar texto depois. N=5 é
+    # conservador: blocos curtos de código (ex: "return None", "for i in") ainda
+    # passam; o que fica impossível é repetir a mesma frase/bloco longo. 0 = off.
+    ngram = _vllm_sampling_value("VLLM_NO_REPEAT_NGRAM_SIZE", 5.0)
 
     if temp is not None:
         openai_request["temperature"] = temp
@@ -2178,6 +2186,9 @@ def _apply_vllm_sampling(openai_request: Dict[str, Any]) -> None:
     if rep is not None:
         eb = openai_request.setdefault("extra_body", {})
         eb["repetition_penalty"] = rep
+    if ngram is not None and ngram > 0:
+        eb = openai_request.setdefault("extra_body", {})
+        eb["no_repeat_ngram_size"] = int(ngram)
 
 
 def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
@@ -2251,6 +2262,12 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         _pres = _vllm_sampling_value("VLLM_CONTENT_PRESENCE_PENALTY", 0.4)
         if _pres is not None and "presence_penalty" not in openai_request:
             openai_request["presence_penalty"] = _pres
+        # ANTI-LOOP determinístico (mesmo do coding, mais agressivo): N=3 proíbe
+        # repetir qualquer trinca de tokens — mata o loop de frase na origem.
+        # Em texto livre N=3 é seguro. 0 = off. Override: VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE.
+        _ngram = _vllm_sampling_value("VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE", 3.0)
+        if _ngram is not None and _ngram > 0 and "no_repeat_ngram_size" not in eb:
+            eb["no_repeat_ngram_size"] = int(_ngram)
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
     # Thinking mode: defaults to ON now (was OFF). Customer feedback: turning

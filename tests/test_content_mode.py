@@ -107,13 +107,55 @@ def test_content_mode_has_antiloop_penalties(monkeypatch):
 
 
 def test_coding_mode_no_antiloop_penalties(monkeypatch):
-    """Coding NÃO leva as penalidades fortes (variáveis/keywords precisam repetir)."""
+    """Coding NÃO leva as penalidades FORTES de conteúdo (frequency/presence, que
+    machucam código). Mas leva repetition_penalty próprio (1.1) e o ngram."""
+    monkeypatch.delenv("VLLM_RESPECT_CLIENT_SAMPLING", raising=False)
+    monkeypatch.delenv("VLLM_REPETITION_PENALTY", raising=False)
+    req = _coding_request()
+    _sanitize_openai_request_for_vllm(req)
+    # repetition_penalty do coding é o próprio (1.1), não o forte de conteúdo (1.25)
+    assert req.get("extra_body", {}).get("repetition_penalty") != 1.25
+    assert "frequency_penalty" not in req or req.get("frequency_penalty") != 0.6
+
+
+# ── Anti-loop determinístico (no_repeat_ngram_size) ───────────────────────────
+
+def test_coding_mode_has_no_repeat_ngram(monkeypatch):
+    """Coding recebe no_repeat_ngram_size (N=5 conservador) — impede loop de
+    bloco na origem, sem ferir repetição normal de código."""
+    monkeypatch.delenv("VLLM_NO_REPEAT_NGRAM_SIZE", raising=False)
     monkeypatch.delenv("VLLM_RESPECT_CLIENT_SAMPLING", raising=False)
     req = _coding_request()
     _sanitize_openai_request_for_vllm(req)
-    # repetition_penalty do coding é o leve (1.05), não o forte (1.25)
-    assert req.get("extra_body", {}).get("repetition_penalty") != 1.25
-    assert "frequency_penalty" not in req or req.get("frequency_penalty") != 0.6
+    assert req.get("extra_body", {}).get("no_repeat_ngram_size") == 5
+
+
+def test_coding_mode_repetition_penalty_bumped(monkeypatch):
+    """O repetition_penalty do coding subiu de 1.05 pra 1.1 (anti-loop)."""
+    monkeypatch.delenv("VLLM_REPETITION_PENALTY", raising=False)
+    monkeypatch.delenv("VLLM_RESPECT_CLIENT_SAMPLING", raising=False)
+    req = _coding_request()
+    _sanitize_openai_request_for_vllm(req)
+    assert req.get("extra_body", {}).get("repetition_penalty") == 1.1
+
+
+def test_content_mode_has_no_repeat_ngram(monkeypatch):
+    """Conteúdo recebe no_repeat_ngram_size mais agressivo (N=3) — mata loop de
+    frase na origem em texto livre."""
+    monkeypatch.delenv("VLLM_CONTENT_NO_REPEAT_NGRAM_SIZE", raising=False)
+    monkeypatch.delenv("VLLM_FORCE_SAMPLING_ALWAYS", raising=False)
+    req = _content_request()
+    _sanitize_openai_request_for_vllm(req)
+    assert req.get("extra_body", {}).get("no_repeat_ngram_size") == 3
+
+
+def test_no_repeat_ngram_can_be_disabled(monkeypatch):
+    """N=0 desliga o ngram (escape hatch do operador)."""
+    monkeypatch.setenv("VLLM_NO_REPEAT_NGRAM_SIZE", "0")
+    monkeypatch.delenv("VLLM_RESPECT_CLIENT_SAMPLING", raising=False)
+    req = _coding_request()
+    _sanitize_openai_request_for_vllm(req)
+    assert "no_repeat_ngram_size" not in req.get("extra_body", {})
 
 
 # ── Thinking ──────────────────────────────────────────────────────────────────
