@@ -102,9 +102,16 @@ def register_bote_routes(
     async def _generate(client: Any, user_prompt: str, *, model: str, max_tokens: int = 8192) -> str:
         """Chama o modelo via RotatingClient (formato Anthropic) e devolve texto."""
         from rotator_library.anthropic_compat import AnthropicMessagesRequest
+        from proxy_app.model_resolution import resolve_model_alias
+
+        # O RotatingClient exige formato provider/model (ex: hosted_vllm/qwen3-coder-30b).
+        # O frontend manda um alias amigável (claude-sonnet-4-5) — resolvê-lo aqui,
+        # igual o endpoint /v1/messages faz. Sem isso o client levanta
+        # "Invalid model format or no credentials for provider".
+        resolved = resolve_model_alias(model or engine.CLAUDE_DEFAULT_MODEL) or engine.CLAUDE_DEFAULT_MODEL
 
         request_obj = AnthropicMessagesRequest(
-            model=model or engine.CLAUDE_DEFAULT_MODEL,
+            model=resolved,
             max_tokens=max_tokens,
             system=engine.build_system_prompt(),
             messages=[{"role": "user", "content": user_prompt}],
