@@ -42,8 +42,19 @@ function wifiSvg() {
     '<path d="M9 4.7c-2.2 0-4.2.8-5.7 2.2l1.9 2.2C6.2 8.2 7.5 7.6 9 7.6s2.8.6 3.8 1.5l1.9-2.2C13.2 5.5 11.2 4.7 9 4.7z"/>' +
     '<path d="M9 9.4c-1 0-1.9.4-2.6 1L9 13.6l2.6-3.2c-.7-.6-1.6-1-2.6-1z"/></svg>';
 }
-function batterySvg(pct) {
+function batterySvg(pct, withNumber = false) {
   const p = Math.max(0, Math.min(100, parseInt(pct, 10) || 0));
+  if (withNumber) {
+    // Estilo iPhone: o número fica DENTRO do contorno da bateria (sem "%"),
+    // proporcional e centralizado, sem passar das linhas. O contorno é só a
+    // borda (não preenche), igual o iOS mostra com o número por cima.
+    return '<svg viewBox="0 0 30 14" width="27" height="13">' +
+      '<rect x="0.6" y="0.6" width="25" height="12.8" rx="3.2" fill="none" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.1"/>' +
+      '<rect x="27" y="4.3" width="2" height="5.4" rx="1" fill="currentColor" fill-opacity="0.45"/>' +
+      `<text x="13" y="10.4" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor" font-family="-apple-system,Helvetica,Arial,sans-serif">${p}</text>` +
+      '</svg>';
+  }
+  // Estilo Android: barra preenchida proporcional ao %, sem número dentro.
   const fillW = Math.round((p / 100) * 18);
   return '<svg viewBox="0 0 27 14" width="24" height="13">' +
     '<rect x="0.5" y="0.5" width="22" height="13" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.5"/>' +
@@ -479,11 +490,14 @@ function renderWaPhone() {
   // ícones estáticos (idempotente) + sinal/wifi
   injectStaticIcons();
 
-  // status bar
+  // status bar — bateria difere por plataforma:
+  //  iOS: número DENTRO do desenho da bateria, sem "%" ao lado (como o iPhone)
+  //  Android: "82%" ao lado + barra preenchida
   $("#waClockView").textContent = $("#waClock").value || "14:32";
   const batt = $("#waBattery").value || "82";
-  $("#waBatteryView").textContent = batt + "%";
-  if ($("#waBatteryIcon")) $("#waBatteryIcon").innerHTML = batterySvg(batt);
+  const isIos = platform === "ios";
+  $("#waBatteryView").textContent = isIos ? "" : (batt + "%");
+  if ($("#waBatteryIcon")) $("#waBatteryIcon").innerHTML = batterySvg(batt, isIos);
 
   // header — selo verificado como SVG real
   const verifiedSvg = '<svg viewBox="0 0 24 24" width="15" height="15" fill="#34b7f1" style="vertical-align:-2px"><path d="M12 2 9.5 4.5 6 4l-.5 3.5L2 9.5 4 12l-2 2.5 3.5 1.5L6 20l3.5-.5L12 22l2.5-2.5L18 20l.5-3.5L22 14.5 20 12l2-2.5-3.5-1.5L18 4l-3.5.5L12 2zm-1.2 13.5L7 11.7l1.1-1.1 2.7 2.7 5-5L17 9.4l-6.2 6.1z"/></svg>';
