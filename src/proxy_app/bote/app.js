@@ -25,6 +25,9 @@ const ICONS = {
   checkDouble: '<svg viewBox="0 0 20 13" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.2 3.4L11 3.2"/><path d="M8.2 10.4 9 9.6m1.2-1.2L15.6 3.2"/></svg>',
   checkSingle: '<svg viewBox="0 0 14 13" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7l3.2 3.4L11.5 3.2"/></svg>',
   blocked: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:-2px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z"/></svg>',
+  // "+" do iOS (abrir anexos) e sticker
+  plus: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',
+  sticker: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M5 3h14c1.1 0 2 .9 2 2v9l-7 7H5c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2zm9 16 5-5h-4c-.55 0-1 .45-1 1v4zM7 9h10v-1.5H7V9zm0 4h6v-1.5H7V13z"/></svg>',
 };
 
 // Barra de sinal (4 barras crescentes, espaçamento uniforme) — SVG.
@@ -407,6 +410,7 @@ function waAddMessage(kind, text = "", time = "") {
     text: text || (kind === "date" ? "Hoje" : ""),
     time: kind === "date" ? "" : now,
     status: "read", deleted: false, photo: false,
+    quoteName: "", quoteText: "",  // resposta citada (vazio = sem citação)
   });
   renderWaEditor();
   renderWaPhone();
@@ -430,6 +434,7 @@ function renderWaEditor() {
         <button class="wa-del" title="remover">✕</button>`;
     } else {
       row.className = "wa-msg-row " + m.kind;
+      const hasQuote = !!(m.quoteName || m.quoteText);
       row.innerHTML = `
         <span class="wa-tag">${m.kind === "mine" ? "Eu" : "Ele(a)"}</span>
         <input type="text" data-f="text" value="${waEscape(m.text)}" placeholder="${m.photo ? "(foto) legenda opcional" : "mensagem"}" />
@@ -442,7 +447,12 @@ function renderWaEditor() {
                  <option value="read"${m.status === "read" ? " selected" : ""}>✓✓ azul</option>
                </select>` : ""}
         </span>
-        <button class="wa-del" title="remover">✕</button>`;
+        <button class="wa-quote-btn" title="citar (responder) uma mensagem">↩</button>
+        <button class="wa-del" title="remover">✕</button>
+        <div class="wa-quote-edit ${hasQuote ? "" : "hidden"}">
+          <input type="text" data-f="quoteName" value="${waEscape(m.quoteName)}" placeholder="quem foi citado (ex: Pedro)" />
+          <input type="text" data-f="quoteText" value="${waEscape(m.quoteText)}" placeholder="texto citado" />
+        </div>`;
     }
     // bind inputs
     row.querySelectorAll("[data-f]").forEach((el) => {
@@ -463,6 +473,14 @@ function renderWaEditor() {
         else m.photo = false;
         tag.textContent = (m.kind === "mine" ? "Eu" : "Ele(a)") + (m.deleted ? " 🗑" : m.photo ? " 📷" : "");
         renderWaPhone();
+      };
+    }
+    // botão de citar: mostra/esconde os campos de citação
+    const quoteBtn = row.querySelector(".wa-quote-btn");
+    if (quoteBtn) {
+      quoteBtn.onclick = () => {
+        const box = row.querySelector(".wa-quote-edit");
+        if (box) box.classList.toggle("hidden");
       };
     }
     row.querySelector(".wa-del").onclick = () => waRemove(m.id);
@@ -524,6 +542,10 @@ function renderWaPhone() {
   else if (st === "custom") statusText = $("#waStatusCustom").value || "";
   $("#waStatusView").textContent = statusText;
 
+  // contador de não-lidas ao lado do voltar (iOS mostra ex: "4")
+  const unread = parseInt(($("#waUnreadCount") && $("#waUnreadCount").value) || "0", 10) || 0;
+  if ($("#waUnread")) $("#waUnread").textContent = unread > 0 ? String(unread) : "";
+
   // avatar (foto do usuário OU silhueta SVG padrão do WhatsApp)
   const av = $("#waAvatarView");
   if (wa.avatarDataUrl) { av.style.backgroundImage = `url(${wa.avatarDataUrl})`; av.innerHTML = ""; }
@@ -551,6 +573,13 @@ function renderWaPhone() {
     b.className = "wa-bubble " + m.kind + cont;
     prevKind = m.kind;
     let inner = "";
+    // resposta citada (reply): barra colorida + nome + preview, no topo da bolha
+    if (m.quoteName || m.quoteText) {
+      inner += '<div class="wa-quote">' +
+        '<div class="wa-quote-name">' + waEscape(m.quoteName || "") + '</div>' +
+        '<div class="wa-quote-text">' + waEscape(m.quoteText || "") + '</div>' +
+        '</div>';
+    }
     if (m.photo) {
       // placeholder de imagem com ícone de montanha (SVG), igual quando a imagem
       // não carregou no WhatsApp. O usuário pode trocar por foto real depois.
@@ -566,12 +595,24 @@ function renderWaPhone() {
     body.appendChild(b);
   });
 
-  // input bar vs bloqueado
+  // input bar vs bloqueado — layout difere por plataforma
   const inputBar = $("#waInputBar");
   if ($("#waBlocked").checked) {
     inputBar.className = "wa-blocked-bar";
     inputBar.innerHTML = ICONS.blocked + " Você bloqueou este contato. Toque para desbloquear.";
+  } else if (isIos) {
+    // iPhone: "+" à esquerda, campo redondo com "Mensagem", sticker + câmera
+    // dentro do campo à direita, e microfone solto fora.
+    inputBar.className = "wa-inputbar wa-inputbar-ios";
+    inputBar.innerHTML =
+      '<span class="wa-ico wa-plus">' + ICONS.plus + '</span>' +
+      '<span class="wa-input-pill">' +
+        '<span class="wa-pill-text">Mensagem</span>' +
+        '<span class="wa-pill-right"><span class="wa-ico">' + ICONS.sticker + '</span><span class="wa-ico">' + ICONS.camera + '</span></span>' +
+      '</span>' +
+      '<span class="wa-mic wa-ico">' + ICONS.mic + '</span>';
   } else {
+    // Android: emoji dentro à esquerda, anexo+câmera à direita, mic em botão verde
     inputBar.className = "wa-inputbar";
     inputBar.innerHTML =
       '<span class="wa-input-pill">' +
@@ -668,7 +709,7 @@ if (typeof module !== "undefined" && module.exports) {
 }
 
 function bindWhatsApp() {
-  ["#waName", "#waStatus", "#waStatusCustom", "#waTheme", "#waPlatform", "#waClock", "#waBattery", "#waVerified", "#waBlocked"]
+  ["#waName", "#waStatus", "#waStatusCustom", "#waTheme", "#waPlatform", "#waClock", "#waBattery", "#waUnreadCount", "#waVerified", "#waBlocked"]
     .forEach((id) => { const el = $(id); if (el) el.addEventListener("input", renderWaPhone); });
   const plat = $("#waPlatform"); if (plat) plat.addEventListener("change", renderWaPhone);
   $("#waStatus").addEventListener("change", () => {

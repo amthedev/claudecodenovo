@@ -275,24 +275,32 @@ textarea { line-height: 1.5; }
   display: flex; align-items: center; gap: 9px; padding: 7px 10px;
   background: var(--wa-header); color: var(--wa-header-fg);
 }
-.wa-ios .wa-header { padding: 5px 8px; gap: 6px; }
+.wa-ios .wa-header { padding: 4px 6px; gap: 4px; }
 .wa-back { width: 24px; height: 24px; opacity: .95; flex-shrink: 0; }
-.wa-ios .wa-back { color: #34b7f1; width: 28px; height: 28px; }
+.wa-ios .wa-back { color: #34b7f1; width: 26px; height: 26px; }
+/* contador de não-lidas (iOS mostra ex "4" colado no voltar; vazio = some) */
+.wa-unread { color: #34b7f1; font-size: 17px; font-weight: 500; margin-right: 2px; flex-shrink: 0; }
+.wa-unread:empty { display: none; }
+.wa-android .wa-unread { display: none; }  /* Android não mostra esse número aqui */
 .wa-avatar {
   width: 40px; height: 40px; border-radius: 50%;
   background: #6a7175 center/cover no-repeat; flex-shrink: 0; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
 }
+.wa-ios .wa-avatar { width: 36px; height: 36px; }  /* iOS usa avatar menor */
 .wa-avatar svg { width: 100%; height: 100%; }
 .wa-header-info { flex: 1; min-width: 0; }
 .wa-ios .wa-header-info { text-align: center; }
 .wa-name { font-weight: 600; font-size: 16.5px; display: flex; align-items: center; gap: 5px; }
-.wa-ios .wa-name { justify-content: center; font-weight: 600; }
+.wa-ios .wa-name { justify-content: center; font-size: 17px; }
 .wa-substatus { font-size: 12.5px; color: var(--wa-sub); }
+.wa-ios .wa-substatus { font-size: 12px; }
 .wa-android.wa-light .wa-substatus { color: var(--wa-sub); }
 .wa-header-icons { display: flex; align-items: center; gap: 18px; opacity: .95; }
 .wa-header-icons .wa-ico { width: 22px; height: 22px; }
-.wa-ios .wa-header-icons { gap: 16px; color: #34b7f1; }
+.wa-ios .wa-header-icons { gap: 20px; color: #34b7f1; }
+/* iOS NÃO tem o ⋮ (3 pontos) no header da conversa — só vídeo + telefone */
+.wa-ios #waIcoDots { display: none; }
 
 /* Corpo das mensagens. Fundo: cor sólida do WhatsApp + uma textura de doodles
    MUITO sutil (ícones minúsculos e quase transparentes, como no app real). */
@@ -352,6 +360,21 @@ textarea { line-height: 1.5; }
   display: flex; align-items: center; justify-content: center; margin-bottom: 3px;
 }
 
+/* Resposta citada (reply) dentro da bolha: barra colorida + nome + preview */
+.wa-quote {
+  border-radius: 5px; padding: 4px 8px 4px 6px; margin-bottom: 4px;
+  border-left: 4px solid var(--wa-tick); background: rgba(0,0,0,.18);
+  overflow: hidden; max-width: 100%;
+}
+.wa-light .wa-quote { background: rgba(0,0,0,.06); }
+.wa-quote-name { font-size: 12.5px; font-weight: 600; color: var(--wa-tick); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wa-quote-text { font-size: 13px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* campos de citação no editor (linha extra abaixo da mensagem) */
+.wa-quote-btn { background: var(--neutral); border: none; color: var(--blue); border-radius: 6px; cursor: pointer; height: 30px; width: 28px; }
+.wa-quote-edit { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 6px; }
+.wa-quote-edit input { flex: 1; padding: 6px 8px; font-size: 13px; }
+
 /* Chip de data */
 .wa-datechip { align-self: center; margin: 10px 0; }
 .wa-datechip span {
@@ -375,6 +398,15 @@ textarea { line-height: 1.5; }
 }
 .wa-mic .wa-ico, .wa-mic svg { width: 22px; height: 22px; }
 .wa-mic svg { fill: #fff; }
+
+/* iPhone: barra de digitar com "+" à esquerda, campo redondo claro, sticker e
+   câmera dentro do campo, e microfone SEM botão verde (ícone simples cinza). */
+.wa-inputbar-ios { gap: 9px; padding: 8px 10px 10px; }
+.wa-inputbar-ios .wa-plus { width: 26px; height: 26px; color: var(--wa-sub); flex-shrink: 0; }
+.wa-inputbar-ios .wa-input-pill { border: 1px solid rgba(140,150,160,.35); background: transparent; border-radius: 18px; padding: 7px 12px; }
+.wa-inputbar-ios .wa-mic { width: 26px; height: 26px; border-radius: 0; background: none; color: var(--wa-sub); }
+.wa-inputbar-ios .wa-mic svg { fill: currentColor; width: 24px; height: 24px; }
+
 .wa-blocked-bar { padding: 14px; text-align: center; font-size: 13px; color: var(--wa-sub); background: var(--wa-bg); display: flex; align-items: center; justify-content: center; gap: 6px; }
 
 /* Responsive */

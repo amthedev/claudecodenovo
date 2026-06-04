@@ -192,6 +192,10 @@
               <label>Bateria %</label>
               <input id="waBattery" type="number" value="82" min="0" max="100" />
             </div>
+            <div>
+              <label>Não-lidas (0=∅)</label>
+              <input id="waUnreadCount" type="number" value="0" min="0" max="999" />
+            </div>
           </div>
 
           <label>Foto do contato (opcional)</label>
@@ -241,6 +245,7 @@
               <!-- header da conversa (ícones SVG preenchidos pelo JS) -->
               <div class="wa-header">
                 <span id="waBack" class="wa-back wa-ico"></span>
+                <span id="waUnread" class="wa-unread"></span>
                 <div id="waAvatarView" class="wa-avatar"></div>
                 <div class="wa-header-info">
                   <div id="waNameView" class="wa-name">Débora</div>
