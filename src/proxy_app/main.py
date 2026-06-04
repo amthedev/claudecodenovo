@@ -1681,6 +1681,17 @@ async def support_tickets_stub():
     return JSONResponse(content={"data": [], "has_more": False})
 
 
+# WhatsApp Modeler (/bote) — registrado aqui (e não com as outras rotas no topo)
+# porque precisa de verify_anthropic_api_key e get_rotating_client, definidos acima.
+from proxy_app.bote_routes import register_bote_routes
+
+register_bote_routes(
+    app,
+    verify_dependency=verify_anthropic_api_key,
+    client_getter=get_rotating_client,
+)
+
+
 @app.post("/v1/embeddings")
 async def embeddings(
     request: Request,

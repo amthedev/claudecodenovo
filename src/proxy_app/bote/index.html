@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Modeler — Studio</title>
+  <link rel="stylesheet" href="/bote/assets/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">💬</span>
+      <div>
+        <h1>WhatsApp Modeler</h1>
+        <p class="brand-sub">Histórias virais em formato de conversa</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="connState" class="badge badge-muted">Sem chave</span>
+      <button id="openConfig" class="btn-ghost">Configurar</button>
+    </div>
+  </header>
+
+  <!-- Modal de configuração (key + modelo) -->
+  <div id="configBackdrop" class="modal-backdrop hidden">
+    <div class="modal">
+      <button class="modal-x" id="closeConfig">✕</button>
+      <h2>Configuração</h2>
+      <p class="muted">Cole a chave que você recebeu. Ela fica salva neste navegador (funciona como login).</p>
+      <label>Chave de acesso</label>
+      <input id="apiKey" type="password" placeholder="Cole sua chave aqui" autocomplete="off" />
+      <label>Modelo</label>
+      <select id="model">
+        <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+        <option value="claude-opus-4-7">claude-opus-4-7</option>
+        <option value="claude-opus-4-6">claude-opus-4-6</option>
+        <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+        <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+      </select>
+      <div class="modal-actions">
+        <button id="testConn" class="btn-secondary">Testar conexão</button>
+        <button id="saveConfig" class="btn-primary">Salvar</button>
+      </div>
+      <p id="configMsg" class="config-msg"></p>
+    </div>
+  </div>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="plan">1. Planejamento</button>
+    <button class="tab" data-tab="parts">2. Partes</button>
+    <button class="tab" data-tab="media">3. Mídia</button>
+  </nav>
+
+  <main class="layout">
+    <!-- ABA 1: PLANEJAMENTO -->
+    <section class="tab-panel active" data-panel="plan">
+      <div class="grid-2">
+        <div class="card">
+          <h3>Tema / história</h3>
+          <textarea id="theme" rows="4" placeholder="Ex: Minha vizinha descobriu uma traição porque o entregador deixou uma encomenda no apartamento errado."></textarea>
+
+          <div class="field-row">
+            <div>
+              <label>Tamanho</label>
+              <select id="size">
+                <option>Curto</option>
+                <option selected>Médio</option>
+                <option>Longo</option>
+                <option>Série</option>
+              </select>
+            </div>
+            <div>
+              <label>Drama</label>
+              <select id="drama">
+                <option>Baixo</option>
+                <option selected>Médio</option>
+                <option>Viral</option>
+              </select>
+            </div>
+            <div>
+              <label>Emojis</label>
+              <select id="emoji">
+                <option>Sem emojis</option>
+                <option selected>Leve</option>
+                <option>Médio</option>
+                <option>Pesado</option>
+              </select>
+            </div>
+          </div>
+
+          <label>CTA (opcional)</label>
+          <input id="cta" type="text" placeholder='Ex: "Siga para a parte 2"' />
+
+          <label>Prompt negativo (opcional)</label>
+          <textarea id="negative" rows="2" placeholder="Sem áudio. Sem narração fora do chat. Sem linguagem formal."></textarea>
+
+          <label>Tons</label>
+          <div id="tones" class="chips"></div>
+
+          <label>Emoções</label>
+          <div id="emotions" class="chips"></div>
+
+          <button id="genPlan" class="btn-primary btn-block">Gerar plano da história</button>
+        </div>
+
+        <div class="card">
+          <h3>Plano</h3>
+          <textarea id="planOutput" rows="18" placeholder="O plano gerado aparece aqui. Você pode editar antes de gerar as partes."></textarea>
+          <label>O que mudar no plano</label>
+          <div class="field-row">
+            <input id="planEdit" type="text" placeholder="Ex: trocar a sogra por irmã, deixar mais brasileiro, mudar a Parte 2..." />
+            <button id="revisePlan" class="btn-secondary">Refazer</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ABA 2: PARTES -->
+    <section class="tab-panel" data-panel="parts">
+      <div class="card">
+        <h3>Partes</h3>
+        <div id="partButtons" class="part-buttons"></div>
+        <textarea id="scriptOutput" rows="18" placeholder="O roteiro da parte aparece aqui, pronto para colar no bot."></textarea>
+        <div class="toolbar">
+          <button id="copyScript" class="btn-primary">Copiar para o bot</button>
+          <button id="regenPart" class="btn-secondary">Gerar novamente</button>
+          <button id="newPart" class="btn-secondary">Gerar nova versão</button>
+          <span id="partStatus" class="muted"></span>
+        </div>
+        <label>O que mudar nesta parte</label>
+        <input id="partEdit" type="text" placeholder="Ex: deixar mais emocionante, fazer Clara responder com mais raiva, trocar a foto..." />
+      </div>
+    </section>
+
+    <!-- ABA 3: MÍDIA -->
+    <section class="tab-panel" data-panel="media">
+      <div class="card">
+        <h3>Personagens e prompts de imagem</h3>
+        <div class="toolbar">
+          <button id="genCharacters" class="btn-primary">Gerar personagens</button>
+          <button id="genImages" class="btn-secondary">Gerar prompts de imagem</button>
+        </div>
+        <textarea id="mediaOutput" rows="20" placeholder="Personagens e prompts de imagem aparecem aqui depois de aprovar as partes."></textarea>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="overlay" class="overlay hidden"><div class="spinner"></div><span id="overlayText">Gerando...</span></div>
+
+  <script src="/bote/assets/app.js"></script>
+</body>
+</html>
