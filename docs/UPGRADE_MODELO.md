@@ -14,7 +14,7 @@ Opus/Sonnet. Este doc é pra quando você decidir investir em modelo melhor.
 
 - Modelo: **Qwen3-Coder-30B-A3B-Instruct-AWQ** (QuantTrio), servido como `qwen3-coder-30b`
 - GPU: **RTX 6000 Ada 48GB** (RunPod)
-- Contexto: 43008 tokens (limite de VRAM, não do modelo)
+- Contexto: 63000 tokens (proxy; pod roda `--max-model-len 65536`, default deixa ~2.5k de margem)
 - Flags: `--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 --enable-prefix-caching`
 - Custo aproximado: ~$0.80–1.20/h (RTX 6000 Ada)
 

@@ -43,12 +43,13 @@ THINKING_BUDGET_THRESHOLDS = {
 GRANULAR_REASONING_PROVIDERS = set()
 
 # Hosted vLLM defaults, sized for Qwen3-Coder-30B-A3B on a single RTX 6000 Ada.
-# The model supports larger native context, but 43k is the stable single-GPU
-# target for AWQ + tool calls on this RTX 6000 Ada pod. Budget: reserve 12k
-# for output, leaving roughly 30k tokens for input.
+# The pod runs with --max-model-len 65536. We default to 63000 (≈2.5k below the
+# hard ceiling) so token-count estimates can be slightly off without the request
+# overflowing the vLLM limit and getting a 400. Budget: reserve 12k for output,
+# leaving roughly 51k tokens for input/history.
 # Too-low values truncate history/file-reads and make the agent look
-# "superficial" or loop on large edits.
-VLLM_MODEL_CONTEXT = 43008
+# "superficial" or loop on large edits. Override via VLLM_MODEL_CONTEXT.
+VLLM_MODEL_CONTEXT = 63000
 VLLM_CONTEXT_OUTPUT_RESERVE = 12288
 VLLM_MAX_OUTPUT_TOKENS = 12288
 VLLM_MAX_INPUT_CHARS = 105000

@@ -126,7 +126,12 @@ def virtual_claude_models() -> List[str]:
 
 
 def virtual_model_context_window() -> int:
-    return 43008
+    # Mantém em sincronia com VLLM_MODEL_CONTEXT (o pod roda --max-model-len 65536;
+    # default 63000 deixa margem pra estimativa de tokens não estourar o vLLM).
+    try:
+        return int(os.getenv("VLLM_MODEL_CONTEXT", "63000"))
+    except (TypeError, ValueError):
+        return 63000
 
 
 def virtual_model_max_output_tokens() -> int:
