@@ -64,10 +64,27 @@ const state = {
 };
 
 // ── Helpers de rede ──────────────────────────────────────────────────────────
-async function apiPost(path, payload) {
+async function apiPost(path, payload, timeoutMs = 180000) {
   const headers = { "Content-Type": "application/json" };
   if (state.apiKey) headers.Authorization = `Bearer ${state.apiKey}`;
-  const response = await fetch(path, { method: "POST", headers, body: JSON.stringify(payload) });
+  // AbortController: sem isso o fetch fica preso pra sempre quando o backend
+  // demora (GPU lenta) ou o proxy corta a conexão sem resposta — era a causa do
+  // overlay "Gerando..." travado. Aborta após timeoutMs e mostra mensagem clara.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST", headers, body: JSON.stringify(payload), signal: controller.signal,
+    });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Demorou demais (o modelo não respondeu a tempo). Tente de novo — às vezes a GPU está ocupada.");
+    }
+    throw new Error("Falha de conexão com o servidor. Verifique sua internet e tente de novo.");
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await response.json().catch(() => ({ detail: "Resposta inválida do servidor." }));
   if (!response.ok) {
     const msg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
@@ -255,7 +272,7 @@ async function generatePart(n, mode) {
   for (let i = 1; i < n; i++) {
     if (state.parts[i] === undefined) { toast(`Gere a Parte ${i} antes.`); return; }
   }
-  showOverlay(mode === "normal" ? `Gerando Parte ${n}...` : `Refazendo Parte ${n}...`);
+  showOverlay((mode === "normal" ? `Gerando Parte ${n}` : `Refazendo Parte ${n}`) + " — pode levar até 1-2 min…");
   try {
     const data = await apiPost("/bote/api/part", {
       ...collectConfig(),

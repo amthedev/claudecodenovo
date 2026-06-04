@@ -13,6 +13,7 @@ injetados por main.py em register_bote_routes para evitar import circular.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict
 
@@ -135,7 +136,11 @@ def register_bote_routes(
             raise HTTPException(status_code=502, detail=str(exc)[:200])
 
     async def _generate_part(client, cfg, plan, part_number, previous_parts, edit_request, mode):
-        """Gera uma parte com 1 retry de qualidade (espelha _generate_part_worker do app)."""
+        """Gera uma parte. Por padrão faz UMA chamada ao modelo (rápido). O retry
+        de qualidade (refazer quando a 1ª resposta é ruim) DOBRA o tempo — na GPU
+        única isso deixava a geração em ~2min e o usuário achava que travou. Por
+        isso o retry é OPT-IN via BOTE_PART_RETRY=on."""
+        retry_enabled = os.getenv("BOTE_PART_RETRY", "off").lower() in {"1", "true", "yes", "on"}
         base_prompt = engine.build_part_prompt(cfg, plan, part_number, previous_parts)
         if mode in {"again", "new"}:
             existing = previous_parts.get(part_number)
@@ -145,19 +150,19 @@ def register_bote_routes(
         spec = _part_spec(plan, part_number)
         raw = await _generate(client, base_prompt, model=cfg.model)
         result = engine.parse_part_result(part_number, raw)
-        issues = _quality_issues(result, cfg, previous_parts, part_number, spec, edit_request, mode)
 
-        existing = previous_parts.get(part_number)
-        if mode in {"again", "new"} and existing and engine.script_similarity(existing.roteiro, result.roteiro) > 0.72:
-            issues.append("A nova versao ficou parecida demais com a anterior; precisa reescrever de verdade.")
-
-        if issues:
-            retry_prompt = engine.build_rewrite_part_prompt(base_prompt, result.roteiro, issues)
-            retry_raw = await _generate(client, retry_prompt, model=cfg.model)
-            retry_result = engine.parse_part_result(part_number, retry_raw)
-            retry_issues = _quality_issues(retry_result, cfg, previous_parts, part_number, spec, edit_request, mode)
-            if len(retry_issues) <= len(issues) or len(retry_result.roteiro) > len(result.roteiro):
-                result = retry_result
+        if retry_enabled:
+            issues = _quality_issues(result, cfg, previous_parts, part_number, spec, edit_request, mode)
+            existing = previous_parts.get(part_number)
+            if mode in {"again", "new"} and existing and engine.script_similarity(existing.roteiro, result.roteiro) > 0.72:
+                issues.append("A nova versao ficou parecida demais com a anterior; precisa reescrever de verdade.")
+            if issues:
+                retry_prompt = engine.build_rewrite_part_prompt(base_prompt, result.roteiro, issues)
+                retry_raw = await _generate(client, retry_prompt, model=cfg.model)
+                retry_result = engine.parse_part_result(part_number, retry_raw)
+                retry_issues = _quality_issues(retry_result, cfg, previous_parts, part_number, spec, edit_request, mode)
+                if len(retry_issues) <= len(issues) or len(retry_result.roteiro) > len(result.roteiro):
+                    result = retry_result
 
         result.roteiro = engine.polish_whatsapp_script(result.roteiro, cfg)
         return result

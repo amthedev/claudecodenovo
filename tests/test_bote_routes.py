@@ -154,8 +154,21 @@ def test_model_failure_returns_502():
     assert "não respondeu" in r.json()["detail"].lower() or "denied" in r.json()["detail"].lower()
 
 
-def test_part_retry_on_bad_quality():
-    """Primeira resposta ruim (curta) → backend deve refazer (2 chamadas)."""
+def test_part_single_call_by_default(monkeypatch):
+    """Default (BOTE_PART_RETRY off): UMA chamada só, mesmo com resposta curta —
+    pra não dobrar o tempo na GPU única."""
+    monkeypatch.delenv("BOTE_PART_RETRY", raising=False)
+    stub = StubClient(reply_text="CONVERSA:\nAna: oi\nBeto: oi")
+    c = _app(stub)
+    plan = {"titulo": "X", "partes": [{"numero": 1, "conversa_principal": "Ana e Beto"}]}
+    r = c.post("/bote/api/part", json={"plan": plan, "part_number": 1, "previous_parts": []})
+    assert r.status_code == 200
+    assert stub.calls == 1  # sem retry por default
+
+
+def test_part_retry_when_enabled(monkeypatch):
+    """Com BOTE_PART_RETRY=on, resposta ruim dispara refazer (2 chamadas)."""
+    monkeypatch.setenv("BOTE_PART_RETRY", "on")
     stub = StubClient(reply_text="CONVERSA:\nAna: oi\nBeto: oi")  # curta demais
     c = _app(stub)
     plan = {"titulo": "X", "partes": [{"numero": 1, "conversa_principal": "Ana e Beto"}]}
