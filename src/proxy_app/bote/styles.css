@@ -362,10 +362,11 @@ textarea { line-height: 1.5; }
 .wa-deleted { font-style: italic; color: var(--wa-meta); display: inline-flex; align-items: center; gap: 5px; }
 .wa-deleted svg { opacity: .8; }
 .wa-photo {
-  width: 200px; height: 150px; border-radius: 6px;
+  width: 200px; height: 150px; border-radius: 6px; overflow: hidden;
   background: linear-gradient(135deg, #5a6b73, #3b4a52);
   display: flex; align-items: center; justify-content: center; margin-bottom: 3px;
 }
+.wa-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* Resposta citada (reply) dentro da bolha: barra colorida + nome + preview */
 .wa-quote {
@@ -379,6 +380,7 @@ textarea { line-height: 1.5; }
 
 /* campos de citação no editor (linha extra abaixo da mensagem) */
 .wa-quote-btn { background: var(--neutral); border: none; color: var(--blue); border-radius: 6px; cursor: pointer; height: 30px; width: 28px; }
+.wa-img-btn { background: var(--neutral); border: none; border-radius: 6px; cursor: pointer; height: 30px; width: 30px; font-size: 15px; line-height: 1; }
 .wa-quote-edit { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 6px; }
 .wa-quote-edit input { flex: 1; padding: 6px 8px; font-size: 13px; }
 

@@ -409,7 +409,7 @@ function waAddMessage(kind, text = "", time = "") {
     id: waSeq++, kind,
     text: text || (kind === "date" ? "Hoje" : ""),
     time: kind === "date" ? "" : now,
-    status: "read", deleted: false, photo: false,
+    status: "read", deleted: false, photo: false, photoUrl: "",
     quoteName: "", quoteText: "",  // resposta citada (vazio = sem citação)
   });
   renderWaEditor();
@@ -448,6 +448,7 @@ function renderWaEditor() {
                </select>` : ""}
         </span>
         <button class="wa-quote-btn" title="citar (responder) uma mensagem">↩</button>
+        <button class="wa-img-btn ${m.photo ? "" : "hidden"}" title="${m.photoUrl ? "trocar imagem" : "escolher imagem"}">${m.photoUrl ? "🖼️" : "📷"}</button>
         <button class="wa-del" title="remover">✕</button>
         <div class="wa-quote-edit ${hasQuote ? "" : "hidden"}">
           <input type="text" data-f="quoteName" value="${waEscape(m.quoteName)}" placeholder="quem foi citado (ex: Pedro)" />
@@ -472,7 +473,26 @@ function renderWaEditor() {
         else if (m.deleted) { m.deleted = false; m.photo = true; }
         else m.photo = false;
         tag.textContent = (m.kind === "mine" ? "Eu" : "Ele(a)") + (m.deleted ? " 🗑" : m.photo ? " 📷" : "");
+        renderWaEditor();   // re-render pra mostrar/esconder o botão de imagem
         renderWaPhone();
+      };
+    }
+    // botão de imagem: só visível quando a msg é foto. Abre seletor de arquivo,
+    // lê como dataURL e guarda em m.photoUrl (fica só no navegador).
+    const imgBtn = row.querySelector(".wa-img-btn");
+    if (imgBtn) {
+      imgBtn.onclick = () => {
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "image/*";
+        inp.onchange = () => {
+          const file = inp.files && inp.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => { m.photoUrl = reader.result; renderWaEditor(); renderWaPhone(); };
+          reader.readAsDataURL(file);
+        };
+        inp.click();
       };
     }
     // botão de citar: mostra/esconde os campos de citação
@@ -581,9 +601,13 @@ function renderWaPhone() {
         '</div>';
     }
     if (m.photo) {
-      // placeholder de imagem com ícone de montanha (SVG), igual quando a imagem
-      // não carregou no WhatsApp. O usuário pode trocar por foto real depois.
-      inner += '<div class="wa-photo"><svg viewBox="0 0 24 24" width="40" height="40" fill="rgba(255,255,255,.55)"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>';
+      if (m.photoUrl) {
+        // imagem real que o usuário subiu
+        inner += '<div class="wa-photo"><img src="' + m.photoUrl + '" alt="" /></div>';
+      } else {
+        // placeholder de imagem com ícone de montanha (SVG), enquanto não há foto real
+        inner += '<div class="wa-photo"><svg viewBox="0 0 24 24" width="40" height="40" fill="rgba(255,255,255,.55)"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>';
+      }
     }
     if (m.deleted) {
       inner += '<span class="wa-deleted">' + ICONS.blocked + ' Esta mensagem foi apagada</span>';
