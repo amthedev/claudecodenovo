@@ -45,14 +45,26 @@ function wifiSvg() {
 function batterySvg(pct, withNumber = false) {
   const p = Math.max(0, Math.min(100, parseInt(pct, 10) || 0));
   if (withNumber) {
-    // Estilo iPhone: o número fica DENTRO do contorno da bateria (sem "%"),
-    // proporcional e centralizado, sem passar das linhas. O contorno é só a
-    // borda (não preenche), igual o iOS mostra com o número por cima.
-    return '<svg viewBox="0 0 30 14" width="27" height="13">' +
-      '<rect x="0.6" y="0.6" width="25" height="12.8" rx="3.2" fill="none" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.1"/>' +
-      '<rect x="27" y="4.3" width="2" height="5.4" rx="1" fill="currentColor" fill-opacity="0.45"/>' +
-      `<text x="13" y="10.4" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor" font-family="-apple-system,Helvetica,Arial,sans-serif">${p}</text>` +
-      '</svg>';
+    // Estilo iPhone real: a bateria ENCHE de branco conforme o %, e o número
+    // fica VAZADO (transparente) sobre o preenchimento — dá pra ver o fundo
+    // através dele (efeito "knockout" via SVG mask). Altura igual ao wifi (13).
+    const uid = "bm" + Math.random().toString(36).slice(2, 8);
+    // interior útil pra preencher (entre as bordas): x 1.6..23.4 (largura ~21.8)
+    const innerX = 1.6, innerW = 21.8;
+    const fillW = (p / 100) * innerW;
+    return `<svg viewBox="0 0 28 14" width="25" height="13">` +
+      `<defs><mask id="${uid}">` +
+        // branco = visível; o número em preto = recorta (vira transparente)
+        `<rect x="0" y="0" width="28" height="14" fill="white"/>` +
+        `<text x="12.5" y="10.3" font-size="8.5" font-weight="700" text-anchor="middle" fill="black" font-family="-apple-system,Helvetica,Arial,sans-serif">${p}</text>` +
+      `</mask></defs>` +
+      // contorno da bateria
+      `<rect x="0.6" y="0.9" width="24.8" height="12.2" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.1"/>` +
+      // terminal (bico) à direita
+      `<rect x="26.4" y="4.6" width="1.6" height="4.8" rx="0.8" fill="currentColor" fill-opacity="0.5"/>` +
+      // preenchimento branco proporcional, com o número recortado pela máscara
+      `<rect x="${innerX}" y="2.1" width="${fillW.toFixed(2)}" height="9.8" rx="1.6" fill="currentColor" mask="url(#${uid})"/>` +
+      `</svg>`;
   }
   // Estilo Android: barra preenchida proporcional ao %, sem número dentro.
   const fillW = Math.round((p / 100) * 18);
