@@ -601,15 +601,16 @@ function renderWaPhone() {
     inputBar.className = "wa-blocked-bar";
     inputBar.innerHTML = ICONS.blocked + " Você bloqueou este contato. Toque para desbloquear.";
   } else if (isIos) {
-    // iPhone: "+" à esquerda, campo redondo com "Mensagem", sticker + câmera
-    // dentro do campo à direita, e microfone solto fora.
+    // iPhone: "+" à esquerda, campo redondo com "Mensagem" + sticker DENTRO,
+    // e câmera + microfone FORA do campo, à direita (lado a lado).
     inputBar.className = "wa-inputbar wa-inputbar-ios";
     inputBar.innerHTML =
       '<span class="wa-ico wa-plus">' + ICONS.plus + '</span>' +
       '<span class="wa-input-pill">' +
         '<span class="wa-pill-text">Mensagem</span>' +
-        '<span class="wa-pill-right"><span class="wa-ico">' + ICONS.sticker + '</span><span class="wa-ico">' + ICONS.camera + '</span></span>' +
+        '<span class="wa-pill-right"><span class="wa-ico">' + ICONS.sticker + '</span></span>' +
       '</span>' +
+      '<span class="wa-ico wa-ios-cam">' + ICONS.camera + '</span>' +
       '<span class="wa-mic wa-ico">' + ICONS.mic + '</span>';
   } else {
     // Android: emoji dentro à esquerda, anexo+câmera à direita, mic em botão verde

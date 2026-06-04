@@ -249,8 +249,10 @@ textarea { line-height: 1.5; }
   --wa-statusbar-fg:#ffffff;
 }
 .wa-ios.wa-light {
-  --wa-bg:#f2f2f7; --wa-header:#f6f6f6; --wa-header-fg:#000000; --wa-sub:#8e8e93;
-  --wa-in:#ffffff; --wa-in-fg:#000000; --wa-out:#dcf8c6; --wa-out-fg:#000000;
+  /* corpo (bg) e bolha recebida um pouco mais foscos (off-white), sem mexer no
+     header que continua mais claro. */
+  --wa-bg:#ece9e6; --wa-header:#f6f6f6; --wa-header-fg:#000000; --wa-sub:#8e8e93;
+  --wa-in:#f4f2ef; --wa-in-fg:#000000; --wa-out:#dcf8c6; --wa-out-fg:#000000;
   --wa-meta:rgba(0,0,0,.4); --wa-tick:#34b7f1; --wa-bar:#f6f6f6;
   --wa-pill:#ffffff; --wa-pill-fg:#8e8e93; --wa-date:rgba(225,225,228,.9); --wa-date-fg:#54656f;
   --wa-statusbar-fg:#000000;
@@ -290,15 +292,20 @@ textarea { line-height: 1.5; }
 .wa-ios .wa-avatar { width: 36px; height: 36px; }  /* iOS usa avatar menor */
 .wa-avatar svg { width: 100%; height: 100%; }
 .wa-header-info { flex: 1; min-width: 0; }
-.wa-ios .wa-header-info { text-align: center; }
+/* iOS: nome ao LADO da foto (alinhado à esquerda), "online" embaixo do nome,
+   também junto à foto — não centralizado. */
+.wa-ios .wa-header-info { text-align: left; }
 .wa-name { font-weight: 600; font-size: 16.5px; display: flex; align-items: center; gap: 5px; }
-.wa-ios .wa-name { justify-content: center; font-size: 17px; }
+.wa-ios .wa-name { justify-content: flex-start; font-size: 16px; }
 .wa-substatus { font-size: 12.5px; color: var(--wa-sub); }
 .wa-ios .wa-substatus { font-size: 12px; }
 .wa-android.wa-light .wa-substatus { color: var(--wa-sub); }
 .wa-header-icons { display: flex; align-items: center; gap: 18px; opacity: .95; }
 .wa-header-icons .wa-ico { width: 22px; height: 22px; }
-.wa-ios .wa-header-icons { gap: 20px; color: #34b7f1; }
+/* iOS: ícones do topo NÃO são preenchidos de azul — são contorno (stroke) na
+   cor do texto, com o miolo transparente (deixa ver o fundo do header). */
+.wa-ios .wa-header-icons { gap: 20px; color: var(--wa-header-fg); }
+.wa-ios .wa-header-icons .wa-ico svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
 /* iOS NÃO tem o ⋮ (3 pontos) no header da conversa — só vídeo + telefone */
 .wa-ios #waIcoDots { display: none; }
 
@@ -406,6 +413,8 @@ textarea { line-height: 1.5; }
 .wa-inputbar-ios .wa-input-pill { border: 1px solid rgba(140,150,160,.35); background: transparent; border-radius: 18px; padding: 7px 12px; }
 .wa-inputbar-ios .wa-mic { width: 26px; height: 26px; border-radius: 0; background: none; color: var(--wa-sub); }
 .wa-inputbar-ios .wa-mic svg { fill: currentColor; width: 24px; height: 24px; }
+/* câmera FORA do campo, ao lado do mic (mesmo tamanho/cor) */
+.wa-inputbar-ios .wa-ios-cam { width: 26px; height: 26px; color: var(--wa-sub); flex-shrink: 0; }
 
 .wa-blocked-bar { padding: 14px; text-align: center; font-size: 13px; color: var(--wa-sub); background: var(--wa-bg); display: flex; align-items: center; justify-content: center; gap: 6px; }
 
