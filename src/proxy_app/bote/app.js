@@ -377,7 +377,9 @@ function waTicks(status) {
 function renderWaPhone() {
   const phone = $("#waPhone");
   const theme = $("#waTheme").value;
-  phone.className = "wa-phone " + (theme === "light" ? "wa-light" : "wa-dark");
+  const platform = ($("#waPlatform") && $("#waPlatform").value) || "android";
+  phone.className = "wa-phone " + (platform === "ios" ? "wa-ios" : "wa-android") +
+    " " + (theme === "light" ? "wa-light" : "wa-dark");
 
   // status bar
   $("#waClockView").textContent = $("#waClock").value || "14:32";
@@ -403,16 +405,21 @@ function renderWaPhone() {
   // body
   const body = $("#waBody");
   body.innerHTML = "";
+  let prevKind = null;
   wa.messages.forEach((m) => {
     if (m.kind === "date") {
       const d = document.createElement("div");
       d.className = "wa-datechip";
       d.innerHTML = `<span>${waEscape(m.text || "Hoje")}</span>`;
       body.appendChild(d);
+      prevKind = null;  // reseta: bolha após divisor mostra o rabinho de novo
       return;
     }
     const b = document.createElement("div");
-    b.className = "wa-bubble " + m.kind;
+    // bolha consecutiva do mesmo lado = sem rabinho (classe cont)
+    const cont = m.kind === prevKind ? " cont" : "";
+    b.className = "wa-bubble " + m.kind + cont;
+    prevKind = m.kind;
     let inner = "";
     if (m.photo) inner += `<div class="wa-photo">🖼️</div>`;
     if (m.deleted) {
@@ -510,8 +517,9 @@ if (typeof module !== "undefined" && module.exports) {
 }
 
 function bindWhatsApp() {
-  ["#waName", "#waStatus", "#waStatusCustom", "#waTheme", "#waClock", "#waBattery", "#waVerified", "#waBlocked"]
+  ["#waName", "#waStatus", "#waStatusCustom", "#waTheme", "#waPlatform", "#waClock", "#waBattery", "#waVerified", "#waBlocked"]
     .forEach((id) => { const el = $(id); if (el) el.addEventListener("input", renderWaPhone); });
+  const plat = $("#waPlatform"); if (plat) plat.addEventListener("change", renderWaPhone);
   $("#waStatus").addEventListener("change", () => {
     $("#waStatusCustom").classList.toggle("hidden", $("#waStatus").value !== "custom");
     renderWaPhone();

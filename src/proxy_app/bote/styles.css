@@ -191,83 +191,161 @@ textarea { line-height: 1.5; }
 .print-toolbar { margin-bottom: 12px; }
 .phone-wrap { display: flex; justify-content: center; }
 
-/* Telefone fake */
+/* ════════════════════════════════════════════════════════════════════════
+   Telefone fake — fidelidade pixel-perfect ao WhatsApp real.
+   Cores oficiais do WhatsApp (Android e iOS) medidas de prints reais.
+   Variáveis trocam conforme tema (dark/light) e plataforma (android/ios).
+   ════════════════════════════════════════════════════════════════════════ */
 .wa-phone {
-  width: 380px; border-radius: 28px; overflow: hidden;
-  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  box-shadow: 0 10px 40px rgba(0,0,0,.5); border: 1px solid #000;
+  width: 390px;
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  box-shadow: 0 12px 48px rgba(0,0,0,.55);
+  overflow: hidden;
+  /* defaults (dark android) sobrescritos pelas combinações abaixo */
+  --wa-bg: #0b141a;
+  --wa-header: #1f2c34;
+  --wa-header-fg: #e9edef;
+  --wa-sub: #8696a0;
+  --wa-in: #233138;       /* bolha recebida */
+  --wa-in-fg: #e9edef;
+  --wa-out: #005c4b;      /* bolha enviada */
+  --wa-out-fg: #e9edef;
+  --wa-meta: rgba(233,237,239,.6);
+  --wa-tick: #53bdeb;
+  --wa-bar: #1f2c34;
+  --wa-pill: #2a3942;
+  --wa-pill-fg: #8696a0;
+  --wa-date: rgba(30,42,49,.85);
+  --wa-date-fg: #cfd9df;
+  --wa-statusbar-fg: #e9edef;
+  background: var(--wa-bg);
+  color: var(--wa-in-fg);
 }
-.wa-dark { background: #0b141a; color: #e9edef; }
-.wa-light { background: #efeae2; color: #111b21; }
 
+/* ── ANDROID ── */
+.wa-android { border-radius: 0; }
+.wa-android.wa-dark {
+  --wa-bg:#0b141a; --wa-header:#1f2c34; --wa-header-fg:#e9edef; --wa-sub:#8696a0;
+  --wa-in:#233138; --wa-in-fg:#e9edef; --wa-out:#005c4b; --wa-out-fg:#e9edef;
+  --wa-meta:rgba(233,237,239,.55); --wa-tick:#53bdeb; --wa-bar:#1f2c34;
+  --wa-pill:#2a3942; --wa-pill-fg:#8696a0; --wa-date:rgba(30,42,49,.9); --wa-date-fg:#cfd9df;
+  --wa-statusbar-fg:#e9edef;
+}
+.wa-android.wa-light {
+  --wa-bg:#efeae2; --wa-header:#008069; --wa-header-fg:#ffffff; --wa-sub:#d7f5ec;
+  --wa-in:#ffffff; --wa-in-fg:#111b21; --wa-out:#d9fdd3; --wa-out-fg:#111b21;
+  --wa-meta:rgba(17,27,33,.45); --wa-tick:#53bdeb; --wa-bar:#f0f2f5;
+  --wa-pill:#ffffff; --wa-pill-fg:#8696a0; --wa-date:#ffffff; --wa-date-fg:#54656f;
+  --wa-statusbar-fg:#ffffff;
+}
+
+/* ── iOS ── */
+.wa-ios { border-radius: 0; font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; }
+.wa-ios.wa-dark {
+  --wa-bg:#000000; --wa-header:#1c1c1d; --wa-header-fg:#ffffff; --wa-sub:#8e8e93;
+  --wa-in:#262628; --wa-in-fg:#ffffff; --wa-out:#056a48; --wa-out-fg:#ffffff;
+  --wa-meta:rgba(255,255,255,.5); --wa-tick:#34b7f1; --wa-bar:#1c1c1d;
+  --wa-pill:#1c1c1d; --wa-pill-fg:#8e8e93; --wa-date:rgba(40,40,42,.9); --wa-date-fg:#b9b9be;
+  --wa-statusbar-fg:#ffffff;
+}
+.wa-ios.wa-light {
+  --wa-bg:#f2f2f7; --wa-header:#f6f6f6; --wa-header-fg:#000000; --wa-sub:#8e8e93;
+  --wa-in:#ffffff; --wa-in-fg:#000000; --wa-out:#dcf8c6; --wa-out-fg:#000000;
+  --wa-meta:rgba(0,0,0,.4); --wa-tick:#34b7f1; --wa-bar:#f6f6f6;
+  --wa-pill:#ffffff; --wa-pill-fg:#8e8e93; --wa-date:rgba(225,225,228,.9); --wa-date-fg:#54656f;
+  --wa-statusbar-fg:#000000;
+}
+
+/* Barra de status do celular */
 .wa-statusbar {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 6px 16px 4px; font-size: 13px; font-weight: 600;
+  padding: 7px 18px 5px; font-size: 14px; font-weight: 600;
+  background: var(--wa-header); color: var(--wa-statusbar-fg);
 }
-.wa-dark .wa-statusbar { background: #1f2c34; color: #e9edef; }
-.wa-light .wa-statusbar { background: #008069; color: #fff; }
-.wa-sb-right { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.wa-ios .wa-statusbar { font-weight: 700; padding: 9px 22px 4px; }
+.wa-sb-right { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .wa-signal { letter-spacing: -2px; }
 
-.wa-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
-.wa-dark .wa-header { background: #1f2c34; }
-.wa-light .wa-header { background: #008069; color: #fff; }
-.wa-back { font-size: 24px; line-height: 1; opacity: .9; }
+/* Header da conversa */
+.wa-header {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--wa-header); color: var(--wa-header-fg);
+}
+.wa-ios .wa-header { padding: 6px 8px; gap: 6px; }
+.wa-back { font-size: 26px; line-height: 1; opacity: .95; }
+.wa-ios .wa-back { color: #34b7f1; font-size: 30px; font-weight: 300; }
 .wa-avatar {
-  width: 38px; height: 38px; border-radius: 50%; background: #6a7175 center/cover no-repeat;
-  flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 18px;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #6a7175 center/cover no-repeat; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 19px; color:#cfd9df;
 }
 .wa-header-info { flex: 1; min-width: 0; }
-.wa-name { font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 4px; }
-.wa-verified { color: #53bdeb; font-size: 13px; }
-.wa-substatus { font-size: 12px; opacity: .8; }
-.wa-light .wa-substatus { color: #d7f5ec; }
-.wa-header-icons { font-size: 15px; opacity: .9; letter-spacing: 4px; }
+.wa-ios .wa-header-info { text-align: center; }
+.wa-name { font-weight: 600; font-size: 16.5px; display: flex; align-items: center; gap: 5px; }
+.wa-ios .wa-name { justify-content: center; font-weight: 600; }
+.wa-verified { color: #34b7f1; font-size: 14px; }
+.wa-substatus { font-size: 12.5px; color: var(--wa-sub); }
+.wa-android.wa-light .wa-substatus { color: var(--wa-sub); }
+.wa-header-icons { font-size: 16px; opacity: .92; letter-spacing: 6px; }
+.wa-ios .wa-header-icons { letter-spacing: 8px; color: #34b7f1; }
 
+/* Corpo das mensagens (com textura de doodles do WhatsApp via SVG embutido) */
 .wa-body {
-  padding: 12px 8px; min-height: 360px; display: flex; flex-direction: column; gap: 3px;
-  background-repeat: repeat;
+  padding: 10px 7% 14px; min-height: 380px; display: flex; flex-direction: column; gap: 2px;
+  background-color: var(--wa-bg);
+  background-image: var(--wa-doodle);
+  background-size: 380px;
 }
-.wa-dark .wa-body { background-color: #0b141a; }
-.wa-light .wa-body { background-color: #efeae2; }
+.wa-dark .wa-body { --wa-doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' opacity='0.04'%3E%3Ctext x='8' y='30' font-size='22' fill='%23ffffff'%3E%E2%9C%89%3C/text%3E%3Ctext x='55' y='70' font-size='20' fill='%23ffffff'%3E%E2%98%BA%3C/text%3E%3Ctext x='20' y='90' font-size='18' fill='%23ffffff'%3E%E2%9D%A4%3C/text%3E%3C/svg%3E"); }
+.wa-light .wa-body { --wa-doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' opacity='0.05'%3E%3Ctext x='8' y='30' font-size='22' fill='%23000000'%3E%E2%9C%89%3C/text%3E%3Ctext x='55' y='70' font-size='20' fill='%23000000'%3E%E2%98%BA%3C/text%3E%3Ctext x='20' y='90' font-size='18' fill='%23000000'%3E%E2%9D%A4%3C/text%3E%3C/svg%3E"); }
 
+/* Bolhas com rabinho (tail) */
 .wa-bubble {
-  max-width: 78%; padding: 6px 9px 8px; border-radius: 8px; font-size: 14.5px; line-height: 1.35;
-  position: relative; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,.15);
+  max-width: 80%; padding: 6px 9px 8px; font-size: 14.5px; line-height: 1.34;
+  position: relative; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,.2);
+  margin-top: 2px; border-radius: 8px;
 }
-.wa-bubble .wa-meta { float: right; margin: 6px 0 -4px 8px; font-size: 11px; opacity: .6; white-space: nowrap; }
-.wa-bubble.mine { align-self: flex-end; }
-.wa-bubble.theirs { align-self: flex-start; }
-.wa-dark .wa-bubble.mine { background: #005c4b; color: #e9edef; }
-.wa-dark .wa-bubble.theirs { background: #1f2c34; color: #e9edef; }
-.wa-light .wa-bubble.mine { background: #d9fdd3; color: #111b21; }
-.wa-light .wa-bubble.theirs { background: #fff; color: #111b21; }
-.wa-tick { color: #53bdeb; }   /* azul = lido */
-.wa-tick.sent { color: currentColor; opacity: .55; }  /* cinza = enviado/entregue */
-.wa-deleted { font-style: italic; opacity: .65; }
-.wa-photo {
-  width: 180px; height: 130px; border-radius: 6px; background: #6a7175 center/cover no-repeat;
-  display: flex; align-items: center; justify-content: center; font-size: 28px; margin-bottom: 2px;
+.wa-bubble.mine { align-self: flex-end; background: var(--wa-out); color: var(--wa-out-fg); border-top-right-radius: 0; }
+.wa-bubble.theirs { align-self: flex-start; background: var(--wa-in); color: var(--wa-in-fg); border-top-left-radius: 0; }
+/* rabinho triangular */
+.wa-bubble.mine::after {
+  content: ""; position: absolute; top: 0; right: -8px; width: 0; height: 0;
+  border-style: solid; border-width: 0 0 9px 9px; border-color: transparent transparent transparent var(--wa-out);
 }
-.wa-datechip { align-self: center; margin: 8px 0; }
-.wa-datechip span {
-  background: rgba(11,20,26,.6); color: #e9edef; padding: 5px 12px; border-radius: 8px; font-size: 12px;
+.wa-bubble.theirs::after {
+  content: ""; position: absolute; top: 0; left: -8px; width: 0; height: 0;
+  border-style: solid; border-width: 0 9px 9px 0; border-color: transparent var(--wa-in) transparent transparent;
 }
-.wa-light .wa-datechip span { background: #e1f2cc; color: #5b6b54; }
+/* esconde rabinho em bolhas consecutivas do mesmo lado */
+.wa-bubble.cont { border-radius: 8px; }
+.wa-bubble.cont::after { display: none; }
 
-.wa-inputbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
-.wa-dark .wa-inputbar { background: #0b141a; }
-.wa-light .wa-inputbar { background: #efeae2; }
+.wa-bubble .wa-meta { float: right; margin: 8px 0 -3px 10px; font-size: 11px; color: var(--wa-meta); white-space: nowrap; line-height: 1; }
+.wa-tick { color: var(--wa-tick); font-size: 13px; }
+.wa-tick.sent { color: var(--wa-meta); }
+.wa-deleted { font-style: italic; color: var(--wa-meta); display: inline-flex; align-items: center; gap: 4px; }
+.wa-photo {
+  width: 200px; height: 150px; border-radius: 6px; background: #6a7175 center/cover no-repeat;
+  display: flex; align-items: center; justify-content: center; font-size: 30px; margin-bottom: 3px;
+}
+
+/* Chip de data */
+.wa-datechip { align-self: center; margin: 10px 0; }
+.wa-datechip span {
+  background: var(--wa-date); color: var(--wa-date-fg); padding: 5px 12px; border-radius: 7px;
+  font-size: 12.5px; box-shadow: 0 1px 0.5px rgba(0,0,0,.15);
+}
+
+/* Barra de digitar */
+.wa-inputbar { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--wa-bg); }
 .wa-input-pill {
-  flex: 1; background: #1f2c34; color: #8696a0; border-radius: 20px; padding: 9px 14px; font-size: 14px;
+  flex: 1; background: var(--wa-pill); color: var(--wa-pill-fg); border-radius: 22px;
+  padding: 10px 16px; font-size: 14.5px; display: flex; align-items: center; gap: 8px;
 }
-.wa-light .wa-input-pill { background: #fff; color: #8696a0; }
-.wa-mic { width: 38px; height: 38px; border-radius: 50%; background: #00a884; display: flex; align-items: center; justify-content: center; }
-.wa-blocked-bar {
-  padding: 12px; text-align: center; font-size: 13px; opacity: .8;
-}
-.wa-dark .wa-blocked-bar { background: #0b141a; color: #8696a0; }
-.wa-light .wa-blocked-bar { background: #efeae2; color: #667781; }
+.wa-input-pill::before { content: "😊"; }
+.wa-input-pill::after { content: "📎  📷"; margin-left: auto; opacity: .8; letter-spacing: 2px; }
+.wa-mic { width: 42px; height: 42px; border-radius: 50%; background: #00a884; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.wa-blocked-bar { padding: 14px; text-align: center; font-size: 13px; color: var(--wa-sub); background: var(--wa-bg); }
 
 /* Responsive */
 @media (max-width: 860px) {
