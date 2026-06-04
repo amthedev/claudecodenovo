@@ -428,7 +428,8 @@ textarea { line-height: 1.5; }
   .print-preview { position: static; }
 }
 
-/* Chopper surpresa: aparece num canto, pop de entrada, fade de saída. */
+/* Chopper surpresa: aparece num lugar aleatório (left/top vêm do JS), pop de
+   entrada, fade de saída. */
 .chopper-pop {
   position: fixed;
   width: 140px; height: auto;
@@ -438,10 +439,6 @@ textarea { line-height: 1.5; }
   animation: chopper-in .45s cubic-bezier(.18,.89,.32,1.28);
   transition: opacity .8s ease, transform .8s ease;
 }
-.chopper-tl { top: 16px; left: 16px; }
-.chopper-tr { top: 16px; right: 16px; }
-.chopper-bl { bottom: 16px; left: 16px; }
-.chopper-br { bottom: 16px; right: 16px; }
 .chopper-out { opacity: 0; transform: scale(.6) translateY(10px); }
 @keyframes chopper-in {
   0%   { opacity: 0; transform: scale(.3) rotate(-12deg); }
