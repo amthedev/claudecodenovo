@@ -2045,7 +2045,7 @@ def _inject_sensitive_workspace_boundary(openai_request: Dict[str, Any]) -> None
 def _inject_native_agent_prompt(openai_request: Dict[str, Any]) -> None:
     """Append the behavior-only agentic prompt once (idempotent across multi-turn
     requests — Claude Code resends history, so we must not stack it every turn)."""
-    marker = "autonomous coding agent operating inside an editor"
+    marker = "autonomous coding agent inside an editor"
     messages = openai_request.setdefault("messages", [])
     if messages and messages[0].get("role") == "system":
         existing = _existing_system_text(messages[0].get("content"))
@@ -2157,7 +2157,11 @@ def _apply_vllm_sampling(openai_request: Dict[str, Any]) -> None:
         openai_request.pop("top_k", None)  # vLLM-incompatible top_k still stripped
         return
 
-    temp = _vllm_sampling_value("VLLM_TEMPERATURE", 0.7)
+    # temp 0.3 (era 0.7): obediência/precisão importam mais que variedade em
+    # coding. Qwen-Coder a 0.7 "improvisa" e desobedece o pedido com mais
+    # frequência; 0.3 deixa mais determinístico e fiel à instrução. Ajustável
+    # via VLLM_TEMPERATURE.
+    temp = _vllm_sampling_value("VLLM_TEMPERATURE", 0.3)
     top_p = _vllm_sampling_value("VLLM_TOP_P", 0.8)
     top_k = _vllm_sampling_value("VLLM_TOP_K", 20.0)
     rep = _vllm_sampling_value("VLLM_REPETITION_PENALTY", 1.05)

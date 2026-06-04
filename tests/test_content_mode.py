@@ -90,7 +90,7 @@ def test_coding_mode_forces_sampling(monkeypatch):
     monkeypatch.delenv("VLLM_TEMPERATURE", raising=False)
     req = _coding_request()
     _sanitize_openai_request_for_vllm(req)
-    assert req.get("temperature") == 0.7  # default Qwen forçado
+    assert req.get("temperature") == 0.3  # default coding forçado (obediência)
 
 
 # ── Thinking ──────────────────────────────────────────────────────────────────
@@ -125,14 +125,15 @@ def test_client_explicit_thinking_is_respected(monkeypatch):
 # ── Contenção de escopo (modo coding) ─────────────────────────────────────────
 
 def test_coding_mode_has_scope_discipline(monkeypatch):
-    """Request com tools (Claude Code) recebe a regra de conter escopo: alterar só
-    o pedido, confirmar destrutivo, obedecer reverter."""
+    """Request com tools (Claude Code) recebe as regras de obediência: entender o
+    pedido, conter escopo, confirmar destrutivo, obedecer reverter."""
     monkeypatch.setenv("VLLM_NATIVE_AGENT_PROMPT", "on")
     req = _coding_request()
     _sanitize_openai_request_for_vllm(req)
     sys_text = _system_text(req)
-    assert "SCOPE DISCIPLINE" in sys_text
-    assert "REVERT" in sys_text or "revert" in sys_text.lower()
+    assert "STAY IN SCOPE" in sys_text
+    assert "UNDERSTAND FIRST" in sys_text  # regra de obediência/interpretação
+    assert "revert" in sys_text.lower()
 
 
 def test_content_mode_no_coding_agent_prompt(monkeypatch):
@@ -141,4 +142,5 @@ def test_content_mode_no_coding_agent_prompt(monkeypatch):
     monkeypatch.setenv("VLLM_NATIVE_AGENT_PROMPT", "on")
     req = _content_request()
     _sanitize_openai_request_for_vllm(req)
-    assert "SCOPE DISCIPLINE" not in _system_text(req)
+    assert "STAY IN SCOPE" not in _system_text(req)
+    assert "UNDERSTAND FIRST" not in _system_text(req)

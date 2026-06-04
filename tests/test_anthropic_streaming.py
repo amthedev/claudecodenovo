@@ -1196,7 +1196,7 @@ class SamplingParamsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             self._clear()
             _apply_vllm_sampling(req)
-        self.assertEqual(req["temperature"], 0.7)
+        self.assertEqual(req["temperature"], 0.3)
         self.assertEqual(req["top_p"], 0.8)
         self.assertNotIn("top_k", req)  # OpenAI schema rejects top-level top_k
         self.assertEqual(req["extra_body"]["top_k"], 20)
