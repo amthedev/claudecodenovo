@@ -107,3 +107,32 @@ def test_extract_requested_part_count():
     assert e.extract_requested_part_count("colocar parte 6 aqui") == 6
     assert e.extract_requested_part_count("quero cinco partes") == 5
     assert e.extract_requested_part_count("nada aqui", 5) == 5
+
+
+def test_dedupe_looping_lines_cuts_loop():
+    """Trava de loop por código: o modelo repete a mesma fala muitas vezes →
+    dedupe corta, preservando a parte coerente do início."""
+    loop = (
+        "Ana: oi tudo bem com voce hoje?\n"
+        "Bia: tudo e voce?\n"
+        "Ana: Me manda a foto de novo, por favor\n"
+        "Bia: Aqui esta a foto\n"
+        "Ana: Me manda a foto de novo, por favor\n"
+        "Bia: Aqui esta a foto\n"
+        "Ana: Me manda a foto de novo, por favor\n"
+        "Bia: Aqui esta a foto\n"
+        "Ana: Me manda a foto de novo, por favor\n"
+        "Bia: Aqui esta a foto"
+    )
+    out = e.dedupe_looping_lines(loop)
+    lines = [l for l in out.split("\n") if l.strip()]
+    # as 2 primeiras (únicas) + 1 de cada fala repetida = bem menos que 10
+    assert len(lines) < 6
+    assert "oi tudo bem" in out  # início preservado
+
+
+def test_dedupe_keeps_short_repeats():
+    """Falas curtas comuns (sim/kkkk) podem repetir — não somem todas."""
+    out = e.dedupe_looping_lines("Ana: sim\nBia: kkkk\nAna: sim")
+    lines = [l for l in out.split("\n") if l.strip()]
+    assert len(lines) == 3  # "sim" tolera 2

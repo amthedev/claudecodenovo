@@ -388,6 +388,49 @@ def extract_requested_part_count(text: str, default: Optional[int] = None) -> Op
 
 # ── Sanitização e validação de roteiro ──────────────────────────────────────
 
+def dedupe_looping_lines(script: str) -> str:
+    """Trava determinística contra o loop do modelo (30B repete a mesma fala
+    centenas de vezes). Remove por CÓDIGO — não depende do modelo obedecer.
+
+    Regra: percorre as linhas "Nome: msg" (e FOTO/divisor). Uma linha cujo
+    conteúdo (nome+texto normalizado) já apareceu é cortada quando passa do
+    limite — falas longas toleram 1 ocorrência, curtas (≤8 chars) toleram 2,
+    pra não matar "sim"/"kkkk" legítimos. Linhas que não são fala passam.
+    Além disso, corta a parte assim que detecta um RUN longo de repetição
+    (3 linhas seguidas já vistas) — sinal claro de loop travado."""
+    lines = (script or "").split("\n")
+    out: List[str] = []
+    seen: Dict[str, int] = {}
+    consecutive_dups = 0
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            out.append(line)
+            continue
+        # normaliza só falas "Nome: texto" e FOTO: pra assinatura
+        m = MESSAGE_RE.match(stripped) or PHOTO_RE.match(stripped)
+        if not m:
+            out.append(line)
+            consecutive_dups = 0
+            continue
+        sig = re.sub(r"\s+", " ", remove_accents(stripped).lower()).strip()
+        count = seen.get(sig, 0)
+        seen[sig] = count + 1
+        # texto da fala (depois dos ":") pra medir tamanho
+        body = stripped.split(":", 1)[1].strip() if ":" in stripped else stripped
+        limit = 2 if len(body) <= 8 else 1
+        if count >= limit:
+            consecutive_dups += 1
+            # 3 repetições seguidas = loop travado → para de processar o resto
+            if consecutive_dups >= 3:
+                break
+            continue
+        consecutive_dups = 0
+        out.append(line)
+    return "\n".join(out)
+
+
 def sanitize_whatsapp_script(script: str) -> Tuple[str, List[str]]:
     warnings: List[str] = []
     output: List[str] = []
@@ -885,6 +928,9 @@ def parse_part_result(part_number: int, raw: str) -> PartResult:
     except Exception:
         resumo, script = parse_labeled_part_response(raw)
         prompts = []
+    # corta o loop do modelo POR CÓDIGO antes de sanitizar (defesa que não
+    # depende do modelo obedecer ao prompt nem das penalidades de sampling).
+    script = dedupe_looping_lines(script)
     clean_script, warnings = sanitize_whatsapp_script(script)
     return PartResult(numero=part_number, resumo=resumo or f"Parte {part_number} gerada.",
                       roteiro=clean_script, prompts_imagem=normalize_prompts(prompts),
