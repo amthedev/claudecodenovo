@@ -97,9 +97,9 @@ async function testConnection() {
   if (!key) { msg.textContent = "Cole uma chave primeiro."; msg.className = "config-msg err"; return; }
   state.apiKey = key;
   state.model = $("#model").value;
-  msg.textContent = "Testando (gera um plano curto, consome alguns tokens)..."; msg.className = "config-msg";
+  msg.textContent = "Testando..."; msg.className = "config-msg";
   try {
-    await apiPost("/bote/api/plan", { ...collectConfig(), theme: "teste rapido de conexao", size_key: "Curto" });
+    await apiPost("/bote/api/ping", { model: state.model });
     msg.textContent = "Conexão OK! Chave e modelo funcionando."; msg.className = "config-msg ok";
   } catch (err) {
     msg.textContent = "Falhou: " + err.message; msg.className = "config-msg err";
@@ -285,6 +285,263 @@ function restoreConfig() {
   } catch (_) { /* ignore */ }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PRINT WHATSAPP — tela fake editável + export PNG (sem servidor)
+// ════════════════════════════════════════════════════════════════════════════
+const wa = {
+  messages: [],   // {id, kind:'mine'|'theirs'|'date', text, time, status:'sent'|'delivered'|'read', deleted, photo}
+  avatarDataUrl: "",
+};
+let waSeq = 1;
+
+function waEscape(s) {
+  return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function waAddMessage(kind, text = "", time = "") {
+  const now = time || $("#waClock").value || "14:32";
+  wa.messages.push({
+    id: waSeq++, kind,
+    text: text || (kind === "date" ? "Hoje" : ""),
+    time: kind === "date" ? "" : now,
+    status: "read", deleted: false, photo: false,
+  });
+  renderWaEditor();
+  renderWaPhone();
+}
+
+function waRemove(id) {
+  wa.messages = wa.messages.filter((m) => m.id !== id);
+  renderWaEditor();
+  renderWaPhone();
+}
+
+function renderWaEditor() {
+  const list = $("#waMsgList");
+  list.innerHTML = "";
+  wa.messages.forEach((m) => {
+    const row = document.createElement("div");
+    if (m.kind === "date") {
+      row.className = "wa-msg-row date";
+      row.innerHTML = `
+        <input type="text" data-f="text" value="${waEscape(m.text)}" placeholder="Hoje / Ontem / 12/05/2025" />
+        <button class="wa-del" title="remover">✕</button>`;
+    } else {
+      row.className = "wa-msg-row " + m.kind;
+      row.innerHTML = `
+        <span class="wa-tag">${m.kind === "mine" ? "Eu" : "Ele(a)"}</span>
+        <input type="text" data-f="text" value="${waEscape(m.text)}" placeholder="${m.photo ? "(foto) legenda opcional" : "mensagem"}" />
+        <span style="display:flex;gap:4px;align-items:center">
+          <input type="text" data-f="time" value="${waEscape(m.time)}" style="width:48px" title="hora" />
+          ${m.kind === "mine"
+            ? `<select data-f="status" title="status">
+                 <option value="sent"${m.status === "sent" ? " selected" : ""}>✓</option>
+                 <option value="delivered"${m.status === "delivered" ? " selected" : ""}>✓✓</option>
+                 <option value="read"${m.status === "read" ? " selected" : ""}>✓✓ azul</option>
+               </select>` : ""}
+        </span>
+        <button class="wa-del" title="remover">✕</button>`;
+    }
+    // bind inputs
+    row.querySelectorAll("[data-f]").forEach((el) => {
+      el.addEventListener("input", () => {
+        const f = el.dataset.f;
+        m[f] = el.value;
+        renderWaPhone();
+      });
+    });
+    // menu extra (apagada / foto) via duplo clique no tag
+    const tag = row.querySelector(".wa-tag");
+    if (tag) {
+      tag.style.cursor = "pointer";
+      tag.title = "clique: alternar apagada / foto";
+      tag.onclick = () => {
+        if (!m.deleted && !m.photo) m.deleted = true;
+        else if (m.deleted) { m.deleted = false; m.photo = true; }
+        else m.photo = false;
+        tag.textContent = (m.kind === "mine" ? "Eu" : "Ele(a)") + (m.deleted ? " 🗑" : m.photo ? " 📷" : "");
+        renderWaPhone();
+      };
+    }
+    row.querySelector(".wa-del").onclick = () => waRemove(m.id);
+    list.appendChild(row);
+  });
+}
+
+function waTicks(status) {
+  if (status === "read") return '<span class="wa-tick">✓✓</span>';
+  if (status === "delivered") return '<span class="wa-tick sent">✓✓</span>';
+  return '<span class="wa-tick sent">✓</span>';
+}
+
+function renderWaPhone() {
+  const phone = $("#waPhone");
+  const theme = $("#waTheme").value;
+  phone.className = "wa-phone " + (theme === "light" ? "wa-light" : "wa-dark");
+
+  // status bar
+  $("#waClockView").textContent = $("#waClock").value || "14:32";
+  $("#waBatteryView").textContent = ($("#waBattery").value || "82") + "%";
+
+  // header
+  $("#waNameView").innerHTML = waEscape($("#waName").value || "Contato") +
+    ($("#waVerified").checked ? ' <span class="wa-verified">✔</span>' : "");
+
+  let statusText = "";
+  const st = $("#waStatus").value;
+  if (st === "online") statusText = "online";
+  else if (st === "typing") statusText = "digitando…";
+  else if (st === "lastseen") statusText = "visto por último hoje às " + ($("#waClock").value || "14:32");
+  else if (st === "custom") statusText = $("#waStatusCustom").value || "";
+  $("#waStatusView").textContent = statusText;
+
+  // avatar
+  const av = $("#waAvatarView");
+  if (wa.avatarDataUrl) { av.style.backgroundImage = `url(${wa.avatarDataUrl})`; av.textContent = ""; }
+  else { av.style.backgroundImage = "none"; av.textContent = "👤"; }
+
+  // body
+  const body = $("#waBody");
+  body.innerHTML = "";
+  wa.messages.forEach((m) => {
+    if (m.kind === "date") {
+      const d = document.createElement("div");
+      d.className = "wa-datechip";
+      d.innerHTML = `<span>${waEscape(m.text || "Hoje")}</span>`;
+      body.appendChild(d);
+      return;
+    }
+    const b = document.createElement("div");
+    b.className = "wa-bubble " + m.kind;
+    let inner = "";
+    if (m.photo) inner += `<div class="wa-photo">🖼️</div>`;
+    if (m.deleted) {
+      inner += `<span class="wa-deleted">🚫 Esta mensagem foi apagada</span>`;
+    } else if (m.text) {
+      inner += waEscape(m.text);
+    }
+    const meta = `<span class="wa-meta">${waEscape(m.time || "")}${m.kind === "mine" && !m.deleted ? " " + waTicks(m.status) : ""}</span>`;
+    b.innerHTML = inner + meta;
+    body.appendChild(b);
+  });
+
+  // input bar vs bloqueado
+  const inputBar = $("#waInputBar");
+  if ($("#waBlocked").checked) {
+    inputBar.className = "wa-blocked-bar";
+    inputBar.innerHTML = "🚫 Você bloqueou este contato. Toque para desbloquear.";
+  } else {
+    inputBar.className = "wa-inputbar";
+    inputBar.innerHTML = '<span class="wa-input-pill">Mensagem</span><span class="wa-mic">🎤</span>';
+  }
+}
+
+async function waGeneratePng() {
+  const node = $("#waPhone");
+  if (typeof htmlToImage === "undefined") { toast("Lib de imagem não carregou."); return; }
+  showOverlay("Gerando print...");
+  try {
+    const dataUrl = await htmlToImage.toPng(node, { pixelRatio: 2, cacheBust: true });
+    const a = document.createElement("a");
+    a.download = `whatsapp-${Date.now()}.png`;
+    a.href = dataUrl;
+    a.click();
+    toast("Print gerado!");
+  } catch (err) {
+    toast("Falha ao gerar print: " + (err.message || err));
+  } finally { hideOverlay(); }
+}
+
+function waImportFromPart() {
+  const n = selectedPart();
+  const part = n ? state.parts[n] : null;
+  const text = (part && part.roteiro) || $("#scriptOutput").value.trim();
+  if (!text) { toast("Gere ou abra uma parte primeiro."); return; }
+  const msgs = parseRoteiroToMessages(text, $("#waName").value);
+  if (!msgs.length) { toast("Não achei mensagens no formato 'Nome: msg'."); return; }
+  wa.messages = msgs;
+  waSeq = msgs.length + 1;
+  renderWaEditor();
+  renderWaPhone();
+  toast(`${msgs.length} mensagens importadas.`);
+}
+
+// Converte o roteiro "Nome: msg" / "FOTO:" / "[divisor]" em mensagens da tela.
+// O primeiro falante vira "ele(a)" (contato); quem você definir como nome do
+// contato no campo também é tratado como ele(a); todo o resto = você ("mine").
+function parseRoteiroToMessages(text, contactName) {
+  const lines = (text || "").split(/\r?\n/);
+  const out = [];
+  let firstSpeaker = null;
+  const contact = (contactName || "").trim().toLowerCase();
+  let id = 1;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    // divisor de tempo [Hoje] / [No dia seguinte]
+    const mDate = line.match(/^\[(.+)\]$/);
+    if (mDate) { out.push({ id: id++, kind: "date", text: mDate[1], time: "", status: "read", deleted: false, photo: false }); continue; }
+    // FOTO: descricao
+    const mFoto = line.match(/^foto\s*:\s*(.+)$/i);
+    if (mFoto) {
+      const owner = out.length && out[out.length - 1].kind !== "date" ? out[out.length - 1].kind : "theirs";
+      out.push({ id: id++, kind: owner, text: "", time: "", status: "read", deleted: false, photo: true });
+      continue;
+    }
+    // Nome: mensagem
+    const mMsg = line.match(/^([^:]{1,40}):\s+(.+)$/);
+    if (mMsg) {
+      const speaker = mMsg[1].trim();
+      const speakerLow = speaker.toLowerCase();
+      if (firstSpeaker === null) firstSpeaker = speakerLow;
+      // contato = quem bate com o nome configurado OU o primeiro falante
+      const isContact = contact ? speakerLow === contact : speakerLow === firstSpeaker;
+      out.push({
+        id: id++, kind: isContact ? "theirs" : "mine",
+        text: mMsg[2].trim(), time: "", status: "read", deleted: false, photo: false,
+      });
+    }
+  }
+  return out;
+}
+// exporta pro escopo de teste (Node) sem quebrar o browser
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { parseRoteiroToMessages };
+}
+
+function bindWhatsApp() {
+  ["#waName", "#waStatus", "#waStatusCustom", "#waTheme", "#waClock", "#waBattery", "#waVerified", "#waBlocked"]
+    .forEach((id) => { const el = $(id); if (el) el.addEventListener("input", renderWaPhone); });
+  $("#waStatus").addEventListener("change", () => {
+    $("#waStatusCustom").classList.toggle("hidden", $("#waStatus").value !== "custom");
+    renderWaPhone();
+  });
+  $("#waAvatar").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { wa.avatarDataUrl = reader.result; renderWaPhone(); };
+    reader.readAsDataURL(file);
+  });
+  $("#waAddMine").onclick = () => waAddMessage("mine");
+  $("#waAddTheirs").onclick = () => waAddMessage("theirs");
+  $("#waAddDate").onclick = () => waAddMessage("date");
+  $("#waGenPng").onclick = waGeneratePng;
+  $("#waImport").onclick = waImportFromPart;
+  $("#waClear").onclick = () => { wa.messages = []; renderWaEditor(); renderWaPhone(); };
+}
+
+function seedWhatsApp() {
+  // exemplo inicial pra a tela não vir vazia
+  wa.messages = [
+    { id: waSeq++, kind: "date", text: "Hoje", time: "", status: "read", deleted: false, photo: false },
+    { id: waSeq++, kind: "theirs", text: "oi, vc viu o que aconteceu?", time: "14:30", status: "read", deleted: false, photo: false },
+    { id: waSeq++, kind: "mine", text: "não!! me conta agora", time: "14:31", status: "read", deleted: false, photo: false },
+  ];
+  renderWaEditor();
+  renderWaPhone();
+}
+
 function bind() {
   $("#openConfig").onclick = openConfig;
   $("#closeConfig").onclick = closeConfig;
@@ -300,6 +557,7 @@ function bind() {
   document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => setTab(t.dataset.tab)));
   $("#size").onchange = () => { renderPartButtons(); persistConfig(); };
   ["#drama", "#emoji", "#cta", "#negative"].forEach((id) => { const el = $(id); if (el) el.onchange = persistConfig; });
+  bindWhatsApp();
 }
 
 function init() {
@@ -308,6 +566,7 @@ function init() {
   renderChips("#emotions", EMOTION_OPTIONS, state.emotions);
   renderPartButtons();
   bind();
+  seedWhatsApp();
   updateConnBadge();
   if (!state.apiKey) openConfig();
 }

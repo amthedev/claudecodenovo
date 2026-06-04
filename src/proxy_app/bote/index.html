@@ -49,6 +49,7 @@
     <button class="tab active" data-tab="plan">1. Planejamento</button>
     <button class="tab" data-tab="parts">2. Partes</button>
     <button class="tab" data-tab="media">3. Mídia</button>
+    <button class="tab" data-tab="print">4. Print WhatsApp</button>
   </nav>
 
   <main class="layout">
@@ -143,11 +144,120 @@
         <textarea id="mediaOutput" rows="20" placeholder="Personagens e prompts de imagem aparecem aqui depois de aprovar as partes."></textarea>
       </div>
     </section>
+
+    <!-- ABA 4: PRINT WHATSAPP -->
+    <section class="tab-panel" data-panel="print">
+      <div class="print-layout">
+        <!-- Configuração à esquerda -->
+        <div class="card print-config">
+          <h3>Configurar conversa</h3>
+
+          <label>Nome do contato</label>
+          <input id="waName" type="text" value="Débora" />
+
+          <div class="field-row">
+            <div>
+              <label>Status (topo)</label>
+              <select id="waStatus">
+                <option value="online">online</option>
+                <option value="typing">digitando…</option>
+                <option value="lastseen">visto por último hoje às 14:32</option>
+                <option value="custom">personalizado</option>
+                <option value="none">(nada)</option>
+              </select>
+            </div>
+            <div>
+              <label>Tema</label>
+              <select id="waTheme">
+                <option value="dark" selected>Escuro</option>
+                <option value="light">Claro</option>
+              </select>
+            </div>
+          </div>
+          <input id="waStatusCustom" type="text" placeholder="Texto de status personalizado" class="hidden" />
+
+          <div class="field-row">
+            <div>
+              <label>Hora do celular</label>
+              <input id="waClock" type="text" value="14:32" />
+            </div>
+            <div>
+              <label>Bateria %</label>
+              <input id="waBattery" type="number" value="82" min="0" max="100" />
+            </div>
+          </div>
+
+          <label>Foto do contato (opcional)</label>
+          <input id="waAvatar" type="file" accept="image/*" />
+
+          <div class="chk-row">
+            <label class="chk"><input type="checkbox" id="waBlocked" /> Você bloqueou este contato</label>
+            <label class="chk"><input type="checkbox" id="waVerified" /> Conta verificada (selo)</label>
+          </div>
+
+          <hr class="sep" />
+
+          <h3>Mensagens</h3>
+          <p class="muted">Adicione mensagens, escolha quem enviou, horário e status. Arraste pra reordenar.</p>
+          <div id="waMsgList" class="wa-msg-list"></div>
+          <div class="toolbar">
+            <button id="waAddMine" class="btn-secondary">+ Minha mensagem</button>
+            <button id="waAddTheirs" class="btn-secondary">+ Mensagem dele(a)</button>
+            <button id="waAddDate" class="btn-ghost">+ Divisor de data</button>
+          </div>
+
+          <hr class="sep" />
+          <div class="toolbar">
+            <button id="waImport" class="btn-ghost">Importar da parte atual</button>
+            <button id="waClear" class="btn-ghost">Limpar tudo</button>
+          </div>
+        </div>
+
+        <!-- Preview do celular à direita -->
+        <div class="print-preview">
+          <div class="toolbar print-toolbar">
+            <button id="waGenPng" class="btn-primary">📸 Gerar print (PNG)</button>
+            <span class="muted">A imagem baixa no seu dispositivo.</span>
+          </div>
+          <div class="phone-wrap">
+            <div id="waPhone" class="wa-phone wa-dark">
+              <!-- barra de status do celular -->
+              <div class="wa-statusbar">
+                <span id="waClockView" class="wa-clock">14:32</span>
+                <span class="wa-sb-right">
+                  <span class="wa-signal">▂▄▆█</span>
+                  <span id="waBatteryView" class="wa-battery">82%</span>
+                  <span class="wa-batt-icon">▮</span>
+                </span>
+              </div>
+              <!-- header da conversa -->
+              <div class="wa-header">
+                <span class="wa-back">‹</span>
+                <div id="waAvatarView" class="wa-avatar"></div>
+                <div class="wa-header-info">
+                  <div id="waNameView" class="wa-name">Débora</div>
+                  <div id="waStatusView" class="wa-substatus">online</div>
+                </div>
+                <span class="wa-header-icons">📹 📞 ⋮</span>
+              </div>
+              <!-- corpo das mensagens -->
+              <div id="waBody" class="wa-body"></div>
+              <!-- barra de digitar / bloqueado -->
+              <div id="waInputBar" class="wa-inputbar">
+                <span class="wa-input-pill">Mensagem</span>
+                <span class="wa-mic">🎤</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <div id="toast" class="toast hidden"></div>
   <div id="overlay" class="overlay hidden"><div class="spinner"></div><span id="overlayText">Gerando...</span></div>
 
+  <script src="/bote/assets/html-to-image.js"></script>
   <script src="/bote/assets/app.js"></script>
 </body>
 </html>

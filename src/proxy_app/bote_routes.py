@@ -167,6 +167,20 @@ def register_bote_routes(
             html_text = html_text.replace(f"/bote/assets/{asset}", f"/bote/assets/{asset}?v={version}")
         return HTMLResponse(html_text, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
+    @app.post("/bote/api/ping")
+    async def api_ping(request: Request, _auth=Depends(verify_dependency),
+                       client=Depends(client_getter)) -> JSONResponse:
+        """Teste de conexão LEVE: valida a chave (via Depends) e faz uma chamada
+        mínima ao modelo (poucos tokens) só pra confirmar que responde. NÃO gera
+        plano (que demorava 20-60s e parecia travado)."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        model = str((body or {}).get("model") or engine.CLAUDE_DEFAULT_MODEL)
+        reply = await _generate(client, "Responda apenas: OK", model=model, max_tokens=16)
+        return JSONResponse({"ok": True, "reply": (reply or "").strip()[:40]})
+
     @app.post("/bote/api/plan")
     async def api_plan(request: Request, _auth=Depends(verify_dependency),
                        client=Depends(client_getter)) -> JSONResponse:
