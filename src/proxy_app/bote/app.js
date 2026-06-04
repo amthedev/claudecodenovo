@@ -828,6 +828,31 @@ function bind() {
   bindWhatsApp();
 }
 
+// ── Chopper surpresa ──────────────────────────────────────────────────────────
+// Um Chopper aleatório aparece num canto aleatório a cada 20-60s, em tamanho
+// razoável, e some sozinho. Brincadeira puramente visual (sem som por enquanto).
+const CHOPPER_IMAGES = [
+  "chopper1.webp", "chopper2.png", "chopper4.png", "chopper6.png",
+  "chopper9.jpeg", "chopper9.jpg", "chopper11.webp", "chopper13.jpg", "chopper16.jpg",
+];
+
+function showChopper() {
+  const src = "/bote/assets/chopper/" + CHOPPER_IMAGES[Math.floor(Math.random() * CHOPPER_IMAGES.length)];
+  const img = document.createElement("img");
+  img.src = src;
+  img.className = "chopper-pop chopper-" + ["tl", "tr", "bl", "br"][Math.floor(Math.random() * 4)];
+  img.alt = "";
+  document.body.appendChild(img);
+  // some depois de ~4s (fade no CSS), aí remove do DOM
+  setTimeout(() => { img.classList.add("chopper-out"); }, 4000);
+  setTimeout(() => { img.remove(); }, 4800);
+}
+
+function scheduleChopper() {
+  const delay = 20000 + Math.random() * 40000;  // 20s a 60s
+  setTimeout(() => { showChopper(); scheduleChopper(); }, delay);
+}
+
 function init() {
   restoreConfig();
   renderChips("#tones", TONE_OPTIONS, state.tones);
@@ -837,6 +862,7 @@ function init() {
   seedWhatsApp();
   updateConnBadge();
   if (!state.apiKey) openConfig();
+  scheduleChopper();
 }
 
 document.addEventListener("DOMContentLoaded", init);

@@ -427,3 +427,27 @@ textarea { line-height: 1.5; }
   .print-layout { grid-template-columns: 1fr; }
   .print-preview { position: static; }
 }
+
+/* Chopper surpresa: aparece num canto, pop de entrada, fade de saída. */
+.chopper-pop {
+  position: fixed;
+  width: 140px; height: auto;
+  z-index: 9999;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 16px rgba(0,0,0,.35));
+  animation: chopper-in .45s cubic-bezier(.18,.89,.32,1.28);
+  transition: opacity .8s ease, transform .8s ease;
+}
+.chopper-tl { top: 16px; left: 16px; }
+.chopper-tr { top: 16px; right: 16px; }
+.chopper-bl { bottom: 16px; left: 16px; }
+.chopper-br { bottom: 16px; right: 16px; }
+.chopper-out { opacity: 0; transform: scale(.6) translateY(10px); }
+@keyframes chopper-in {
+  0%   { opacity: 0; transform: scale(.3) rotate(-12deg); }
+  60%  { opacity: 1; transform: scale(1.12) rotate(4deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+@media (max-width: 860px) {
+  .chopper-pop { width: 100px; }
+}
