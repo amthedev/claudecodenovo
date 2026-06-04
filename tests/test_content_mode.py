@@ -93,6 +93,29 @@ def test_coding_mode_forces_sampling(monkeypatch):
     assert req.get("temperature") == 0.3  # default coding forçado (obediência)
 
 
+def test_content_mode_has_antiloop_penalties(monkeypatch):
+    """Modo conteúdo (sem tools) recebe penalidades anti-repetição fortes, pra
+    cortar o loop do Qwen-30B na origem."""
+    for v in ("VLLM_CONTENT_REPETITION_PENALTY", "VLLM_CONTENT_FREQUENCY_PENALTY",
+              "VLLM_CONTENT_PRESENCE_PENALTY", "VLLM_FORCE_SAMPLING_ALWAYS"):
+        monkeypatch.delenv(v, raising=False)
+    req = _content_request()
+    _sanitize_openai_request_for_vllm(req)
+    assert req.get("extra_body", {}).get("repetition_penalty") == 1.25
+    assert req.get("frequency_penalty") == 0.6
+    assert req.get("presence_penalty") == 0.4
+
+
+def test_coding_mode_no_antiloop_penalties(monkeypatch):
+    """Coding NÃO leva as penalidades fortes (variáveis/keywords precisam repetir)."""
+    monkeypatch.delenv("VLLM_RESPECT_CLIENT_SAMPLING", raising=False)
+    req = _coding_request()
+    _sanitize_openai_request_for_vllm(req)
+    # repetition_penalty do coding é o leve (1.05), não o forte (1.25)
+    assert req.get("extra_body", {}).get("repetition_penalty") != 1.25
+    assert "frequency_penalty" not in req or req.get("frequency_penalty") != 0.6
+
+
 # ── Thinking ──────────────────────────────────────────────────────────────────
 
 def test_content_mode_disables_thinking(monkeypatch):

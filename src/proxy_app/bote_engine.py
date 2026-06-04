@@ -1073,8 +1073,12 @@ Regras absolutas para a conversa:
 - Nao use asteriscos para acao. Nunca escreva "*abre a porta*", "(suspiro)", "(pausa)".
 - Nao use marcadores internos como [Não_think], [think], [analysis], [sistema], [schema].
 - Divisores em colchetes so podem ser tempo natural, como [No dia seguinte].
-- Cada parte precisa ter no minimo 18 mensagens reais, com conflito claro e uma virada ou revelação.
+- Cada parte deve ter ENTRE 18 e 30 mensagens reais (nunca mais que isso), com conflito claro e uma virada ou revelação.
 - A maioria das mensagens deve ser curta, com ate 12 palavras. Se uma fala passar de 16 palavras, quebre em mais mensagens.
+- NUNCA repita a mesma fala. Cada mensagem precisa AVANCAR a conversa — proibido
+  ficar repetindo "me manda de novo", "ta aqui", "nao sei o que fazer" ou
+  qualquer linha parecida. Se a ideia ja foi dita, siga em frente ou ENCERRE a
+  parte. Quando chegar ao fim da cena, PARE (nao continue gerando).
 - Nao use frases de novela ou ameaca artificial.
 - Quando emojis estiverem ligados, use alguns emojis naturais: Leve = 1 ou 2 na parte; Medio = 2 a 4; Pesado = 3 a 7. Sem emojis = zero.
 - Na última parte, feche a história com começo, meio e fim bem amarrados.

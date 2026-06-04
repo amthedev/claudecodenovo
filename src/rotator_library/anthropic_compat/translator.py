@@ -2236,6 +2236,21 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         _apply_vllm_sampling(openai_request)
     else:
         openai_request.pop("top_k", None)  # vLLM rejeita top_k no nível raiz
+        # ANTI-LOOP em conteúdo: o Qwen-30B trava repetindo a mesma fala dezenas
+        # de vezes (ex: "Me manda a foto de novo / Tá aqui" em loop). Em coding
+        # não dá pra penalizar repetição forte (variáveis/keywords repetem), mas
+        # em conteúdo é seguro e necessário. Penalidades fortes cortam o loop na
+        # origem. Todas overridáveis por env (vazio/0 = não seta).
+        eb = openai_request.setdefault("extra_body", {})
+        _rep = _vllm_sampling_value("VLLM_CONTENT_REPETITION_PENALTY", 1.25)
+        if _rep is not None and _rep > 0 and "repetition_penalty" not in eb:
+            eb["repetition_penalty"] = _rep
+        _freq = _vllm_sampling_value("VLLM_CONTENT_FREQUENCY_PENALTY", 0.6)
+        if _freq is not None and "frequency_penalty" not in openai_request:
+            openai_request["frequency_penalty"] = _freq
+        _pres = _vllm_sampling_value("VLLM_CONTENT_PRESENCE_PENALTY", 0.4)
+        if _pres is not None and "presence_penalty" not in openai_request:
+            openai_request["presence_penalty"] = _pres
     # vLLM não suporta reasoning_effort — remover sempre independente do valor
     openai_request.pop("reasoning_effort", None)
     # Thinking mode: defaults to ON now (was OFF). Customer feedback: turning
