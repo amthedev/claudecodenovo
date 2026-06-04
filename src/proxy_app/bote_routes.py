@@ -117,10 +117,22 @@ def register_bote_routes(
             messages=[{"role": "user", "content": user_prompt}],
             stream=False,
         )
-        result = await client.anthropic_messages(request_obj)
+        try:
+            result = await client.anthropic_messages(request_obj)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # Falha de modelo/conexão/timeout → mensagem amigável (502) em vez de
+            # 500 cru. O frontend mostra isso direto no toast.
+            msg = str(exc) or exc.__class__.__name__
+            logger.warning("bote: falha ao gerar (%s)", msg)
+            raise HTTPException(status_code=502, detail=f"O modelo não respondeu agora: {msg[:200]}")
         if hasattr(result, "__aiter__"):
-            raise RuntimeError("Resposta inesperada em streaming para geração não-stream.")
-        return _extract_text_from_anthropic(result)
+            raise HTTPException(status_code=502, detail="Resposta inesperada do modelo (streaming).")
+        try:
+            return _extract_text_from_anthropic(result)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)[:200])
 
     async def _generate_part(client, cfg, plan, part_number, previous_parts, edit_request, mode):
         """Gera uma parte com 1 retry de qualidade (espelha _generate_part_worker do app)."""
