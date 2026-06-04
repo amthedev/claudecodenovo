@@ -388,45 +388,75 @@ def extract_requested_part_count(text: str, default: Optional[int] = None) -> Op
 
 # ── Sanitização e validação de roteiro ──────────────────────────────────────
 
-def dedupe_looping_lines(script: str) -> str:
-    """Trava determinística contra o loop do modelo (30B repete a mesma fala
-    centenas de vezes). Remove por CÓDIGO — não depende do modelo obedecer.
+def _msg_body(stripped: str) -> str:
+    return stripped.split(":", 1)[1].strip() if ":" in stripped else stripped
 
-    Regra: percorre as linhas "Nome: msg" (e FOTO/divisor). Uma linha cujo
-    conteúdo (nome+texto normalizado) já apareceu é cortada quando passa do
-    limite — falas longas toleram 1 ocorrência, curtas (≤8 chars) toleram 2,
-    pra não matar "sim"/"kkkk" legítimos. Linhas que não são fala passam.
-    Além disso, corta a parte assim que detecta um RUN longo de repetição
-    (3 linhas seguidas já vistas) — sinal claro de loop travado."""
+
+def dedupe_looping_lines(script: str) -> str:
+    """Trava determinística contra o loop do modelo (30B repete falas). Remove
+    por CÓDIGO — não depende do modelo obedecer. Pega DOIS tipos de loop:
+
+    1. LITERAL: a mesma fala repetida. Falas longas toleram 1 ocorrência,
+       curtas (≤8 chars) toleram 2 (pra "sim"/"kkkk" legítimos não sumirem).
+    2. SEMÂNTICO: o modelo varia as palavras mas repete o sentido ("não sei o
+       que fazer" / "não consigo parar de pensar" / "não sei se vou conseguir").
+       Detecta por (a) similaridade alta com uma fala recente, ou (b) mesmo
+       começo de 3 palavras. Acumulou 3 ecos seguidos → corta a parte ali
+       (preserva o começo bom, joga fora a cauda repetitiva)."""
     lines = (script or "").split("\n")
     out: List[str] = []
     seen: Dict[str, int] = {}
-    consecutive_dups = 0
+    prefix_count: Dict[Tuple[str, str], int] = {}  # (falante, prefixo 2-palavras) -> vezes
+    last_norm: Dict[str, str] = {}                 # última fala de cada um (similaridade)
+    consecutive_dups = 0                           # ecos literais seguidos
+    echo_streak = 0                                # ecos semânticos seguidos
     for raw in lines:
         line = raw.rstrip()
         stripped = line.strip()
         if not stripped:
             out.append(line)
             continue
-        # normaliza só falas "Nome: texto" e FOTO: pra assinatura
         m = MESSAGE_RE.match(stripped) or PHOTO_RE.match(stripped)
         if not m:
             out.append(line)
             consecutive_dups = 0
+            echo_streak = 0
             continue
         sig = re.sub(r"\s+", " ", remove_accents(stripped).lower()).strip()
         count = seen.get(sig, 0)
         seen[sig] = count + 1
-        # texto da fala (depois dos ":") pra medir tamanho
-        body = stripped.split(":", 1)[1].strip() if ":" in stripped else stripped
+        body = _msg_body(stripped)
+        norm = re.sub(r"\s+", " ", remove_accents(body).lower()).strip()
+        speaker = stripped.split(":", 1)[0].strip().lower() if ":" in stripped else ""
+        # 1) loop LITERAL (mesma fala repetida)
         limit = 2 if len(body) <= 8 else 1
         if count >= limit:
             consecutive_dups += 1
-            # 3 repetições seguidas = loop travado → para de processar o resto
             if consecutive_dups >= 3:
                 break
             continue
         consecutive_dups = 0
+        # 2) loop SEMÂNTICO. Sinal forte e específico (visto nos loops reais): um
+        # falante que começa MUITAS falas com o mesmo prefixo de 2 palavras
+        # ("eu nao..." 7x) está travado num molde emocional. Conta o prefixo por
+        # pessoa; a partir da 3ª vez, é eco. Reforço: fala quase idêntica
+        # (similaridade ≥0.78) à anterior da mesma pessoa também é eco.
+        is_echo = False
+        words = norm.split()
+        if len(words) >= 2 and len(norm) >= 12:
+            pref2 = (speaker, " ".join(words[:2]))
+            prefix_count[pref2] = prefix_count.get(pref2, 0) + 1
+            if prefix_count[pref2] >= 3:
+                is_echo = True
+            elif difflib.SequenceMatcher(None, norm, last_norm.get(speaker, "")).ratio() >= 0.78:
+                is_echo = True
+        if is_echo:
+            echo_streak += 1
+            if echo_streak >= 3:
+                break   # loop instalado → corta o resto (preserva o começo bom)
+            continue     # joga fora a fala-eco, conversa segue
+        echo_streak = 0
+        last_norm[speaker] = norm
         out.append(line)
     return "\n".join(out)
 
@@ -1149,7 +1179,7 @@ Nível de fofoca/drama: {cfg.drama} - {DRAMA_GUIDE.get(cfg.drama, '')}
 Nível de emojis: {cfg.emoji_level} - {EMOJI_GUIDE.get(cfg.emoji_level, '')}
 Tons desejados nesta história: {tone_text}
 Emoções que a parte deve provocar: {emotion_text}
-Tamanho geral: {cfg.size_key} - {cfg.size_preset['words']}; esta parte deve ter no mínimo 15 mensagens e 250 palavras de diálogo.
+Tamanho geral: {cfg.size_key} - {cfg.size_preset['words']}; esta parte deve ter ENTRE 12 e 18 mensagens (parte curta rende mais — é melhor parar cedo do que esticar e repetir).
 CTA do usuário: {cfg.cta or 'Não informado'}
 Prompt negativo do usuário:
 {cfg.negative_prompt or 'Não informado'}
@@ -1167,12 +1197,15 @@ Regras absolutas para a conversa:
 - Nao use asteriscos para acao. Nunca escreva "*abre a porta*", "(suspiro)", "(pausa)".
 - Nao use marcadores internos como [Não_think], [think], [analysis], [sistema], [schema].
 - Divisores em colchetes so podem ser tempo natural, como [No dia seguinte].
-- Cada parte deve ter ENTRE 18 e 30 mensagens reais (nunca mais que isso), com conflito claro e uma virada ou revelação.
+- Cada parte deve ter ENTRE 12 e 18 mensagens reais (nunca mais que isso), com conflito claro e uma virada ou revelação. Parte curta e fechada vale mais que parte longa que se arrasta.
 - A maioria das mensagens deve ser curta, com ate 12 palavras. Se uma fala passar de 16 palavras, quebre em mais mensagens.
-- NUNCA repita a mesma fala. Cada mensagem precisa AVANCAR a conversa — proibido
-  ficar repetindo "me manda de novo", "ta aqui", "nao sei o que fazer" ou
-  qualquer linha parecida. Se a ideia ja foi dita, siga em frente ou ENCERRE a
-  parte. Quando chegar ao fim da cena, PARE (nao continue gerando).
+- NUNCA repita a mesma fala NEM o mesmo sentido com outras palavras. Cada
+  mensagem precisa trazer um FATO ou AÇÃO NOVA (uma prova, uma pergunta nova, uma
+  decisão, uma virada). É PROIBIDO ficar variando a mesma emoção — ex: "nao sei
+  o que fazer" / "nao consigo parar de pensar" / "nao sei se vou conseguir" são a
+  MESMA coisa repetida, não faça isso. Não comece várias falas seguidas com o
+  mesmo início ("Eu não...", "Eu vou..."). Se a ideia já foi dita, AVANCE a
+  história ou ENCERRE a parte. Quando a cena fechar, PARE de gerar.
 - Nao use frases de novela ou ameaca artificial.
 - Quando emojis estiverem ligados, use alguns emojis naturais: Leve = 1 ou 2 na parte; Medio = 2 a 4; Pesado = 3 a 7. Sem emojis = zero.
 - Na última parte, feche a história com começo, meio e fim bem amarrados.

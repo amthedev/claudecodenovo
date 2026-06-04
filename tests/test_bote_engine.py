@@ -176,3 +176,44 @@ def test_dedupe_keeps_short_repeats():
     out = e.dedupe_looping_lines("Ana: sim\nBia: kkkk\nAna: sim")
     lines = [l for l in out.split("\n") if l.strip()]
     assert len(lines) == 3  # "sim" tolera 2
+
+
+def test_dedupe_cuts_semantic_loop():
+    """Loop SEMÂNTICO: o modelo varia as palavras mas repete o sentido, com um
+    falante começando muitas falas com o mesmo prefixo ('Eu não...'). A 3ª+
+    ocorrência do prefixo é cortada."""
+    loop = "\n".join([
+        "Ana: achei o print da conversa dela",
+        "Bia: serio? mostra",
+        "Ana: Eu nao consigo parar de pensar nisso",
+        "Bia: respira, vamos com calma",
+        "Ana: Eu nao sei o que fazer",
+        "Bia: te ajudo a resolver",
+        "Ana: Eu nao quero perder ela",
+        "Bia: mas voce tem que se cuidar",
+        "Ana: Eu nao consigo parar de lembrar",
+        "Bia: eu entendo",
+        "Ana: Eu nao sei se vou conseguir",
+    ])
+    out = e.dedupe_looping_lines(loop)
+    n_in = len([l for l in loop.split("\n") if l.strip()])
+    n_out = len([l for l in out.split("\n") if l.strip()])
+    assert n_out < n_in  # cortou ecos da Ana
+    assert "achei o print" in out  # começo bom preservado
+
+
+def test_dedupe_keeps_natural_conversation():
+    """Conversa normal (inícios variados, sem eco) passa 100% intacta — a trava
+    não pode mutilar histórias boas."""
+    normal = "\n".join([
+        "Ana: oi viu o que aconteceu?",
+        "Bia: nao, conta",
+        "Ana: a Julia terminou com o Marcos",
+        "Bia: serio?? eles tavam bem",
+        "Ana: descobriram que ele traia",
+        "Bia: que absurdo",
+        "Ana: ela ta arrasada",
+        "Bia: vou ligar pra ela",
+    ])
+    out = e.dedupe_looping_lines(normal)
+    assert len([l for l in out.split("\n") if l.strip()]) == 8
