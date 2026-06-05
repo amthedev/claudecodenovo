@@ -830,11 +830,24 @@ function bind() {
 
 // ── Chopper surpresa ──────────────────────────────────────────────────────────
 // Um Chopper aleatório aparece num lugar aleatório da tela a cada 20-60s, em
-// tamanho razoável, e some sozinho. Brincadeira visual (sem som por enquanto).
+// tamanho razoável, e some sozinho. Ao aparecer, toca um áudio de meme aleatório
+// ATÉ O FIM (o som não é cortado quando a imagem some).
 const CHOPPER_IMAGES = [
   "chopper1.webp", "chopper2.png", "chopper4.png", "chopper6.png",
   "chopper9.jpeg", "chopper9.jpg", "chopper11.webp", "chopper13.jpg", "chopper16.jpg",
 ];
+const CHOPPER_SOUNDS = [
+  "facil-professor.mp3", "jogo-do-botao.mp3", "faaah.mp3", "quinta-feriado.mp3",
+  "pou-estourado.mp3", "ilari-troll.mp3", "bom-dia.mp3", "sua-mae.mp3", "eu-finjo.mp3",
+];
+
+function playChopperSound() {
+  const src = "/bote/assets/chopper/sounds/" + CHOPPER_SOUNDS[Math.floor(Math.random() * CHOPPER_SOUNDS.length)];
+  const audio = new Audio(src);
+  // play() pode ser rejeitado se o usuário ainda não interagiu com a página
+  // (política de autoplay do navegador). Falha silenciosa — a imagem aparece igual.
+  audio.play().catch(() => {});
+}
 
 function showChopper() {
   const src = "/bote/assets/chopper/" + CHOPPER_IMAGES[Math.floor(Math.random() * CHOPPER_IMAGES.length)];
@@ -843,6 +856,7 @@ function showChopper() {
   img.className = "chopper-pop";
   img.alt = "";
   document.body.appendChild(img);
+  playChopperSound();
   // posição aleatória na tela, mas garantindo que ele caiba INTEIRO (descontando
   // o tamanho dele das bordas, pra não cortar metade fora da janela).
   const w = img.offsetWidth || 140;
