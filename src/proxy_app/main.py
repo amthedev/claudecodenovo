@@ -626,7 +626,7 @@ async def lifespan(app: FastAPI):
     # 280s: precisa ser MAIOR que VLLM_REQUEST_TIMEOUT (200s) pra uma chamada
     # lenta completar e ainda sobrar margem pra 1 retry. 120s antigo cortava o
     # request inteiro antes mesmo da 1a tentativa terminar (conversas grandes).
-    global_timeout = int(os.getenv("GLOBAL_TIMEOUT", "480"))
+    global_timeout = int(os.getenv("GLOBAL_TIMEOUT", "280"))
 
     # The client now uses the root logger configuration
     client = RotatingClient(

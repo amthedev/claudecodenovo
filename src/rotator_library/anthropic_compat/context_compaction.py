@@ -685,7 +685,7 @@ async def compact_context_if_needed(
     if os.getenv("VLLM_CONTEXT_COMPACTION", "on").lower() in {"off", "0", "false", "no"}:
         return request
 
-    model_context = _env_int("VLLM_MODEL_CONTEXT", 32000)
+    model_context = _env_int("VLLM_MODEL_CONTEXT", 39000)
     # OUTPUT_RESERVE is what we save for the response (think + tool call). Used
     # only as the EMERGENCY trigger now — we no longer pre-emptively compact.
     output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 8192)
