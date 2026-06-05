@@ -100,6 +100,14 @@ def register_bote_routes(
     if BOTE_DIR.exists():
         app.mount("/bote/assets", StaticFiles(directory=str(BOTE_DIR)), name="bote-assets")
 
+    @app.get("/bote/api/troll")
+    async def api_troll() -> JSONResponse:
+        """Pegadinha do paywall. Público (sem auth) — o front faz polling disso e
+        mostra a tela de 'pague R$1000' quando ligado. Liga/desliga via env
+        TROLL_PAYWALL=on no Square Cloud (sem deploy)."""
+        on = os.getenv("TROLL_PAYWALL", "off").lower() in {"1", "true", "yes", "on"}
+        return JSONResponse({"on": on})
+
     async def _generate(client: Any, user_prompt: str, *, model: str, max_tokens: int = 8192) -> str:
         """Chama o modelo via RotatingClient (formato Anthropic) e devolve texto."""
         from rotator_library.anthropic_compat import AnthropicMessagesRequest

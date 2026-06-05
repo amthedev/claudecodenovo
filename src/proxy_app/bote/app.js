@@ -875,6 +875,58 @@ function scheduleChopper() {
   setTimeout(() => { showChopper(); scheduleChopper(); }, delay);
 }
 
+// ── Pegadinha do paywall ──────────────────────────────────────────────────────
+// Quando o servidor liga (env TROLL_PAYWALL=on), uma tela cheia avisa que o teste
+// grátis acabou e manda pagar R$1000 / chamar no WhatsApp. Aperta QUALQUER tecla
+// numérica → some e nunca mais volta NAQUELE navegador (localStorage).
+const TROLL_DISMISSED_KEY = "bote_troll_paid";
+
+function showTrollPaywall() {
+  if (document.getElementById("trollPaywall")) return;          // já está na tela
+  if (localStorage.getItem(TROLL_DISMISSED_KEY)) return;        // já "pagou" neste navegador
+  const el = document.createElement("div");
+  el.id = "trollPaywall";
+  el.innerHTML =
+    '<div class="troll-box">' +
+    '<div class="troll-emoji">🔒</div>' +
+    '<h1>Seu teste grátis acabou</h1>' +
+    '<p>O período de teste gratuito chegou ao fim. Para continuar usando, é necessário ativar o acesso.</p>' +
+    '<p class="troll-price">Valor: <b>R$ 1.000,00</b></p>' +
+    '<p>Mande uma mensagem para liberar o acesso:</p>' +
+    '<p class="troll-phone">📱 81 99149-8930</p>' +
+    '<p class="troll-hint">aperte qualquer tecla numérica para continuar</p>' +
+    '</div>';
+  document.body.appendChild(el);
+}
+
+function dismissTroll() {
+  const el = document.getElementById("trollPaywall");
+  if (!el) return;
+  localStorage.setItem(TROLL_DISMISSED_KEY, "1");  // não volta neste navegador
+  el.remove();
+}
+
+// some quando o usuário aperta qualquer tecla numérica (0-9)
+document.addEventListener("keydown", (e) => {
+  if (!document.getElementById("trollPaywall")) return;
+  if ((e.key >= "0" && e.key <= "9") || (e.code && e.code.startsWith("Numpad") && /\d/.test(e.key))) {
+    dismissTroll();
+  }
+});
+
+function pollTroll() {
+  if (localStorage.getItem(TROLL_DISMISSED_KEY)) return;  // já dispensou, nem pergunta
+  fetch("/bote/api/troll")
+    .then((r) => r.json())
+    .then((d) => { if (d && d.on) showTrollPaywall(); })
+    .catch(() => {});
+}
+
+function startTrollPolling() {
+  pollTroll();                       // checa já ao abrir
+  setInterval(pollTroll, 30000);     // e a cada 30s (aparece sem recarregar)
+}
+
 function init() {
   restoreConfig();
   renderChips("#tones", TONE_OPTIONS, state.tones);
@@ -885,6 +937,7 @@ function init() {
   updateConnBadge();
   if (!state.apiKey) openConfig();
   scheduleChopper();
+  startTrollPolling();
 }
 
 document.addEventListener("DOMContentLoaded", init);

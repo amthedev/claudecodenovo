@@ -448,3 +448,30 @@ textarea { line-height: 1.5; }
 @media (max-width: 860px) {
   .chopper-pop { width: 100px; }
 }
+
+/* Pegadinha do paywall: tela cheia que bloqueia tudo até apertar tecla numérica. */
+#trollPaywall {
+  position: fixed; inset: 0; z-index: 100000;
+  background: rgba(6, 10, 20, .97);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; text-align: center;
+  animation: troll-fade .3s ease;
+}
+@keyframes troll-fade { from { opacity: 0; } to { opacity: 1; } }
+.troll-box {
+  max-width: 480px;
+  background: linear-gradient(160deg, #131a2c, #0c1120);
+  border: 1px solid rgba(120,150,255,.25);
+  border-radius: 18px; padding: 36px 30px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+}
+.troll-emoji { font-size: 56px; margin-bottom: 8px; }
+.troll-box h1 { font-size: 26px; margin: 0 0 14px; color: #fff; }
+.troll-box p { color: #c5cde0; font-size: 16px; line-height: 1.5; margin: 10px 0; }
+.troll-price { font-size: 20px !important; color: #fff !important; }
+.troll-price b { color: #ff5a5a; }
+.troll-phone {
+  font-size: 24px !important; font-weight: 700; color: #25d366 !important;
+  background: rgba(37,211,102,.1); border-radius: 10px; padding: 12px; margin: 16px 0 !important;
+}
+.troll-hint { font-size: 13px !important; color: #7a86a0 !important; margin-top: 20px !important; }
