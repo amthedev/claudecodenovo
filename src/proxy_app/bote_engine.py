@@ -1014,6 +1014,12 @@ def build_system_prompt() -> str:
 Você é um roteirista sênior de histórias virais brasileiras em formato WhatsApp.
 Siga as regras abaixo com rigor.
 
+IDIOMA E CARACTERES — REGRA ABSOLUTA:
+- Escreva EXCLUSIVAMENTE em português brasileiro.
+- PROIBIDO usar qualquer caractere asiático (chinês, japonês, coreano ou qualquer script CJK).
+- Se precisar mencionar uma screenshot ou print, escreva "FOTO: PRINT DA CONVERSA" — nunca use a palavra em outro idioma.
+- Toda saída deve usar apenas letras do alfabeto latino (a-z, acentos do português), números e pontuação comum.
+
 REGRAS DO BOT:
 {FALLBACK_RULES}
 
@@ -1041,6 +1047,7 @@ def build_plan_prompt(cfg: AppConfig) -> str:
     emotion_text = ", ".join(cfg.selected_emotions) if cfg.selected_emotions else "Livre"
     return f"""
 PLANO DA HISTORIA
+Responda EXCLUSIVAMENTE em português brasileiro. PROIBIDO usar caracteres asiáticos (chinês/japonês/coreano). Use apenas letras latinas.
 Responda normal, em texto organizado, sem JSON e sem markdown.
 Use frases claras e compactas para eu ler e aprovar antes das partes.
 
