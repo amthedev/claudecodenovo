@@ -688,7 +688,7 @@ async def compact_context_if_needed(
     model_context = _env_int("VLLM_MODEL_CONTEXT", 30000)
     # OUTPUT_RESERVE is what we save for the response (think + tool call). Used
     # only as the EMERGENCY trigger now — we no longer pre-emptively compact.
-    output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 12288)
+    output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 8192)
     # KEEP_TAIL: keep this much of the recent conversation INTACT (no summary,
     # no truncation). 20k leaves plenty of recent file/tool context for coding.
     keep_tail_tokens = _env_int("VLLM_CONTEXT_KEEP_TAIL_TOKENS", 20000)

@@ -50,7 +50,10 @@ GRANULAR_REASONING_PROVIDERS = set()
 # (Era 63000 quando o modelo era Qwen3-Coder-30B, que suportava 64k.)
 # Override via VLLM_MODEL_CONTEXT.
 VLLM_MODEL_CONTEXT = 30000
-VLLM_CONTEXT_OUTPUT_RESERVE = 12288
+# Reserva pra resposta. Baixado 12288 -> 8192 pra ganhar histórico: com teto de
+# 32k do Qwen2.5, 8k de output deixa ~22k pra conversa (era ~18k com 12k). 8k
+# ainda cobre respostas longas (uma parte do /bote raramente passa de 4-5k).
+VLLM_CONTEXT_OUTPUT_RESERVE = 8192
 VLLM_MAX_OUTPUT_TOKENS = 12288
 VLLM_MAX_INPUT_CHARS = 105000
 VLLM_MAX_MESSAGE_CHARS = 52000
