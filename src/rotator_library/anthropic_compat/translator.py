@@ -42,19 +42,15 @@ THINKING_BUDGET_THRESHOLDS = {
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
 
-# Hosted vLLM defaults para o Qwen2.5-Coder-32B-AWQ no pod (A40 48GB).
-# ATENÇÃO: Qwen2.5-Coder-32B só suporta 32768 de contexto NATIVO (config.json:
-# max_position_embeddings=32768). O pod roda --max-model-len 32768. Default 30000
-# (≈2.7k abaixo do teto) pra estimativa de tokens não estourar e dar 400. Budget:
-# reserve 12k pra output, sobra ~18k pra input/histórico.
-# (Era 63000 quando o modelo era Qwen3-Coder-30B, que suportava 64k.)
-# Override via VLLM_MODEL_CONTEXT.
-VLLM_MODEL_CONTEXT = 30000
-# Reserva pra resposta. Baixado 12288 -> 8192 pra ganhar histórico: com teto de
-# 32k do Qwen2.5, 8k de output deixa ~22k pra conversa (era ~18k com 12k). 8k
-# ainda cobre respostas longas (uma parte do /bote raramente passa de 4-5k).
-VLLM_CONTEXT_OUTPUT_RESERVE = 8192
-VLLM_MAX_OUTPUT_TOKENS = 12288
+# Hosted vLLM defaults para o Qwen2.5-72B-Instruct-AWQ no pod (A40 48GB + offload).
+# O modelo tem 32768 de contexto NATIVO (max_position_embeddings=32768).
+# Pod roda --max-model-len 32768. Default 32000 (≈768 abaixo do teto).
+# Output reserve 4096: com 32k de contexto, 4k pra resposta deixa ~28k pra input.
+# VLLM_MAX_OUTPUT_TOKENS também 4096 — pedir 12k num modelo de 32k estourava.
+# Override via VLLM_MODEL_CONTEXT / VLLM_CONTEXT_OUTPUT_RESERVE / VLLM_MAX_OUTPUT_TOKENS.
+VLLM_MODEL_CONTEXT = 32000
+VLLM_CONTEXT_OUTPUT_RESERVE = 4096
+VLLM_MAX_OUTPUT_TOKENS = 4096
 VLLM_MAX_INPUT_CHARS = 105000
 VLLM_MAX_MESSAGE_CHARS = 52000
 VLLM_MAX_TOOL_RESULT_CHARS = 40000
