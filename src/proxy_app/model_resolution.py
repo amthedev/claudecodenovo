@@ -107,7 +107,16 @@ def resolve_model_alias(model: Optional[str]) -> Optional[str]:
 def apply_thinking_mode_openai(request_data: dict, original_model: str) -> None:
     """Inject Qwen3 thinking flag based on the public model name:
     - opus  → enable_thinking=True (deep reasoning, slower)
-    - other → enable_thinking=False (fast)"""
+    - other → enable_thinking=False (fast)
+
+    enable_thinking é um kwarg do chat template do QWEN3. Modelos sem thinking
+    (ex: Qwen2.5-Coder) não conhecem o parâmetro — o vLLM pode rejeitar. Só
+    injeta quando o modelo REAL resolvido é Qwen3 (ou VLLM_THINKING_SUPPORTED=on)."""
+    resolved = (request_data.get("model") or "").lower()
+    thinking_supported = ("qwen3" in resolved) or \
+        os.getenv("VLLM_THINKING_SUPPORTED", "").lower() in {"1", "true", "yes", "on"}
+    if not thinking_supported:
+        return
     is_opus = "opus" in (original_model or "").lower()
     extra = request_data.setdefault("extra_body", {})
     extra.setdefault("chat_template_kwargs", {})["enable_thinking"] = is_opus

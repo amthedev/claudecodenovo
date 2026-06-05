@@ -42,7 +42,7 @@ THINKING_BUDGET_THRESHOLDS = {
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
 
-# Hosted vLLM defaults, sized for Qwen3-Coder-30B-A3B on a single RTX 6000 Ada.
+# Hosted vLLM defaults para o Qwen2.5-Coder-32B-AWQ no pod (RTX 6000 Ada).
 # The pod runs with --max-model-len 65536. We default to 63000 (≈2.5k below the
 # hard ceiling) so token-count estimates can be slightly off without the request
 # overflowing the vLLM limit and getting a 400. Budget: reserve 12k for output,
@@ -2304,11 +2304,21 @@ def _sanitize_openai_request_for_vllm(openai_request: Dict[str, Any]) -> None:
         _enable_think = _default_think
     extra_body = openai_request.setdefault("extra_body", {})
     chat_template_kwargs = extra_body.setdefault("chat_template_kwargs", {})
+    # enable_thinking é um kwarg do chat template do QWEN3 (que tem <think>). O
+    # Qwen2.5-Coder não conhece esse parâmetro — injetá-lo pode fazer o vLLM
+    # rejeitar a request. Só manda quando o modelo é Qwen3 (ou quando o operador
+    # força via VLLM_THINKING_SUPPORTED=on pra outro modelo com thinking).
+    _model_name = openai_request.get("model", "").lower()
+    _thinking_supported = ("qwen3" in _model_name) or \
+        os.getenv("VLLM_THINKING_SUPPORTED", "").lower() in {"1", "true", "yes", "on"}
     # Respect the client's explicit enable_thinking if it already set one. Only
-    # fill in our computed default when the field is absent. Previous version
-    # always overwrote, ignoring the client's intent.
-    if "enable_thinking" not in chat_template_kwargs:
+    # fill in our computed default when the field is absent.
+    if _thinking_supported and "enable_thinking" not in chat_template_kwargs:
         chat_template_kwargs["enable_thinking"] = _enable_think
+    # se ninguém preencheu o chat_template_kwargs, remove o dict vazio (evita
+    # mandar "chat_template_kwargs": {} à toa pra modelos que não usam).
+    if not chat_template_kwargs:
+        extra_body.pop("chat_template_kwargs", None)
     # frequency_penalty=0.2 was previously hardcoded here but hurts code quality:
     # variable names and keywords must repeat, and the penalty caused the model to
     # invent alternatives, hallucinate, and produce inconsistent output. Removed.

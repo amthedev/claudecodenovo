@@ -189,6 +189,30 @@ def test_client_explicit_thinking_is_respected(monkeypatch):
     assert ck.get("enable_thinking") is True
 
 
+def test_qwen25_model_gets_no_thinking_kwarg(monkeypatch):
+    """Qwen2.5-Coder NÃO tem thinking — o proxy não pode injetar enable_thinking
+    (o vLLM rejeitaria o kwarg desconhecido). Só Qwen3 recebe."""
+    monkeypatch.delenv("VLLM_THINKING_SUPPORTED", raising=False)
+    monkeypatch.setenv("VLLM_DEFAULT_THINKING", "on")
+    req = _coding_request()
+    req["model"] = "hosted_vllm/qwen2.5-coder-32b"
+    _sanitize_openai_request_for_vllm(req)
+    eb = req.get("extra_body", {})
+    # nem o kwarg nem um chat_template_kwargs vazio devem sobrar
+    assert "enable_thinking" not in eb.get("chat_template_kwargs", {})
+
+
+def test_thinking_supported_override_for_non_qwen3(monkeypatch):
+    """VLLM_THINKING_SUPPORTED=on força a injeção mesmo sem 'qwen3' no nome."""
+    monkeypatch.setenv("VLLM_THINKING_SUPPORTED", "on")
+    monkeypatch.setenv("VLLM_DEFAULT_THINKING", "on")
+    req = _coding_request()
+    req["model"] = "hosted_vllm/qwen2.5-coder-32b"
+    _sanitize_openai_request_for_vllm(req)
+    ck = req.get("extra_body", {}).get("chat_template_kwargs", {})
+    assert ck.get("enable_thinking") is True
+
+
 # ── Contenção de escopo (modo coding) ─────────────────────────────────────────
 
 def test_coding_mode_has_scope_discipline(monkeypatch):

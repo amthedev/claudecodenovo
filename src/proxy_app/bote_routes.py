@@ -113,7 +113,7 @@ def register_bote_routes(
         from rotator_library.anthropic_compat import AnthropicMessagesRequest
         from proxy_app.model_resolution import resolve_model_alias
 
-        # O RotatingClient exige formato provider/model (ex: hosted_vllm/qwen3-coder-30b).
+        # O RotatingClient exige formato provider/model (ex: hosted_vllm/qwen2.5-coder-32b).
         # O frontend manda um alias amigável (claude-sonnet-4-5) — resolvê-lo aqui,
         # igual o endpoint /v1/messages faz. Sem isso o client levanta
         # "Invalid model format or no credentials for provider".
