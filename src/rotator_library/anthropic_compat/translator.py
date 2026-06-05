@@ -42,14 +42,14 @@ THINKING_BUDGET_THRESHOLDS = {
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
 
-# Hosted vLLM defaults para o Qwen2.5-Coder-32B-AWQ no pod (RTX 6000 Ada).
-# The pod runs with --max-model-len 65536. We default to 63000 (≈2.5k below the
-# hard ceiling) so token-count estimates can be slightly off without the request
-# overflowing the vLLM limit and getting a 400. Budget: reserve 12k for output,
-# leaving roughly 51k tokens for input/history.
-# Too-low values truncate history/file-reads and make the agent look
-# "superficial" or loop on large edits. Override via VLLM_MODEL_CONTEXT.
-VLLM_MODEL_CONTEXT = 63000
+# Hosted vLLM defaults para o Qwen2.5-Coder-32B-AWQ no pod (A40 48GB).
+# ATENÇÃO: Qwen2.5-Coder-32B só suporta 32768 de contexto NATIVO (config.json:
+# max_position_embeddings=32768). O pod roda --max-model-len 32768. Default 30000
+# (≈2.7k abaixo do teto) pra estimativa de tokens não estourar e dar 400. Budget:
+# reserve 12k pra output, sobra ~18k pra input/histórico.
+# (Era 63000 quando o modelo era Qwen3-Coder-30B, que suportava 64k.)
+# Override via VLLM_MODEL_CONTEXT.
+VLLM_MODEL_CONTEXT = 30000
 VLLM_CONTEXT_OUTPUT_RESERVE = 12288
 VLLM_MAX_OUTPUT_TOKENS = 12288
 VLLM_MAX_INPUT_CHARS = 105000

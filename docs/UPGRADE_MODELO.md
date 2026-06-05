@@ -14,7 +14,7 @@ Opus/Sonnet. Este doc é pra quando você decidir investir em modelo melhor.
 
 - Modelo: **Qwen2.5-Coder-32B-Instruct-AWQ**, servido como `qwen2.5-coder-32b`
 - GPU: **RTX 6000 Ada 48GB** (RunPod), com `--cpu-offload-gb 30 --swap-space 30`
-- Contexto: 63000 tokens (proxy; pod roda `--max-model-len 65536`, default deixa ~2.5k de margem)
+- Contexto: 30000 tokens (proxy). Qwen2.5-Coder-32B só tem **32768 nativo** (config.json), pod roda `--max-model-len 32768`. NÃO usar 65536 (o vLLM recusa; forçar com VLLM_ALLOW_LONG_MAX_MODEL_LEN corrompe a saída)
 - Flags tool calling (Qwen2.5 usa parser **hermes**, NÃO qwen3_coder):
   `--enable-auto-tool-choice --tool-call-parser hermes --enable-prefix-caching`
 - Qwen2.5 NÃO tem modo thinking (era do Qwen3). O proxy só injeta `enable_thinking`

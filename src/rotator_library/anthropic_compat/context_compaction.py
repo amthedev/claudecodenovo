@@ -4,8 +4,8 @@
 """
 Intelligent context compaction for text-only backends with a hard context ceiling.
 
-Qwen3-Coder hosted via vLLM defaults to a 63000-token ceiling shared by input
-AND output (pod runs --max-model-len 65536). In long
+Qwen2.5-Coder-32B hosted via vLLM defaults to a 30000-token ceiling shared by
+input AND output (modelo só tem 32768 nativo; pod runs --max-model-len 32768). In long
 conversations the input grows until little room is left for the output — and
 since the model emits its <think> reasoning BEFORE the tool call, that little
 room gets eaten by reasoning and the model stops (finish_reason=length) before
@@ -685,7 +685,7 @@ async def compact_context_if_needed(
     if os.getenv("VLLM_CONTEXT_COMPACTION", "on").lower() in {"off", "0", "false", "no"}:
         return request
 
-    model_context = _env_int("VLLM_MODEL_CONTEXT", 63000)
+    model_context = _env_int("VLLM_MODEL_CONTEXT", 30000)
     # OUTPUT_RESERVE is what we save for the response (think + tool call). Used
     # only as the EMERGENCY trigger now — we no longer pre-emptively compact.
     output_reserve = _env_int("VLLM_CONTEXT_OUTPUT_RESERVE", 12288)
