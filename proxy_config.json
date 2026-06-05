@@ -4,7 +4,7 @@
     "SKIP_OAUTH_INIT_CHECK": "true",
     "OPENAI_API_KEY": "",
     "GEMINI_API_KEY_1": "",
-    "HOSTED_VLLM_API_BASE": "https://vn9j642waax7v3-8001.proxy.runpod.net/v1",
+    "HOSTED_VLLM_API_BASE": "https://52onq3y2iqbass-8001.proxy.runpod.net/v1",
     "HOSTED_VLLM_API_KEY": "EMPTY",
     "HOSTED_VLLM_MODELS": "[\"qwen2.5-coder-32b\"]",
     "WHITELIST_MODELS_HOSTED_VLLM": "hosted_vllm/qwen2.5-coder-32b",
