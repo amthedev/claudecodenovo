@@ -623,8 +623,10 @@ async def lifespan(app: FastAPI):
     # request including retries across credentials. 30s was too tight for code
     # generation on a busy single GPU: the first attempt could eat most of it,
     # leaving no room to retry, surfacing as "começa e congela / dá erro".
-    # 120s gives a slow generation room to finish and still allow one retry.
-    global_timeout = int(os.getenv("GLOBAL_TIMEOUT", "120"))
+    # 280s: precisa ser MAIOR que VLLM_REQUEST_TIMEOUT (200s) pra uma chamada
+    # lenta completar e ainda sobrar margem pra 1 retry. 120s antigo cortava o
+    # request inteiro antes mesmo da 1a tentativa terminar (conversas grandes).
+    global_timeout = int(os.getenv("GLOBAL_TIMEOUT", "280"))
 
     # The client now uses the root logger configuration
     client = RotatingClient(

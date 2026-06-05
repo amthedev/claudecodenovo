@@ -90,7 +90,7 @@ const state = {
 };
 
 // ── Helpers de rede ──────────────────────────────────────────────────────────
-async function apiPost(path, payload, timeoutMs = 180000) {
+async function apiPost(path, payload, timeoutMs = 300000) {
   const headers = { "Content-Type": "application/json" };
   if (state.apiKey) headers.Authorization = `Bearer ${state.apiKey}`;
   // AbortController: sem isso o fetch fica preso pra sempre quando o backend
