@@ -1522,8 +1522,21 @@ async def anthropic_messages(
             request_data=body.model_dump(exclude_none=True),
         )
 
-        # Use the library method to handle the request
-        result = await client.anthropic_messages(body, raw_request=request)
+        # Use the library method to handle the request. No modo 'auto', se a VPS
+        # falhar (timeout/erro), refaz a chamada UMA vez no OpenRouter grátis.
+        try:
+            result = await client.anthropic_messages(body, raw_request=request)
+        except Exception as _vps_exc:
+            from proxy_app.admin_db import get_backend_mode as _gbm
+            from proxy_app.model_resolution import openrouter_fallback_model as _orfm
+            _is_vps = "/" in _resolved_anthr and _resolved_anthr.split("/", 1)[0] in {"hosted_vllm", "vllm"}
+            if _gbm() == "auto" and _is_vps:
+                _fb_model = _orfm()
+                logger.warning("VPS falhou (%s); fallback automático -> %s", str(_vps_exc)[:120], _fb_model)
+                body = body.model_copy(update={"model": _fb_model})
+                result = await client.anthropic_messages(body, raw_request=request)
+            else:
+                raise
 
         if body.stream:
             # Streaming response

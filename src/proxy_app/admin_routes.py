@@ -714,6 +714,25 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                 Depois, este card vira um campo onde você cola a nova URL e vale na hora — sem restart, sem mexer em JSON.
               </p>
             </div>"""
+        # --- Cartão: backend (VPS / OpenRouter / Auto) ---
+        from proxy_app.admin_db import get_backend_mode as _gbm
+        _bmode = _gbm()
+        def _sel(v):
+            return " selected" if _bmode == v else ""
+        backend_mode_html = f"""<div class="card" style="margin-bottom:24px">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">De onde o modelo responde</div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:10px">Escolha o backend. <b>VPS</b> = seu pod (vLLM). <b>OpenRouter</b> = API grátis (qwen3-coder:free). <b>Auto</b> = usa a VPS e, se ela falhar ou demorar demais, cai pro OpenRouter sozinho.</p>
+          <form method="post" action="/admin/set-backend-mode" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <select name="backend_mode" style="flex:1;min-width:200px;padding:8px">
+              <option value="vps"{_sel('vps')}>VPS (pod vLLM)</option>
+              <option value="openrouter"{_sel('openrouter')}>OpenRouter (grátis)</option>
+              <option value="auto"{_sel('auto')}>Auto (VPS, cai pro OpenRouter se falhar)</option>
+            </select>
+            <button class="btn">Salvar</button>
+          </form>
+          <p style="color:var(--muted);font-size:12px;margin-top:8px">Atual: <b>{_e(_bmode)}</b>. Vale na hora, sem reiniciar.</p>
+        </div>"""
+        backend_html = backend_html + backend_mode_html
         window_html = """<div class="card" id="uw-card" style="margin-bottom:24px;display:none">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
             <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Janela de uso (load shedding)</span>
@@ -1099,6 +1118,17 @@ def register_admin_routes(app: FastAPI, proxy_api_key: str | None = None) -> Non
                     os.remove(path)
         except Exception as exc:
             return _with_error("/admin/dashboard", f"Falha ao salvar endpoint: {exc}")
+        return RedirectResponse("/admin/dashboard", 302)
+
+    @app.post("/admin/set-backend-mode")
+    async def set_backend_mode_route(req: Request):
+        """Escolhe de onde o proxy responde: vps (pod vLLM), openrouter (API
+        grátis) ou auto (VPS com fallback pro OpenRouter quando falha)."""
+        _need(req)
+        f = await _form(req)
+        mode = (f.get("backend_mode", "") or "").strip().lower()
+        from proxy_app.admin_db import set_backend_mode as _sbm
+        _sbm(mode)  # valida internamente (default vps se inválido)
         return RedirectResponse("/admin/dashboard", 302)
 
     @app.post("/admin/create-reseller")

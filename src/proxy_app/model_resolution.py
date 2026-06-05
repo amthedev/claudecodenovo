@@ -67,13 +67,37 @@ def default_proxy_model() -> Optional[str]:
     return None
 
 
+def openrouter_fallback_model() -> str:
+    """Modelo do OpenRouter usado no modo 'openrouter' e como fallback do 'auto'.
+    Configurável via OPENROUTER_FALLBACK_MODEL; default é o Qwen3-Coder grátis."""
+    return os.getenv("OPENROUTER_FALLBACK_MODEL", "openrouter/qwen/qwen3-coder:free").strip()
+
+
+def _current_backend_mode() -> str:
+    """Lê o modo escolhido na tela de Admin (vps/openrouter/auto). Import tardio
+    pra evitar ciclo com admin_db. Default 'vps' se algo falhar."""
+    try:
+        from proxy_app.admin_db import get_backend_mode
+        return get_backend_mode()
+    except Exception:
+        return "vps"
+
+
 def resolve_model_alias(model: Optional[str]) -> Optional[str]:
-    """Map client-facing aliases (claude-code-pro, etc.) to the real model."""
+    """Map client-facing aliases (claude-code-pro, etc.) to the real model.
+
+    Respeita o backend_mode do Admin: no modo 'openrouter' os aliases caem no
+    modelo grátis do OpenRouter em vez da VPS. 'vps' e 'auto' usam a VPS aqui
+    (o fallback do 'auto' é feito na rota /v1/messages)."""
     if not model:
         return model
     model = model.strip()
     if "/" in model:
         return model
+    # modo openrouter: aliases viram o modelo do OpenRouter direto
+    if _current_backend_mode() == "openrouter":
+        _LOG.info("Mapping client model '%s' to '%s' (backend=openrouter)", model, openrouter_fallback_model())
+        return openrouter_fallback_model()
 
     default_model = default_proxy_model()
     if not default_model:

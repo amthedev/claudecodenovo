@@ -296,6 +296,38 @@ def set_thinking_mode(mode: str) -> str:
     return mode
 
 
+# Backend de onde o proxy responde: 'vps' (pod vLLM), 'openrouter' (API grátis),
+# 'auto' (VPS com fallback pro OpenRouter quando falha/demora).
+_VALID_BACKEND_MODES = {"vps", "openrouter", "auto"}
+
+
+def get_backend_mode() -> str:
+    """Modo de backend escolhido na tela de Admin. Default 'vps' (comportamento
+    de sempre) quando nunca foi setado."""
+    with _db() as c:
+        try:
+            _ensure_settings_table(c)
+            r = c.execute(
+                "SELECT value FROM app_settings WHERE key='backend_mode'"
+            ).fetchone()
+            v = r["value"] if r else None
+            return v if v in _VALID_BACKEND_MODES else "vps"
+        except Exception:
+            return "vps"
+
+
+def set_backend_mode(mode: str) -> str:
+    if mode not in _VALID_BACKEND_MODES:
+        mode = "vps"
+    with _db() as c:
+        _ensure_settings_table(c)
+        c.execute(
+            "INSERT OR REPLACE INTO app_settings(key,value) VALUES('backend_mode',?)",
+            (mode,),
+        )
+    return mode
+
+
 # ── Admin auth ────────────────────────────────────────────────────────────────
 
 def admin_exists() -> bool:
