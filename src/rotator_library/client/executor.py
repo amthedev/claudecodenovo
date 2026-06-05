@@ -391,7 +391,7 @@ class RequestExecutor:
         # dá folga pra geração lenta completar. Env: VLLM_REQUEST_TIMEOUT.
         if provider in {"hosted_vllm", "vllm", "lm_studio", "ollama"} and "timeout" not in kwargs:
             try:
-                kwargs["timeout"] = float(os.environ.get("VLLM_REQUEST_TIMEOUT", "200"))
+                kwargs["timeout"] = float(os.environ.get("VLLM_REQUEST_TIMEOUT", "360"))
             except (TypeError, ValueError):
                 kwargs["timeout"] = 200.0
 
