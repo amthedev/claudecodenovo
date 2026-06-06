@@ -12,15 +12,16 @@ Opus/Sonnet. Este doc é pra quando você decidir investir em modelo melhor.
 
 ## Stack atual (baseline)
 
-- Modelo: **Qwen2.5-Coder-32B-Instruct-AWQ**, servido como `qwen2.5-coder-32b`
-- GPU: **RTX 6000 Ada 48GB** (RunPod), com `--cpu-offload-gb 30 --swap-space 30`
-- Contexto: 30000 tokens (proxy). Qwen2.5-Coder-32B só tem **32768 nativo** (config.json), pod roda `--max-model-len 32768`. NÃO usar 65536 (o vLLM recusa; forçar com VLLM_ALLOW_LONG_MAX_MODEL_LEN corrompe a saída)
-- Reserva de output: 8192 (era 12288). Sobra ~22k pra conversa/histórico. Ajustável via VLLM_CONTEXT_OUTPUT_RESERVE
-- Flags tool calling (Qwen2.5 usa parser **hermes**, NÃO qwen3_coder):
+- Modelo: **Qwen3-32B-AWQ**, servido como `qwen3-32b`
+- GPU: **A40 48GB** (RunPod), 400GB RAM
+- Contexto: 38000 tokens (proxy). Qwen3-32B tem **40960 nativo** (config.json), pod roda `--max-model-len 40960`. Pra ir além de 40960 precisaria de YaRN via `--hf-overrides` (JSON), mas o campo de comando do RunPod come as aspas → inviável sem terminal/arquivo de config
+- Reserva de output: 12288. Sobra ~26k pra conversa/histórico. Ajustável via VLLM_CONTEXT_OUTPUT_RESERVE
+- Flags tool calling (Qwen3 usa parser **hermes**):
   `--enable-auto-tool-choice --tool-call-parser hermes --enable-prefix-caching`
-- Qwen2.5 NÃO tem modo thinking (era do Qwen3). O proxy só injeta `enable_thinking`
-  quando o nome do modelo contém "qwen3" (ou VLLM_THINKING_SUPPORTED=on).
-- Custo aproximado: ~$0.80–1.20/h (RTX 6000 Ada)
+- Qwen3 TEM modo thinking. O proxy mantém `VLLM_DEFAULT_THINKING=off` (respostas
+  rápidas); o `enable_thinking` só é injetado quando o nome contém "qwen3".
+- Comando completo (colar DIRETO no campo, começando pelo modelo):
+  `Qwen/Qwen3-32B-AWQ --served-model-name qwen3-32b --host 0.0.0.0 --port 8001 --max-model-len 40960 --max-num-seqs 4 --gpu-memory-utilization 0.95 --enable-prefix-caching --trust-remote-code --enable-auto-tool-choice --tool-call-parser hermes`
 
 ## Opções de upgrade (da mais barata pra melhor)
 

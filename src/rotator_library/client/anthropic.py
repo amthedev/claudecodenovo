@@ -43,7 +43,7 @@ lib_logger = logging.getLogger("rotator_library")
 # opus + sonnet simultaneous) all hit the SAME vLLM single-GPU model, prefill
 # saturates and a tiny request (e.g. "oi") can wait 2 minutes behind 7 others.
 # Cap = how many parallel requests the backend can serve well. For a single
-# Qwen2.5-Coder-32B on A40, 4 is a sane default (prefill scales linearly with batch).
+# Qwen3-32B on A40, 4 is a sane default (prefill scales linearly with batch).
 # Env: VLLM_BACKEND_CONCURRENCY (set 0 to disable the cap).
 _BACKEND_SEMAPHORE: Optional[asyncio.Semaphore] = None
 _BACKEND_SEMAPHORE_LOCK = asyncio.Lock()

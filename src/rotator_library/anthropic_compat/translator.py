@@ -42,11 +42,11 @@ THINKING_BUDGET_THRESHOLDS = {
 # Other providers will receive simplified levels (low, medium, high)
 GRANULAR_REASONING_PROVIDERS = set()
 
-# Hosted vLLM defaults para o Qwen2.5-Coder-32B-AWQ no pod (A40 48GB).
-# max_position_embeddings=32768, pod roda --max-model-len 32768.
-# Default 30000 (≈2.7k abaixo do teto). Output reserve 12288 deixa ~18k pra input.
+# Hosted vLLM defaults para o Qwen3-32B-AWQ no pod (A40 48GB).
+# max_position_embeddings=40960, pod roda --max-model-len 40960.
+# Default 38000 (≈3k abaixo do teto). Output reserve 12288 deixa ~26k pra input.
 # Override via VLLM_MODEL_CONTEXT / VLLM_CONTEXT_OUTPUT_RESERVE / VLLM_MAX_OUTPUT_TOKENS.
-VLLM_MODEL_CONTEXT = 30000
+VLLM_MODEL_CONTEXT = 38000
 VLLM_CONTEXT_OUTPUT_RESERVE = 12288
 VLLM_MAX_OUTPUT_TOKENS = 12288
 VLLM_MAX_INPUT_CHARS = 105000

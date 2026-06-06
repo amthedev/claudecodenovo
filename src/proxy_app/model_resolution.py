@@ -159,12 +159,12 @@ def virtual_claude_models() -> List[str]:
 
 
 def virtual_model_context_window() -> int:
-    # Mantém em sincronia com VLLM_MODEL_CONTEXT. Qwen2.5-Coder-32B-AWQ tem 32768
-    # nativo (pod roda --max-model-len 32768); default 30000 deixa margem.
+    # Mantém em sincronia com VLLM_MODEL_CONTEXT. Qwen3-32B-AWQ tem 40960 nativo
+    # (pod roda --max-model-len 40960); default 38000 deixa margem.
     try:
-        return int(os.getenv("VLLM_MODEL_CONTEXT", "30000"))
+        return int(os.getenv("VLLM_MODEL_CONTEXT", "38000"))
     except (TypeError, ValueError):
-        return 30000
+        return 38000
 
 
 def virtual_model_max_output_tokens() -> int:
