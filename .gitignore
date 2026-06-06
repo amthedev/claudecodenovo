@@ -147,3 +147,6 @@ admin.db-journal
 
 # Local reference clones used for compatibility research
 reference_repos/
+
+# Config local com secrets (use env vars no deploy)
+proxy_config.json
